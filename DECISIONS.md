@@ -106,12 +106,39 @@ explicitly supersedes it and say why.
   `ARCHITECTURE.md`, not just append a DECISIONS.md entry. DECISIONS.md
   answers "why"; ARCHITECTURE.md answers "what, right now."
 
+## 2026-07-30 — Step 1: build backend, connection pool design, ibm_db_dbi packaging
+
+- **Decision (build backend):** **hatchling** chosen over setuptools.
+  Reason: zero-config `src`-layout discovery (no `package_dir` dance),
+  first-class PEP 517/518/660 editable-install support, and a leaner build
+  tree for a library. setuptools remains the fallback option if any
+  downstream tooling proves incompatible; the `pyproject.toml` is pure
+  PEP 517 so switching build backends later is a one-line change.
+- **Decision (ibm_db_dbi packaging):** `ibm_db_dbi` is **not** a separate
+  PyPI distribution — it ships as a module inside the `ibm_db` package.
+  Only `ibm_db>=3.2.3` is listed as a dependency. Confirmed from PyPI page
+  for `ibm-db` and testing.
+- **Decision (connection string format):** ODBC keyword pairs only —
+  `DATABASE=x;HOSTNAME=x;PORT=x;PROTOCOL=TCPIP;UID=x;PWD=x[;Security=SSL]`.
+  ibm_db does NOT accept JDBC-style URLs. `ibm_db.connect(conn_str, '', '')`
+  with empty positional user/password args — credentials are in the keyword
+  string, which is the form confirmed in IBM docs.
+- **Decision (pool implementation):** A bounded `queue.Queue` of raw
+  `ibm_db` handles pre-created at startup. `ibm_db_dbi.Connection` is
+  re-wrapped from the raw handle on every checkout (lightweight, no teardown
+  cost). Pool size and timeout are configurable via env vars
+  (`DB2_POOL_SIZE`, `DB2_POOL_TIMEOUT`). `ibm_db_dbi` has no built-in
+  pooling, confirming the manual approach.
+- **Decision (Windows DLL guard):** `os.add_dll_directory` is called
+  automatically before `import ibm_db` when `IBM_DB_WIN_DLL_DIR` is set,
+  handling the Python 3.8+ Windows requirement without requiring callers to
+  do it themselves.
+- **Made during:** Step 1 (Scaffold)
+
 ## Open / not yet decided (fill in as steps happen)
 
 - Embedding dimension(s) per memory type — depends on embedding model
   chosen by the SDK user; document how the schema parameterizes this.
-- Build backend for `pyproject.toml` (hatchling vs setuptools) — decide in
-  Step 1, record the choice + reason here.
 - Exact distance metric per table (cosine vs euclidean vs dot) — decide in
   Step 2, record per-table choice + reason here.
 - Whether `content`/`metadata` use CLOB vs VARCHAR vs Db2 JSON type —

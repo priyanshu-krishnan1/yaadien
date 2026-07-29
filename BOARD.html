@@ -1,319 +1,437 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>agent-memory-sdk — Local Board</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agent-memory-sdk · Board</title>
 <style>
-  :root {
-    --bg: #0f1117;
-    --panel: #161922;
-    --panel-border: #262b38;
-    --text: #e6e9f0;
-    --muted: #8b93a7;
-    --accent: #2dd4bf;
-    --todo: #3a3f4d;
-    --todo-text: #b8bfcf;
-    --progress: #1e3a8a;
-    --progress-text: #93c5fd;
-    --done: #14532d;
-    --done-text: #86efac;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    padding: 32px;
-  }
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 24px;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  h1 { font-size: 20px; margin: 0; }
-  .epic-tag {
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .board {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-  }
-  .column {
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: 10px;
-    padding: 14px;
-    min-height: 200px;
-  }
-  .column h2 {
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    margin: 0 0 12px 0;
-    display: flex;
-    justify-content: space-between;
-  }
-  .card {
-    background: #1c202b;
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 10px;
-    cursor: pointer;
-    transition: border-color 0.15s;
-  }
-  .card:hover { border-color: var(--accent); }
-  .card-id {
-    font-size: 11px;
-    color: var(--muted);
-    margin-bottom: 4px;
-  }
-  .card-title {
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-  .pill {
-    display: inline-block;
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 999px;
-  }
-  .pill.To-Do { background: var(--todo); color: var(--todo-text); }
-  .pill.In-Progress { background: var(--progress); color: var(--progress-text); }
-  .pill.Done { background: var(--done); color: var(--done-text); }
-  .comment-count {
-    float: right;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; background: #f0f2f5; color: #1f2328; min-height: 100vh; }
+
+  .header { background: #1f2328; color: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #3b82d4; }
+  .header-logo { width: 28px; height: 28px; background: #3b82d4; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; color: #fff; flex-shrink: 0; }
+  .header-title { font-size: 16px; font-weight: 600; }
+  .header-sub { font-size: 12px; color: #8b949e; margin-left: auto; }
+
+  .epic-banner { background: #fff; border-left: 4px solid #7c5cd8; margin: 20px 24px 0; padding: 14px 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.07); display: flex; align-items: flex-start; gap: 12px; }
+  .epic-tag { background: #7c5cd8; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px; letter-spacing: .04em; flex-shrink: 0; margin-top: 3px; }
+  .story-tag { background: #3b82d4; }
+  .epic-info h2 { font-size: 15px; font-weight: 600; }
+  .epic-info p { font-size: 12px; color: #57606a; margin-top: 2px; }
+  .epic-meta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+  .progress-bar-wrap { width: 160px; background: #e5e7eb; border-radius: 4px; height: 6px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: #3b82d4; border-radius: 4px; transition: width .4s; }
+  .progress-label { font-size: 11px; color: #57606a; }
+
+  .stats-row { display: flex; gap: 10px; margin: 14px 24px 0; flex-wrap: wrap; }
+  .stat-pill { background: #fff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 4px 12px; font-size: 12px; color: #57606a; display: flex; align-items: center; gap: 6px; }
+  .stat-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot-todo { background: #9ca3af; } .dot-wip { background: #f59e0b; } .dot-done { background: #22c55e; }
+
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 16px 24px 32px; }
+  .column { background: #fff; border-radius: 8px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,.06); display: flex; flex-direction: column; min-height: 420px; }
+  .column-header { padding: 12px 16px 10px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 8px 8px 0 0; }
+  .column-header h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #57606a; }
+  .col-count { background: #f0f2f5; color: #57606a; border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+  .col-indicator { width: 10px; height: 10px; border-radius: 50%; margin-left: auto; }
+  .ind-todo { background: #e5e7eb; border: 2px solid #9ca3af; }
+  .ind-wip  { background: #fef3c7; border: 2px solid #f59e0b; }
+  .ind-done { background: #dcfce7; border: 2px solid #22c55e; }
+  .column-body { padding: 10px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+
+  .card { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow .15s, transform .1s; }
+  .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); transform: translateY(-1px); border-color: #3b82d4; }
+  .card-id { font-size: 10px; font-weight: 700; color: #3b82d4; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+  .card-title { font-size: 13px; font-weight: 600; color: #1f2328; line-height: 1.4; }
+  .card-summary { font-size: 11px; color: #57606a; margin-top: 4px; line-height: 1.4; }
+  .card-footer { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .badge-type { font-size: 10px; background: #e8f0fe; color: #3b82d4; border-radius: 3px; padding: 1px 6px; font-weight: 600; }
+  .badge-comments { font-size: 10px; color: #57606a; }
+  .move-btn { font-size: 10px; padding: 2px 8px; border-radius: 3px; border: 1px solid #d0d7de; background: #fff; color: #57606a; cursor: pointer; font-family: inherit; transition: background .1s; margin-left: auto; }
+  .move-btn:hover { background: #3b82d4; color: #fff; border-color: #3b82d4; }
+  .move-btn.back:hover { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+  .move-btn.reset:hover { background: #ef4444; border-color: #ef4444; color: #fff; }
+
+  /* Modal */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; }
   .overlay.open { display: flex; }
-  .modal {
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: 10px;
-    max-width: 640px;
-    width: 100%;
-    max-height: 80vh;
-    overflow-y: auto;
-    padding: 24px;
-  }
-  .modal h3 { margin-top: 0; }
-  .modal .desc {
-    color: var(--muted);
-    white-space: pre-wrap;
-    line-height: 1.5;
-    margin-bottom: 16px;
-  }
-  .modal .comments h4 {
-    font-size: 12px;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-bottom: 8px;
-  }
-  .comment {
-    border-left: 2px solid var(--panel-border);
-    padding-left: 10px;
-    margin-bottom: 10px;
-    font-size: 13px;
-  }
-  .comment .date { color: var(--muted); font-size: 11px; }
-  .close-btn {
-    float: right;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-size: 18px;
-    cursor: pointer;
-  }
-  footer {
-    margin-top: 24px;
-    color: var(--muted);
-    font-size: 12px;
-  }
+  .modal { background: #fff; border-radius: 8px; width: 100%; max-width: 700px; box-shadow: 0 8px 32px rgba(0,0,0,.18); overflow: hidden; }
+  .modal-header { padding: 16px 20px 12px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: flex-start; gap: 10px; }
+  .modal-titles { flex: 1; }
+  .modal-id { font-size: 11px; font-weight: 700; color: #3b82d4; text-transform: uppercase; letter-spacing: .05em; }
+  .modal-title { font-size: 17px; font-weight: 700; margin-top: 2px; line-height: 1.3; }
+  .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #57606a; padding: 0 2px; flex-shrink: 0; line-height: 1; }
+  .modal-close:hover { color: #1f2328; }
+  .modal-body { padding: 18px 20px; max-height: 70vh; overflow-y: auto; }
+  .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #57606a; margin-bottom: 6px; margin-top: 16px; }
+  .section-label:first-child { margin-top: 0; }
+  .meta-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .meta-item { display: flex; flex-direction: column; gap: 2px; }
+  .meta-key { font-size: 11px; color: #57606a; }
+  .meta-val { font-size: 13px; font-weight: 600; }
+  .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .s-todo { background: #f0f2f5; color: #57606a; }
+  .s-wip  { background: #fef3c7; color: #92400e; }
+  .s-done { background: #dcfce7; color: #166534; }
+  .description-box { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px 14px; font-size: 13px; line-height: 1.75; white-space: pre-wrap; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; color: #1f2328; }
+  .comments-list { display: flex; flex-direction: column; gap: 8px; }
+  .comment-item { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 5px; padding: 9px 12px; }
+  .comment-date { font-size: 11px; color: #57606a; margin-bottom: 2px; }
+  .comment-text { font-size: 13px; }
+  .no-comments { font-size: 12px; color: #9ca3af; font-style: italic; }
+  .modal-footer { padding: 12px 20px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; align-items: center; background: #f7f8fa; flex-wrap: wrap; }
+  .btn { padding: 6px 14px; border-radius: 5px; font-size: 13px; font-weight: 600; border: 1px solid transparent; cursor: pointer; font-family: inherit; transition: background .15s; }
+  .btn-primary   { background: #3b82d4; color: #fff; border-color: #3b82d4; }
+  .btn-primary:hover { background: #2563b8; }
+  .btn-secondary { background: #fff; color: #1f2328; border-color: #d0d7de; }
+  .btn-secondary:hover { background: #f3f4f6; }
+  .btn-danger    { background: #fff; color: #ef4444; border-color: #fca5a5; margin-left: auto; }
+  .btn-danger:hover { background: #fef2f2; }
+  .add-comment-area { width: 100%; margin-top: 4px; }
+  .add-comment-area textarea { width: 100%; min-height: 60px; resize: vertical; border: 1px solid #d0d7de; border-radius: 5px; padding: 8px 10px; font-size: 13px; font-family: inherit; color: #1f2328; background: #fff; outline: none; }
+  .add-comment-area textarea:focus { border-color: #3b82d4; }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: #1f2328; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.2); opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; z-index: 200; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  footer { text-align: center; font-size: 11px; color: #8b949e; padding: 16px; border-top: 1px solid #e5e7eb; background: #fff; margin-top: 8px; }
 </style>
 </head>
 <body>
 
-<header>
-  <div>
-    <h1 id="epic-title">agent-memory-sdk</h1>
-    <div class="epic-tag" id="epic-desc"></div>
-  </div>
-  <div class="epic-tag">Local board — no server, no login. Edit the JSON in this file to update it.</div>
-</header>
-
-<div class="board">
-  <div class="column" id="col-todo"><h2>To Do <span id="count-todo"></span></h2></div>
-  <div class="column" id="col-progress"><h2>In Progress <span id="count-progress"></span></h2></div>
-  <div class="column" id="col-done"><h2>Done <span id="count-done"></span></h2></div>
-</div>
-
-<div class="overlay" id="overlay">
-  <div class="modal">
-    <button class="close-btn" onclick="closeModal()">✕</button>
-    <div class="card-id" id="modal-id"></div>
-    <h3 id="modal-title"></h3>
-    <span class="pill" id="modal-status"></span>
-    <div class="desc" id="modal-desc"></div>
-    <div class="comments">
-      <h4>Comments</h4>
-      <div id="modal-comments"></div>
-    </div>
-  </div>
-</div>
-
-<footer>
-  Full step specs live in <code>PROMPTS.md</code>. This board mirrors their
-  status; it's a plain data file, not a live app — an agent updates the JSON
-  block below directly as part of each step's working agreement, then
-  commits it alongside the code.
-</footer>
-
-<!--
-  BOARD DATA — this is what an agent edits to update the board.
-  To change a story's status: change its "status" field to one of
-  "To Do", "In Progress", "Done".
-  To add a comment: push {"date": "YYYY-MM-DD", "text": "..."} into its
-  "comments" array (used for the "summary + commit hash" note required
-  when a step finishes).
--->
+<!-- ═══════════════════════════════════════════════════════════════════
+     BOARD DATA — agents edit the JSON below to update story status
+     and add comments. Fields per story:
+       id        – stable identifier (e.g. "STEP-1")
+       title     – display title
+       summary   – one-line description shown on the card
+       status    – "To Do" | "In Progress" | "Done"
+       comments  – array of { "date": "YYYY-MM-DD", "text": "…" }
+     Do not rename or remove any field; the rendering script reads them
+     by name. Add new comments by appending to the comments array.
+  ═══════════════════════════════════════════════════════════════════ -->
 <script id="board-data" type="application/json">
 {
   "epic": {
     "id": "EPIC-1",
     "title": "agent-memory-sdk",
-    "description": "Python SDK giving AI agents governed, multi-type memory (working/episodic/semantic/procedural) backed by IBM Db2 LUW, with native vector search."
+    "description": "Governed multi-type memory system for AI agents backed by IBM Db2 LUW with native VECTOR search (Db2 12.1.2+).",
+    "comments": []
   },
   "stories": [
     {
       "id": "STEP-1",
       "title": "Step 1: Scaffold",
-      "status": "To Do",
-      "description": "Scaffold the agent-memory-sdk Python package (src-layout, pyproject.toml, deps: ibm_db, ibm_db_dbi, pydantic v2) and a Db2 connection/pool module with a connectivity check script. Full spec in PROMPTS.md.",
-      "comments": []
+      "summary": "src-layout, pyproject.toml, Db2 connection pool, check_connection script.",
+      "status": "Done",
+      "description": "Scaffold the `agent-memory-sdk` Python package. Use a standard src-layout\n(`src/agent_memory_sdk/`), `pyproject.toml` (build via hatchling or\nsetuptools, your choice — state which and why), and dependencies: ibm_db,\nibm_db_dbi, pydantic v2. Add dev deps: pytest, ruff, mypy.\n\nUse the Product Knowledge MCP tool to confirm current best practice for\n`ibm_db`/`ibm_db_dbi` connection setup and any known gotchas (e.g. required\nCLI driver install steps, connection string format) before writing the\nconnection module — don't rely on training-data assumptions for\nIBM-specific driver behavior.\n\nCreate a `Db2Connection`/connection-pool module (`db/connection.py`) that:\n- reads connection params from env vars (DATABASE, HOSTNAME, PORT, UID, PWD,\n  SECURITY) with a documented .env.example\n- wraps ibm_db_dbi.connect with a small manual pool (a bounded queue of\n  connections, since ibm_db_dbi has no built-in pooling)\n- exposes a context-manager `get_connection()` for safe checkout/checkin\n\nWrite a `scripts/check_connection.py` that opens a connection and runs\n`SELECT 1 FROM SYSIBM.SYSDUMMY1` to verify connectivity. Do not write any\nschema or memory logic yet — this step is scaffolding + connectivity only.",
+      "comments": [
+        {
+          "date": "2026-07-30",
+          "text": "Scaffold complete. pyproject.toml with hatchling build backend (zero-config src-layout, PEP 517/660). src/agent_memory_sdk/db/connection.py: ConnectionPool wrapping a queue.Queue of ibm_db handles, ibm_db_dbi.Connection re-wrapped per checkout, context-manager get_connection(), Windows DLL guard, pool exhaustion/closed-pool exceptions. .env.example documents all DB2_* env vars. scripts/check_connection.py runs SELECT 1 FROM SYSIBM.SYSDUMMY1. 10/10 unit tests passing (ibm_db fully mocked). Lint clean (ruff). Key findings from Product Knowledge + web: ibm_db_dbi is not a separate PyPI package; connection string is ODBC keyword pairs only; no built-in pooling."
+        }
+      ]
     },
     {
       "id": "STEP-2",
       "title": "Step 2: Schema & migrations",
+      "summary": "Db2 DDL for 5 per-type tables, vector indexes, minimal migration runner.",
       "status": "To Do",
-      "description": "Write Db2 DDL for the five per-type memory tables (working, episodic, semantic_facts, entity_profiles, procedural) including VECTOR columns and CREATE VECTOR INDEX statements, plus a minimal SQL migration runner. Full spec in PROMPTS.md.",
+      "description": "Design and write the Db2 DDL for the four per-type memory tables (working,\nepisodic, semantic_facts, entity_profiles, procedural), per the Step 0\ndecisions. For each table include: id, tenant_id, agent_id, user_id,\nthread_id, content (CLOB or VARCHAR based on expected size), metadata\n(JSON column), embedding (VECTOR(<dim>, FLOAT32) NOT NULL — default to a\nzero-vector if none provided, document why), created_at, updated_at,\nexpires_at (nullable), version, deleted_at (nullable, for soft-delete).\n\nUse the Product Knowledge MCP tool to verify the exact current `VECTOR`\ncolumn DDL syntax, `CREATE VECTOR INDEX` clause options, and DiskANN\nparameters/limitations before finalizing the DDL.\n\nAdd CREATE VECTOR INDEX statements per table using DiskANN with a documented\ndistance metric choice per type (justify cosine vs euclidean per table).\nAdd supporting indexes for the scoping columns (tenant_id, agent_id,\nuser_id, thread_id).\n\nBuild a minimal SQL migration runner (`db/migrations/`, numbered .sql files\n+ a `migrate.py` that applies pending ones and tracks applied versions in a\n`schema_migrations` table) — do not pull in alembic.",
       "comments": []
     },
     {
       "id": "STEP-3",
       "title": "Step 3: Core models & repositories",
+      "summary": "Pydantic models, per-type repos with vector search, MemoryStore facade, unit tests.",
       "status": "To Do",
-      "description": "Implement Pydantic models and a repository class per memory type, an EmbeddingProvider protocol, and a MemoryStore facade composing all repositories. Full spec in PROMPTS.md.",
+      "description": "Implement Pydantic models for the four memory types (WorkingMemory,\nEpisodicMemory, SemanticFact, EntityProfile, ProceduralMemory) matching the\nStep 2 schema.\n\nImplement a repository class per type (e.g. `WorkingMemoryRepository`) with:\n- create/upsert, get_by_id, list (scoped + filtered), soft_delete\n- a `search(query_embedding, scope, top_k, metric, mode=EXACT|APPROX)`\n  method that builds the VECTOR_DISTANCE SQL with FETCH EXACT/APPROX\n- all methods REQUIRE at minimum agent_id scope; reject calls missing scope\n\nDefine an `EmbeddingProvider` protocol (a callable: text -> vector) that\ncallers inject — the SDK must not hard-depend on a specific embedding model.\n\nAdd a top-level `MemoryStore` facade that composes all four repositories\nbehind one object (`store.working`, `store.episodic`, `store.facts`,\n`store.profiles`, `store.procedures`).\n\nWrite unit tests using a fake/in-memory repository (mock ibm_db_dbi cursor)\nso tests don't require a live Db2 instance.",
       "comments": []
     },
     {
       "id": "STEP-4",
       "title": "Step 4: Lifecycle: TTL, versioning, forget, consolidation",
+      "summary": "forget()/purge_expired(), optimistic concurrency, pluggable Consolidator.",
       "status": "To Do",
-      "description": "Add forget()/tombstone soft-delete, purge_expired(), optimistic concurrency via version, and a pluggable Consolidator protocol invoked synchronously by default. Full spec in PROMPTS.md.",
+      "description": "Add lifecycle features to the repositories/MemoryStore from Step 3:\n- `forget(id, scope)` — sets deleted_at (tombstone), never hard-deletes by\n  default; add a separate `purge_expired()` maintenance method that hard-\n  deletes rows past expires_at AND already soft-deleted, callable via a\n  script/cron, not automatically.\n- optimistic concurrency on `version` for updates (raise on stale write)\n- a `Consolidator` protocol: a pluggable callback\n  `(raw_memories: list) -> list[derived_memory]` that MemoryStore can\n  invoke synchronously after writes to working/episodic memory, producing\n  semantic facts / entity profile updates / procedural memory. Ship a\n  no-op default consolidator plus a documented example of wiring in an\n  LLM-based one. Make clear in docs how a caller would instead run this\n  async (e.g. call it from a cron job reading unconsolidated rows) —\n  implement the sync path now, just document the async extension point.",
       "comments": []
     },
     {
       "id": "STEP-5",
       "title": "Step 5: Governance / scoping enforcement",
+      "summary": "MemoryScope value object, SQL scope predicates on every query, cross-scope isolation tests.",
       "status": "To Do",
-      "description": "Add a MemoryScope value object required on every MemoryStore call; ensure every query includes scope predicates; test cross-scope isolation. Full spec in PROMPTS.md.",
+      "description": "Harden scoping across the SDK: add a `MemoryScope` value object\n(tenant_id, agent_id, user_id, thread_id) that's required on every\nMemoryStore call instead of loose kwargs. Ensure every generated SQL\nstatement includes scope predicates (never allow a query with only an id\nand no scope check — this is the multi-tenant isolation boundary). Add\ntests that assert cross-scope reads return nothing even if you know another\nscope's row id.",
       "comments": []
     },
     {
       "id": "STEP-6",
       "title": "Step 6: Framework adapters",
+      "summary": "LangChain BaseChatMessageHistory, OpenAI Agents SDK Session, MCP tools — all optional extras.",
       "status": "To Do",
-      "description": "Build thin optional adapters: LangChain (BaseChatMessageHistory/BaseStore), OpenAI Agents SDK (Session protocol), and MCP (remember/recall/forget/list tools), each gated behind extras. Full spec in PROMPTS.md.",
+      "description": "Build three thin adapters on top of the Step 3-5 core, each in its own\noptional-dependency submodule (agent_memory_sdk.adapters.langchain,\n.openai_agents, .mcp):\n1. LangChain: implement BaseChatMessageHistory backed by store.working,\n   and optionally a BaseStore implementation for facts/profiles.\n2. OpenAI Agents SDK: implement the Session protocol backed by\n   store.working + store.episodic.\n3. MCP: expose remember/recall/forget/list as MCP tools so any\n   MCP-compatible agent can use the SDK without a Python import.\n\nKeep the core package importable with zero adapter dependencies installed;\ngate each adapter behind an extras_require group in pyproject.toml\n(e.g. `pip install agent-memory-sdk[langchain]`).",
       "comments": []
     },
     {
       "id": "STEP-7",
       "title": "Step 7: Integration tests",
+      "summary": "Real Db2 tests (Docker): migration, vector search, scope isolation, TTL, adapter round-trips.",
       "status": "To Do",
-      "description": "Add integration tests against a real Db2 LUW instance (Docker), gated behind an env var/marker, covering migrations, vector search correctness, scope isolation, TTL purge, and each adapter's round-trip. Full spec in PROMPTS.md.",
+      "description": "Add integration tests that run against a real Db2 LUW instance (document\nhow to spin one up locally, e.g. the ibmcom/db2 Docker image) gated behind\nan env var / pytest marker so they're skippable in CI without Db2. Cover:\nschema migration end-to-end, vector search correctness (known nearest\nneighbor), scope isolation, TTL purge, forget/tombstone, and each adapter's\nbasic round-trip (LangChain history, OpenAI Session, MCP tool calls).",
       "comments": []
     },
     {
       "id": "STEP-8",
       "title": "Step 8: Docs & examples",
+      "summary": "README (install, quickstart, memory types, scoping, lifecycle) + one runnable example per adapter.",
       "status": "To Do",
-      "description": "Write the README and one short runnable example per adapter under examples/. Full spec in PROMPTS.md.",
+      "description": "Write the README (install, quickstart with docker Db2, the four memory\ntypes explained, scoping model, lifecycle features) and one runnable\nexample per adapter under examples/. Keep examples short — under 50 lines\neach, showing store setup, a remember() call, and a recall() call.\n\nBefore starting: read DECISIONS.md in full — the README should reflect it\naccurately, not the original Step 0 aspiration if anything changed along\nthe way.",
       "comments": []
     }
   ]
 }
 </script>
 
+<div class="header">
+  <div class="header-logo">AM</div>
+  <div>
+    <div class="header-title">agent-memory-sdk</div>
+  </div>
+  <div class="header-sub">Local Project Board &nbsp;·&nbsp; IBM Db2 LUW + Python</div>
+</div>
+
+<div class="epic-banner">
+  <span class="epic-tag">EPIC</span>
+  <div class="epic-info">
+    <h2 id="epicTitle"></h2>
+    <p id="epicDesc"></p>
+  </div>
+  <div class="epic-meta">
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="epicProgress" style="width:0%"></div>
+    </div>
+    <div class="progress-label" id="epicLabel">0 / 8 done</div>
+  </div>
+</div>
+
+<div class="stats-row">
+  <div class="stat-pill"><span class="stat-dot dot-todo"></span><span id="cntTodo">0</span>&nbsp;To Do</div>
+  <div class="stat-pill"><span class="stat-dot dot-wip"></span><span id="cntWip">0</span>&nbsp;In Progress</div>
+  <div class="stat-pill"><span class="stat-dot dot-done"></span><span id="cntDone">0</span>&nbsp;Done</div>
+</div>
+
+<div class="board">
+  <div class="column">
+    <div class="column-header">
+      <h3>To Do</h3><span class="col-count" id="hTodo">0</span>
+      <span class="col-indicator ind-todo"></span>
+    </div>
+    <div class="column-body" id="col-todo"></div>
+  </div>
+  <div class="column">
+    <div class="column-header">
+      <h3>In Progress</h3><span class="col-count" id="hWip">0</span>
+      <span class="col-indicator ind-wip"></span>
+    </div>
+    <div class="column-body" id="col-wip"></div>
+  </div>
+  <div class="column">
+    <div class="column-header">
+      <h3>Done</h3><span class="col-count" id="hDone">0</span>
+      <span class="col-indicator ind-done"></span>
+    </div>
+    <div class="column-body" id="col-done"></div>
+  </div>
+</div>
+
+<!-- Detail modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="epic-tag story-tag" id="mTag">STORY</span>
+      <div class="modal-titles">
+        <div class="modal-id" id="mId"></div>
+        <div class="modal-title" id="mTitle"></div>
+      </div>
+      <button class="modal-close" id="btnClose">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+      <div class="section-label">Status &amp; meta</div>
+      <div class="meta-row">
+        <div class="meta-item"><span class="meta-key">Status</span><span id="mStatus" class="meta-val"></span></div>
+        <div class="meta-item"><span class="meta-key">Type</span><span class="meta-val">Story</span></div>
+        <div class="meta-item"><span class="meta-key">Epic</span><span class="meta-val">agent-memory-sdk</span></div>
+      </div>
+      <div class="section-label">Description</div>
+      <div class="description-box" id="mDesc"></div>
+      <div class="section-label">Comments</div>
+      <div id="mComments" class="comments-list"></div>
+      <div class="section-label" style="margin-top:12px">Add comment</div>
+      <div class="add-comment-area">
+        <textarea id="commentInput" placeholder="Enter comment text…"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="btnStart">▶ Start</button>
+      <button class="btn btn-primary"   id="btnDone">✓ Done</button>
+      <button class="btn btn-secondary" id="btnBack">↩ Back</button>
+      <button class="btn btn-secondary" id="btnAddComment">+ Comment</button>
+      <button class="btn btn-danger"    id="btnReset">Reset</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<footer>Made with IBM Bob</footer>
+
 <script>
-  const data = JSON.parse(document.getElementById('board-data').textContent);
+// ── Load data from the embedded JSON block ──────────────────────────────────
+const raw = document.getElementById('board-data').textContent;
+let data  = JSON.parse(raw);
 
-  document.getElementById('epic-title').textContent = data.epic.title;
-  document.getElementById('epic-desc').textContent = data.epic.description;
+let activeId = null;
 
-  const columns = {
-    'To Do': document.getElementById('col-todo'),
-    'In Progress': document.getElementById('col-progress'),
-    'Done': document.getElementById('col-done')
-  };
-  const counts = { 'To Do': 0, 'In Progress': 0, 'Done': 0 };
+// ── Helpers ─────────────────────────────────────────────────────────────────
+const COL_KEY = { 'To Do': 'todo', 'In Progress': 'wip', 'Done': 'done' };
+const LABEL   = { todo: 'To Do', wip: 'In Progress', done: 'Done' };
+const SC      = { 'To Do': 's-todo', 'In Progress': 's-wip', 'Done': 's-done' };
 
-  data.stories.forEach(story => {
-    counts[story.status] = (counts[story.status] || 0) + 1;
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <div class="card-id">${story.id}</div>
-      <div class="card-title">${story.title}</div>
-      <span class="pill ${story.status.replace(' ', '-')}">${story.status}</span>
-      <span class="comment-count">${story.comments.length ? story.comments.length + ' comment' + (story.comments.length > 1 ? 's' : '') : ''}</span>
-    `;
-    card.onclick = () => openModal(story);
-    columns[story.status].appendChild(card);
+function getStory(id) { return data.stories.find(s => s.id === id); }
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function render() {
+  // Epic
+  document.getElementById('epicTitle').textContent = data.epic.title;
+  document.getElementById('epicDesc').textContent  = data.epic.description;
+
+  // Counts
+  const cnt = { todo: 0, wip: 0, done: 0 };
+  data.stories.forEach(s => cnt[COL_KEY[s.status]]++);
+  ['todo','wip','done'].forEach(k => {
+    document.getElementById('cnt' + k.charAt(0).toUpperCase() + k.slice(1)).textContent = cnt[k];
+    document.getElementById('h'   + k.charAt(0).toUpperCase() + k.slice(1)).textContent = cnt[k];
   });
 
-  document.getElementById('count-todo').textContent = '(' + counts['To Do'] + ')';
-  document.getElementById('count-progress').textContent = '(' + counts['In Progress'] + ')';
-  document.getElementById('count-done').textContent = '(' + counts['Done'] + ')';
+  // Progress
+  const pct = Math.round((cnt.done / data.stories.length) * 100);
+  document.getElementById('epicProgress').style.width = pct + '%';
+  document.getElementById('epicLabel').textContent = `${cnt.done} / ${data.stories.length} done`;
 
-  function openModal(story) {
-    document.getElementById('modal-id').textContent = story.id;
-    document.getElementById('modal-title').textContent = story.title;
-    const pill = document.getElementById('modal-status');
-    pill.textContent = story.status;
-    pill.className = 'pill ' + story.status.replace(' ', '-');
-    document.getElementById('modal-desc').textContent = story.description;
-    const commentsEl = document.getElementById('modal-comments');
-    commentsEl.innerHTML = story.comments.length
-      ? story.comments.map(c => `<div class="comment"><div class="date">${c.date}</div>${c.text}</div>`).join('')
-      : '<div class="comment" style="border:none;color:var(--muted);padding-left:0;">No comments yet.</div>';
-    document.getElementById('overlay').classList.add('open');
-  }
-  function closeModal() {
-    document.getElementById('overlay').classList.remove('open');
-  }
-  document.getElementById('overlay').addEventListener('click', e => {
-    if (e.target.id === 'overlay') closeModal();
+  // Cards
+  ['todo','wip','done'].forEach(col => {
+    const el = document.getElementById('col-' + col);
+    el.innerHTML = '';
+    data.stories.filter(s => COL_KEY[s.status] === col).forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = s.id;
+
+      let btn = '';
+      if (col === 'todo') btn = `<button class="move-btn" data-action="start" data-id="${s.id}">Start</button>`;
+      if (col === 'wip')  btn = `<button class="move-btn back" data-action="back" data-id="${s.id}">Back</button>`;
+      if (col === 'done') btn = `<button class="move-btn reset" data-action="reset" data-id="${s.id}">Reset</button>`;
+
+      const nc = s.comments.length;
+      card.innerHTML = `
+        <div class="card-id">${s.id}</div>
+        <div class="card-title">${s.title}</div>
+        <div class="card-summary">${s.summary}</div>
+        <div class="card-footer">
+          <span class="badge-type">Story</span>
+          ${nc ? `<span class="badge-comments">&#128172; ${nc}</span>` : ''}
+          ${btn}
+        </div>`;
+      el.appendChild(card);
+    });
   });
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────────
+function openModal(id) {
+  const s = getStory(id);
+  if (!s) return;
+  activeId = id;
+  document.getElementById('mId').textContent    = s.id;
+  document.getElementById('mTitle').textContent  = s.title;
+  document.getElementById('mDesc').textContent   = s.description;
+  document.getElementById('commentInput').value  = '';
+
+  const badge = document.getElementById('mStatus');
+  badge.textContent = s.status;
+  badge.className   = 'status-badge ' + SC[s.status];
+
+  // Comments
+  const cl = document.getElementById('mComments');
+  if (s.comments.length === 0) {
+    cl.innerHTML = '<div class="no-comments">No comments yet.</div>';
+  } else {
+    cl.innerHTML = s.comments.map(c =>
+      `<div class="comment-item"><div class="comment-date">${c.date}</div><div class="comment-text">${c.text}</div></div>`
+    ).join('');
+  }
+
+  const col = COL_KEY[s.status];
+  document.getElementById('btnStart').style.display = col === 'todo' ? '' : 'none';
+  document.getElementById('btnDone') .style.display = col === 'wip'  ? '' : 'none';
+  document.getElementById('btnBack') .style.display = col === 'wip'  ? '' : 'none';
+  document.getElementById('btnReset').style.display = col === 'done' ? '' : 'none';
+
+  document.getElementById('overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('overlay').classList.remove('open');
+  activeId = null;
+}
+
+// ── Mutations (UI only — updates in-memory data; file edits use the JSON block) ──
+function moveStory(id, action) {
+  const s = getStory(id);
+  if (!s) return;
+  if (action === 'start') s.status = 'In Progress';
+  if (action === 'done')  s.status = 'Done';
+  if (action === 'back')  s.status = 'To Do';
+  if (action === 'reset') s.status = 'To Do';
+  toast(`${s.id} → ${s.status}`);
+  render();
+  if (activeId === id) openModal(id);
+}
+
+function addComment(id) {
+  const s    = getStory(id);
+  const text = document.getElementById('commentInput').value.trim();
+  if (!s || !text) return;
+  const today = new Date().toISOString().slice(0, 10);
+  s.comments.push({ date: today, text });
+  document.getElementById('commentInput').value = '';
+  toast('Comment added (in-memory only — edit JSON block to persist)');
+  render();
+  openModal(id);
+}
+
+// ── Event delegation ─────────────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  const actionBtn = e.target.closest('[data-action]');
+  if (actionBtn) {
+    e.stopPropagation();
+    moveStory(actionBtn.dataset.id, actionBtn.dataset.action);
+    return;
+  }
+  const card = e.target.closest('.card');
+  if (card) { openModal(card.dataset.id); return; }
+  if (e.target.id === 'btnClose' || e.target.id === 'overlay') closeModal();
+  if (e.target.id === 'btnStart')  moveStory(activeId, 'start');
+  if (e.target.id === 'btnDone')   moveStory(activeId, 'done');
+  if (e.target.id === 'btnBack')   moveStory(activeId, 'back');
+  if (e.target.id === 'btnReset')  moveStory(activeId, 'reset');
+  if (e.target.id === 'btnAddComment') addComment(activeId);
+});
+
+render();
 </script>
-
 </body>
 </html>
