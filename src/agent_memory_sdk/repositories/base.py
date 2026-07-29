@@ -16,10 +16,11 @@ Step-4 additions
 - ``forget(id, scope)``      — soft-delete (tombstone) a row.
 - ``update(record, scope)``  — update content/metadata/embedding with
                                optimistic concurrency on ``version``.
-- ``purge_expired(scope)``   — maintenance-only hard-DELETE for rows that
-                               are both tombstoned AND past their TTL, OR
-                               rows with an expired TTL that are not
-                               tombstoned.  Never called automatically.
+- ``purge_expired(scope)``   — maintenance-only hard-DELETE for all
+                               tombstoned rows (``deleted_at IS NOT NULL``).
+                               TTL-expired but non-tombstoned rows are left
+                               alone — callers must call ``forget()`` first.
+                               Never called automatically.
 
 DB-API usage notes
 ------------------

@@ -731,6 +731,113 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-07-31 — Step 7: Integration tests
+
+- **Decision (test layout and skip mechanism):**
+  Integration tests live in `tests/integration/` as a dedicated package,
+  separate from the unit tests in `tests/`.  They are gated by two
+  complementary mechanisms:
+  1. A `pytestmark = pytest.mark.integration` marker in every test module.
+  2. A `pytest_collection_modifyitems` hook in `tests/integration/conftest.py`
+     that auto-skips the entire `tests/integration/` directory at collection
+     time when `DB2_DATABASE` is not set in the environment.  This means
+     `pytest tests/` (or any CI run without Db2) never sees a failure from
+     the integration suite — the tests are simply reported as skipped.
+  The unit test suite (`pytest tests/ --ignore=tests/integration/`) has no
+  dependency on Db2 and continues to run at 248 tests in ~1.2 s.
+
+- **Decision (fixture isolation strategy):**
+  All integration tests use a fresh `unique_agent_id` UUID-based fixture per
+  test function, ensuring complete isolation between tests even when running
+  in parallel or against a shared Db2 instance.  The `db2_pool` and `store`
+  fixtures are session-scoped (one pool / one store object for the full test
+  session), while `scope`, `thread_scope`, and `unique_agent_id` are
+  function-scoped (fresh per test).  Migrations are applied once per session
+  via the `migrated_pool` fixture; the migration is idempotent so repeated
+  runs do not fail.
+
+- **Decision (coverage):**
+  The integration suite covers the seven areas mandated by the Step 7
+  prompt:
+  1. **Schema migration end-to-end** (`test_migration.py`) — idempotency,
+     `schema_migrations` version tracking, all five tables with correct
+     columns, `NOT NULL` VECTOR column type verified via `SYSCAT.COLUMNS`,
+     vector index presence verified via `SYSCAT.INDEXES`.
+  2. **Vector search correctness** (`test_core.py::TestVectorSearch`) — unit
+     vectors with known cosine similarity guarantee the nearest-neighbour is
+     deterministic; `top_k` cap verified; tombstoned rows excluded; cross-
+     scope search isolation.
+  3. **Scope isolation** (`test_core.py::TestScopeIsolation`) — `list_all`
+     and `get_by_id` cross-scope isolation, thread-scope isolation.
+  4. **TTL purge** (`test_core.py::TestTTL`, `TestPurgeExpired`) — expired
+     rows excluded from `list_all`; `purge_expired()` hard-deletes only
+     tombstoned rows; live rows survive; scope isolation on purge.
+  5. **forget / tombstone** (`test_core.py::TestForgetTombstone`) — row
+     hidden from `get_by_id` and `list_all`; `store.forget()` facade;
+     `forget()` returns `False` for missing row.
+  6. **Framework adapter round-trips** (`test_adapters_integration.py`):
+     - LangChain `Db2ChatMessageHistory`: add_message / messages property
+       (chronological order) / clear / add_messages batch / HumanMessage +
+       AIMessage type preservation after DB round-trip.
+     - LangChain `Db2MemoryStore`: mset / mget / mdelete / yield_keys /
+       prefix filter.
+     - OpenAI Agents SDK `Db2Session`: add_items / get_items (chronological
+       order, limit) / clear_session / pop_item (returns + tombstones most
+       recent, returns None when empty) / recall_episodes (episodic vector
+       search).
+     - MCP tool functions: `_tool_remember` (inserts real row) /
+       `_tool_recall` (vector search) / `_tool_forget` (tombstones) /
+       `_tool_list` / recall fallback to list when no embedding.
+  7. **Consolidator integration** (`test_core.py::TestConsolidator`) — a
+     custom consolidator persists derived `SemanticFact` rows on `remember()`.
+  Also covers: optimistic concurrency (`update()` + `StaleWriteError`),
+  CRUD round-trips for all five memory types.
+
+- **Decision (documentation):**
+  `INTEGRATION_TESTING.md` was added at the repo root documenting: Docker
+  `ibmcom/db2` setup (full `docker run` command with `--privileged`),
+  connectivity verification, env var configuration, editable install with
+  all extras, running with/without Db2, IBM Cloud Db2 SSL variant, a
+  coverage table for all three test files, marker/skip behaviour, table
+  cleanup, and a troubleshooting table.
+
+- **Gap found and fixed — `base.py` module docstring for `purge_expired()`:**
+  The module-level docstring in `repositories/base.py` (lines 19-22)
+  described `purge_expired()` as deleting "rows that are both tombstoned AND
+  past their TTL, OR rows with an expired TTL that are not tombstoned."  This
+  contradicts the actual SQL (`WHERE deleted_at IS NOT NULL` — no
+  `expires_at` predicate) and the deliberate design recorded in the Step 4
+  entry ("Rows with `expires_at` in the past but NOT tombstoned are left by
+  `purge_expired`") and the Step 4 audit entry (which corrected the same
+  stale wording in the `purge_expired()` method docstring but missed this
+  parallel description in the module-level header).  The module docstring was
+  corrected in this step to match the code and the recorded decision.
+  This is the only gap found between DECISIONS.md and the actual code.
+
+- **All other recorded decisions match the code as-built.**
+  Checked:
+  - Step 1: `ConnectionPool`, `_build_conn_str`, Windows DLL guard — matches.
+  - Step 2: DDL (`NOT NULL`, no `DEFAULT` on VECTOR, COSINE on all indexes,
+    `CLOB(65536)`, `VARCHAR(4096)` metadata, `VARCHAR(128)` scope cols) — matches.
+  - Step 3: `_scope_predicates`, `_require_agent_id`, scope on every path,
+    `TO_VECTOR`/`VECTOR_SERIALIZE`, `ROW_NUMBER()` pagination, `MemoryStore`
+    embedding_dim propagation — matches.
+  - Step 4: `forget()` is canonical (soft_delete alias), `purge_expired()`
+    semantics (`deleted_at IS NOT NULL` only), optimistic concurrency on
+    `version`, consolidator is NoOp by default, errors caught/logged —
+    matches.
+  - Step 5: `MemoryScope` frozen, all six SQL paths include scope predicates,
+    `create()` overwrites scope fields from scope arg, empty `agent_id`
+    rejected — matches.
+  - Step 6: adapter module layout, duck-typing (no dynamic inheritance),
+    Db2Session uses correct protocol methods (after the prior correction
+    entry), MCP tools return `TextContent(type="text", text=json_string)` —
+    matches.
+
+- **Made during:** Step 7 (Integration tests)
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```
