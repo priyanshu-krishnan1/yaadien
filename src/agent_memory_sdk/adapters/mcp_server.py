@@ -96,6 +96,20 @@ def _require_mcp() -> Any:
         ) from exc
 
 
+def _TextContent(**kwargs: Any) -> Any:  # pragma: no cover
+    """Thin wrapper around ``mcp.types.TextContent`` so tests can patch it.
+
+    Importing ``mcp.types.TextContent`` at the call-site inside each
+    ``_tool_*`` function made the symbol unpatchable in unit tests when
+    ``mcp`` is not installed.  By routing through this module-level
+    function, tests can patch
+    ``agent_memory_sdk.adapters.mcp_server._TextContent`` without
+    requiring the real ``mcp`` package.
+    """
+    from mcp.types import TextContent
+    return TextContent(**kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Model helpers
 # ---------------------------------------------------------------------------
@@ -361,8 +375,6 @@ def create_server(store: MemoryStore) -> Any:
 async def _tool_remember(
     store: MemoryStore, args: dict[str, Any]
 ) -> list[Any]:
-    from mcp.types import TextContent
-
     agent_id: str = args["agent_id"]
     content: str = args["content"]
     memory_type: str = args.get("memory_type", "working")
@@ -376,7 +388,7 @@ async def _tool_remember(
 
     model_cls = _TYPE_TO_MODEL.get(memory_type)
     if model_cls is None:
-        return [TextContent(
+        return [_TextContent(
             type="text",
             text=f"Unknown memory_type {memory_type!r}. Valid: {_VALID_TYPES}",
         )]
@@ -388,14 +400,12 @@ async def _tool_remember(
     )
     stored = store.remember(record, scope)
     result = {"id": stored.id, "memory_type": memory_type, "content": content}
-    return [TextContent(type="text", text=json.dumps(result))]
+    return [_TextContent(type="text", text=json.dumps(result))]
 
 
 async def _tool_recall(
     store: MemoryStore, args: dict[str, Any]
 ) -> list[Any]:
-    from mcp.types import TextContent
-
     agent_id: str = args["agent_id"]
     memory_type: str = args.get("memory_type", "working")
     top_k: int = int(args.get("top_k", 5))
@@ -419,7 +429,7 @@ async def _tool_recall(
     }
     repo_attr = repo_attr_map.get(memory_type)
     if repo_attr is None:
-        return [TextContent(
+        return [_TextContent(
             type="text",
             text=f"Unknown memory_type {memory_type!r}. Valid: {_VALID_TYPES}",
         )]
@@ -437,14 +447,12 @@ async def _tool_recall(
         rows = list(reversed(rows))  # chronological order
 
     records = [_record_to_dict(r) for r in rows]
-    return [TextContent(type="text", text=json.dumps(records))]
+    return [_TextContent(type="text", text=json.dumps(records))]
 
 
 async def _tool_forget(
     store: MemoryStore, args: dict[str, Any]
 ) -> list[Any]:
-    from mcp.types import TextContent
-
     agent_id: str = args["agent_id"]
     record_id: str = args["record_id"]
     memory_type: str = args.get("memory_type", "working")
@@ -458,9 +466,9 @@ async def _tool_forget(
         result = store.forget(record_id, memory_type, scope)
         status = "forgotten" if result else "not_found"
     except ValueError as exc:
-        return [TextContent(type="text", text=f"Error: {exc}")]
+        return [_TextContent(type="text", text=f"Error: {exc}")]
 
-    return [TextContent(
+    return [_TextContent(
         type="text",
         text=json.dumps({"id": record_id, "status": status}),
     )]
@@ -469,8 +477,6 @@ async def _tool_forget(
 async def _tool_list(
     store: MemoryStore, args: dict[str, Any]
 ) -> list[Any]:
-    from mcp.types import TextContent
-
     agent_id: str = args["agent_id"]
     memory_type: str = args.get("memory_type", "working")
     limit: int = min(int(args.get("limit", 20)), 100)
@@ -493,14 +499,14 @@ async def _tool_list(
     }
     repo_attr = repo_attr_map.get(memory_type)
     if repo_attr is None:
-        return [TextContent(
+        return [_TextContent(
             type="text",
             text=f"Unknown memory_type {memory_type!r}. Valid: {_VALID_TYPES}",
         )]
     repo = getattr(store, repo_attr)
     rows = repo.list_all(scope=scope, limit=limit)
     records = [_record_to_dict(r) for r in rows]
-    return [TextContent(type="text", text=json.dumps(records))]
+    return [_TextContent(type="text", text=json.dumps(records))]
 
 
 # ---------------------------------------------------------------------------

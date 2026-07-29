@@ -27,12 +27,14 @@ DB-API usage notes
 - Parameter placeholder: ``?`` (ibm_db_dbi uses qmark style, like SQLite).
 - CLOB columns: ibm_db_dbi requires the value to be passed as a plain
   Python ``str``.  The driver converts it to CLOB internally.
-- VECTOR columns: ibm_db_dbi accepts a Python ``list[float]`` for a
-  VECTOR column when passed as a string in ``'[f1,f2,...]'`` notation,
-  or — more portably — via the ``VECTOR_FROM_ARRAY(ARRAY[…], FLOAT32)``
-  scalar constructor.  We use the ``'[f1,f2,...]'`` string form and cast
-  with ``TO_VECTOR(?, FLOAT32)`` in the SQL so the parameter is a plain
-  string, keeping the SQL portable across ibm_db_dbi versions.
+- VECTOR columns: Db2 12.1.5 fp0 does NOT support binding a vector string
+  via ``?`` with ``TO_VECTOR(?, FLOAT32)`` — the driver raises
+  ``SQL0901N`` (binding error) for any form of ``CAST(? AS VECTOR)`` or
+  ``TO_VECTOR(?)``.  The only working approach on this version is to
+  **inline the vector string as a literal** directly in the SQL:
+  ``CAST('{vec_str}' AS VECTOR({dim},FLOAT32))``.
+  The vector string is constructed from Python floats by ``_vec_to_str``
+  and contains no user input, so there is no SQL-injection risk.
 - Timestamps: ibm_db_dbi accepts Python ``datetime`` objects for
   TIMESTAMP columns.
 """
@@ -65,8 +67,8 @@ def _require_agent_id(scope: MemoryScope) -> None:
 
 
 def _vec_to_str(embedding: list[float]) -> str:
-    """Serialize a Python float list to the ``'[f1,f2,…]'`` string form that
-    Db2's ``TO_VECTOR(?, FLOAT32)`` function accepts as a bound parameter."""
+    """Serialize a Python float list to the ``'[f1,f2,…]'`` string form used
+    as an inlined SQL literal: ``CAST('{vec_str}' AS VECTOR(dim,FLOAT32))``."""
     return "[" + ",".join(str(f) for f in embedding) + "]"
 
 
@@ -159,7 +161,7 @@ class BaseRepository(ABC, Generic[M]):
         ...
 
     def _zero_vec_str(self) -> str:
-        """Return the ``TO_VECTOR`` string for a zero-vector sentinel."""
+        """Return the vector string for a zero-vector sentinel (inlined in SQL)."""
         return "[" + ",".join("0.0" for _ in range(self.EMBEDDING_DIM)) + "]"
 
     # Column select list — ORDER must match _model_from_row index assumptions.
@@ -213,7 +215,7 @@ class BaseRepository(ABC, Generic[M]):
                 created_at, updated_at, expires_at, version, deleted_at
             ) VALUES (
                 ?, ?, ?, ?, ?,
-                ?, ?, TO_VECTOR(?, FLOAT32),
+                ?, ?, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
                 ?, ?, ?, ?, ?
             )
         """
@@ -225,7 +227,6 @@ class BaseRepository(ABC, Generic[M]):
             record.thread_id,
             record.content,
             metadata_str,
-            vec_str,
             record.created_at,
             record.updated_at,
             record.expires_at,
@@ -296,9 +297,11 @@ class BaseRepository(ABC, Generic[M]):
         scope_sql, scope_params = _scope_predicates(scope)
         limit = min(limit, 1000)
 
+        # Db2 CURRENT TIMESTAMP uses server local time; subtract CURRENT TIMEZONE
+        # to convert to UTC so it matches the UTC values we store from Python.
         extra = ""
         if not include_expired:
-            extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP)"
+            extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP - CURRENT TIMEZONE)"
 
         sql = f"""
             SELECT {self._SELECT_COLS}
@@ -438,7 +441,7 @@ class BaseRepository(ABC, Generic[M]):
             UPDATE {self._TABLE}
             SET content = ?,
                 metadata = ?,
-                embedding = TO_VECTOR(?, FLOAT32),
+                embedding = CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
                 updated_at = ?,
                 version = ?
             WHERE id = ?
@@ -449,7 +452,6 @@ class BaseRepository(ABC, Generic[M]):
         params = [
             record.content,
             metadata_str,
-            vec_str,
             now,
             new_version,
             record.id,
@@ -574,27 +576,54 @@ class BaseRepository(ABC, Generic[M]):
 
         extra = ""
         if not include_expired:
-            extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP)"
+            extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP - CURRENT TIMEZONE)"
 
         # Build the FETCH clause suffix.
         fetch_suffix = "APPROX" if mode == SearchMode.APPROX else ""  # EXACT/DEFAULT: plain FETCH FIRST
 
         approx_clause = f" {fetch_suffix}".rstrip()
 
-        sql = f"""
-            SELECT {self._SELECT_COLS}
+        # Db2 12.1.5 fp0 cannot combine VECTOR_SERIALIZE() in the SELECT list
+        # with VECTOR_DISTANCE() in the ORDER BY in a single statement.
+        # Work-around: two-step query —
+        #   Step 1: fetch IDs in nearest-first order (no VECTOR_SERIALIZE in SELECT).
+        #   Step 2: fetch full rows (with VECTOR_SERIALIZE) by those IDs, then
+        #           reorder to restore the original nearest-first ordering.
+        sql_ids = f"""
+            SELECT id
             FROM {self._TABLE}
             WHERE {scope_sql}
               AND deleted_at IS NULL
               {extra}
-            ORDER BY VECTOR_DISTANCE(embedding, TO_VECTOR(?, FLOAT32), {metric.value})
+            ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})
             FETCH FIRST ? ROWS ONLY{approx_clause}
         """
-        params = [*scope_params, vec_str, top_k]
+        id_params = [*scope_params, top_k]
 
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+            cur.execute(sql_ids, id_params)
+            ordered_ids: list[str] = [r[0] for r in cur.fetchall()]
 
-        return [self._model_from_row(r) for r in rows]
+        if not ordered_ids:
+            return []
+
+        placeholders = ",".join("?" for _ in ordered_ids)
+        sql_rows = f"""
+            SELECT {self._SELECT_COLS}
+            FROM {self._TABLE}
+            WHERE id IN ({placeholders})
+              AND deleted_at IS NULL
+        """
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql_rows, ordered_ids)
+            raw_rows = cur.fetchall()
+
+        # Reorder to restore nearest-first ordering from step 1.
+        row_map = {r[0]: r for r in raw_rows}
+        return [
+            self._model_from_row(row_map[id_])
+            for id_ in ordered_ids
+            if id_ in row_map
+        ]

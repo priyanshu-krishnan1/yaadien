@@ -75,6 +75,14 @@
 --   deployments set it). agent_id is NOT NULL — every row must belong to an
 --   agent. user_id and thread_id are nullable; some memory types (e.g.
 --   procedural_memory) are agent-scoped rather than user/thread-scoped.
+--
+-- EXPIRES_AT INDEX NOTE
+--   The ix_*_expires indexes are plain (non-partial) indexes on expires_at.
+--   Db2 12.1.5 fp0 does not support partial (filtered) indexes
+--   (CREATE INDEX ... WHERE). The original WHERE expires_at IS NOT NULL
+--   predicate was removed for compatibility. The index still accelerates
+--   TTL-based queries; rows with NULL expires_at incur a small index overhead
+--   but this is negligible given typical cardinality.
 
 -- ============================================================
 -- TABLE: working_memory
@@ -108,8 +116,7 @@ CREATE INDEX ix_working_memory_scope
 CREATE INDEX ix_working_memory_agent
     ON working_memory (agent_id);
 CREATE INDEX ix_working_memory_expires
-    ON working_memory (expires_at)
-    WHERE expires_at IS NOT NULL;
+    ON working_memory (expires_at);
 
 -- ============================================================
 -- TABLE: episodic_memory
@@ -141,8 +148,7 @@ CREATE INDEX ix_episodic_memory_scope
 CREATE INDEX ix_episodic_memory_agent
     ON episodic_memory (agent_id);
 CREATE INDEX ix_episodic_memory_expires
-    ON episodic_memory (expires_at)
-    WHERE expires_at IS NOT NULL;
+    ON episodic_memory (expires_at);
 
 -- ============================================================
 -- TABLE: semantic_facts
@@ -174,8 +180,7 @@ CREATE INDEX ix_semantic_facts_scope
 CREATE INDEX ix_semantic_facts_agent
     ON semantic_facts (agent_id);
 CREATE INDEX ix_semantic_facts_expires
-    ON semantic_facts (expires_at)
-    WHERE expires_at IS NOT NULL;
+    ON semantic_facts (expires_at);
 
 -- ============================================================
 -- TABLE: entity_profiles
@@ -207,8 +212,7 @@ CREATE INDEX ix_entity_profiles_scope
 CREATE INDEX ix_entity_profiles_agent
     ON entity_profiles (agent_id);
 CREATE INDEX ix_entity_profiles_expires
-    ON entity_profiles (expires_at)
-    WHERE expires_at IS NOT NULL;
+    ON entity_profiles (expires_at);
 
 -- ============================================================
 -- TABLE: procedural_memory
@@ -242,5 +246,4 @@ CREATE INDEX ix_procedural_memory_scope
 CREATE INDEX ix_procedural_memory_agent
     ON procedural_memory (agent_id);
 CREATE INDEX ix_procedural_memory_expires
-    ON procedural_memory (expires_at)
-    WHERE expires_at IS NOT NULL;
+    ON procedural_memory (expires_at);

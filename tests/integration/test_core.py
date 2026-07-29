@@ -488,14 +488,15 @@ class TestOptimisticConcurrency:
         record = WorkingMemory(
             agent_id=scope.agent_id, content="stale test"
         )
-        stored = store.working.create(record, scope)
+        stored = store.working.create(record, scope)  # version=1 in DB
 
         # Simulate a stale read: version is behind actual DB version.
         stored.content = "update 1"
-        store.working.update(stored, scope)  # version bumped to 2 in DB
+        store.working.update(stored, scope)  # mutates stored.version to 2; DB now has version=2
 
-        # Now try to update again with the same (now-stale) version=1 object.
-        stored.content = "update 2"  # stored.version is still 1
+        # Force the object back to the old version to simulate a stale concurrent reader.
+        stored.version = 1
+        stored.content = "update 2"
         with pytest.raises(StaleWriteError):
             store.working.update(stored, scope)
 

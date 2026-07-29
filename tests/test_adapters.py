@@ -506,13 +506,18 @@ class TestMcpAdapter:
         import asyncio
         return asyncio.run(coro)
 
-    def _fake_mcp_types(self):
-        """Return a MagicMock module stub with a simple TextContent factory."""
-        fake_tc_cls = MagicMock()
-        fake_tc_cls.side_effect = lambda **kw: MagicMock(type="text", text=kw.get("text", ""))
-        mod = MagicMock()
-        mod.TextContent = fake_tc_cls
-        return mod, fake_tc_cls
+    def _fake_text_content(self):
+        """Return a fake _TextContent callable and a tracker for call inspection."""
+        calls: list[dict] = []
+
+        def fake_tc(**kw):  # type: ignore[no-untyped-def]
+            calls.append(kw)
+            obj = MagicMock()
+            obj.type = "text"
+            obj.text = kw.get("text", "")
+            return obj
+
+        return fake_tc, calls
 
     def test_tool_remember_inserts_working(self):
         """_tool_remember must issue an INSERT for memory_type=working."""
@@ -520,9 +525,9 @@ class TestMcpAdapter:
 
         store, pool = self._make_store()
         args = {"agent_id": "agent-1", "content": "hello", "memory_type": "working"}
-        fake_mod, fake_tc_cls = self._fake_mcp_types()
+        fake_tc, _ = self._fake_text_content()
 
-        with patch.dict("sys.modules", {"mcp.types": fake_mod}):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_tc):
             self._run(_tool_remember(store, args))
 
         assert "INSERT INTO working_memory" in pool.cursor.last_sql
@@ -532,12 +537,12 @@ class TestMcpAdapter:
 
         store, pool = self._make_store()
         args = {"agent_id": "agent-1", "content": "x", "memory_type": "invalid"}
-        fake_mod, fake_tc_cls = self._fake_mcp_types()
+        fake_tc, calls = self._fake_text_content()
 
-        with patch.dict("sys.modules", {"mcp.types": fake_mod}):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_tc):
             self._run(_tool_remember(store, args))
 
-        call_text = fake_tc_cls.call_args[1].get("text", "") if fake_tc_cls.call_args else ""
+        call_text = calls[-1].get("text", "") if calls else ""
         assert "invalid" in call_text or "Unknown" in call_text
 
     def test_tool_recall_uses_list_when_no_embedding(self):
@@ -546,9 +551,9 @@ class TestMcpAdapter:
 
         store, pool = self._make_store(rows=[])
         args = {"agent_id": "agent-1", "memory_type": "working"}
-        fake_mod, _ = self._fake_mcp_types()
+        fake_tc, _ = self._fake_text_content()
 
-        with patch.dict("sys.modules", {"mcp.types": fake_mod}):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_tc):
             self._run(_tool_recall(store, args))
 
         assert all("VECTOR_DISTANCE" not in s for s in pool.cursor.all_sqls)
@@ -560,9 +565,9 @@ class TestMcpAdapter:
 
         store, pool = self._make_store(rows=[])
         args = {"agent_id": "agent-1", "memory_type": "working", "query_embedding": _VEC}
-        fake_mod, _ = self._fake_mcp_types()
+        fake_tc, _ = self._fake_text_content()
 
-        with patch.dict("sys.modules", {"mcp.types": fake_mod}):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_tc):
             self._run(_tool_recall(store, args))
 
         assert any("VECTOR_DISTANCE" in s for s in pool.cursor.all_sqls)
@@ -573,9 +578,9 @@ class TestMcpAdapter:
         store, pool = self._make_store()
         pool.cursor.rowcount = 1
         args = {"agent_id": "agent-1", "record_id": "row-1", "memory_type": "working"}
-        fake_mod, _ = self._fake_mcp_types()
+        fake_tc, _ = self._fake_text_content()
 
-        with patch.dict("sys.modules", {"mcp.types": fake_mod}):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_tc):
             self._run(_tool_forget(store, args))
 
         assert any("UPDATE working_memory" in s for s in pool.cursor.all_sqls)
@@ -585,9 +590,9 @@ class TestMcpAdapter:
 
         store, pool = self._make_store(rows=[])
         args = {"agent_id": "agent-1", "memory_type": "facts", "limit": 10}
-        fake_mod, _ = self._fake_mcp_types()
+        fake_tc, _ = self._fake_text_content()
 
-        with patch.dict("sys.modules", {"mcp.types": fake_mod}):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_tc):
             self._run(_tool_list(store, args))
 
         assert any("semantic_facts" in s for s in pool.cursor.all_sqls)
@@ -597,12 +602,12 @@ class TestMcpAdapter:
 
         store, pool = self._make_store()
         args = {"agent_id": "agent-1", "memory_type": "bogus"}
-        fake_mod, fake_tc_cls = self._fake_mcp_types()
+        fake_tc, calls = self._fake_text_content()
 
-        with patch.dict("sys.modules", {"mcp.types": fake_mod}):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_tc):
             self._run(_tool_list(store, args))
 
-        call_text = fake_tc_cls.call_args[1].get("text", "") if fake_tc_cls.call_args else ""
+        call_text = calls[-1].get("text", "") if calls else ""
         assert "Unknown" in call_text or "bogus" in call_text
 
 

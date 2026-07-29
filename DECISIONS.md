@@ -838,6 +838,74 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-07-31 — Db2 12.1.5 fp0 compatibility fixes (vector binding, search, TTL, MCP patching)
+
+- **Decision:**
+  Four Db2 12.1.5 fp0 incompatibilities found and fixed during the live
+  integration-test run.
+
+  1. **`TO_VECTOR(?, FLOAT32)` binding fails (`SQL0901N`).**
+     All four syntaxes involving a bound `?` for the vector value fail on
+     this Db2 version.  The only working form is to **inline the vector
+     string as a SQL literal**: `CAST('{vec_str}' AS VECTOR({dim},FLOAT32))`.
+     The vector string is produced by `_vec_to_str()` from Python floats
+     (no user input), so there is no SQL-injection risk.
+     Changed in `repositories/base.py`: `create()`, `update()`, `search()`.
+     Unit tests in `test_lifecycle.py` and `test_repositories.py` updated to
+     match the new SQL shape (`CAST(` / `AS VECTOR(`).
+
+  2. **`VECTOR_SERIALIZE()` in SELECT + `VECTOR_DISTANCE()` in ORDER BY
+     conflict (`SQL0440N`).**
+     When both functions appear together in a single SELECT, the driver
+     reports "No authorized routine named VECTOR_DISTANCE having compatible
+     arguments."  Work-around: two-step query in `search()` — step 1 fetches
+     IDs in nearest-first order (no `VECTOR_SERIALIZE` in SELECT); step 2
+     fetches full rows by those IDs using the normal `_SELECT_COLS` (which
+     includes `VECTOR_SERIALIZE`), then reorders to restore distance rank.
+
+  3. **`CURRENT TIMESTAMP` vs stored UTC datetimes (`expires_at` TTL filter
+     wrong).**
+     Db2 `CURRENT TIMESTAMP` returns server **local time**; Python stores
+     UTC datetimes.  The Db2 server is UTC-7, so a value that expired 1
+     second ago in UTC appears 7 hours in the future to `CURRENT TIMESTAMP`,
+     causing `expires_at > CURRENT TIMESTAMP` to evaluate TRUE (expired row
+     shown as live).  Fix: use `CURRENT TIMESTAMP - CURRENT TIMEZONE` which
+     subtracts the server's UTC offset to yield the UTC-equivalent timestamp.
+     Applied to `list_all()` and `search()` in `repositories/base.py`.
+
+  4. **MCP `_tool_*` functions import `TextContent` locally, making them
+     unpatchable in unit tests without `mcp` installed.**
+     Added a module-level `_TextContent(**kwargs)` wrapper in
+     `adapters/mcp_server.py` that imports `mcp.types.TextContent` lazily.
+     All four `_tool_*` functions now call `_TextContent(...)`.  Unit tests
+     patch `agent_memory_sdk.adapters.mcp_server._TextContent` instead of
+     `mcp.types.TextContent`, so they no longer require `mcp` to be
+     installed.  Integration tests updated to use the same patch target.
+
+  5. **Stale-write test bug (optimistic concurrency).**
+     `test_update_stale_version_raises` in `tests/integration/test_core.py`
+     incorrectly assumed `stored.version` stayed at 1 after `update()`
+     returned, but `update()` mutates the object's version in-place.  Fixed
+     by explicitly resetting `stored.version = 1` after the first update call
+     to simulate a stale concurrent reader.
+
+  6. **Partial (filtered) indexes not supported (`SQL0104N`).**
+     `CREATE INDEX ... WHERE expires_at IS NOT NULL` fails on Db2 12.1.5 fp0.
+     Removed all five `WHERE expires_at IS NOT NULL` predicates from
+     `db/migrations/0002_memory_tables.sql`.  Added a comment explaining the
+     compatibility constraint.  The plain indexes still accelerate TTL queries;
+     rows with NULL `expires_at` incur negligible index overhead.
+
+- **Reason:**
+  All six issues were discovered only against the live Db2 12.1.5 fp0
+  instance; none were detectable from unit tests alone.  The integration
+  suite now passes 62/62 runnable tests (10 skipped: LangChain not installed
+  in the test environment).
+
+- **Made during:** Step 7 (Integration tests — live Db2 run)
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```

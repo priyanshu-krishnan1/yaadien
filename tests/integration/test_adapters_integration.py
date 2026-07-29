@@ -312,23 +312,18 @@ class TestMcpAdapterIntegration:
         return asyncio.run(coro)
 
     @pytest.fixture()
-    def mcp_types(self):
-        """Return real or stub mcp.types.TextContent."""
-        try:
-            from mcp.types import TextContent
-            return TextContent
-        except ImportError:
-            # Provide a minimal stub if mcp is not installed
-            class _TextContent:
-                def __init__(self, **kw: Any) -> None:
-                    self.type = kw.get("type", "text")
-                    self.text = kw.get("text", "")
-            return _TextContent
+    def fake_text_content(self):
+        """A drop-in stub for mcp.types.TextContent, patched at the module level."""
+        class _Stub:
+            def __init__(self, **kw: Any) -> None:
+                self.type = kw.get("type", "text")
+                self.text = kw.get("text", "")
+        return _Stub
 
-    def test_tool_remember_inserts_real_row(self, store, unique_agent_id, mcp_types):
+    def test_tool_remember_inserts_real_row(self, store, unique_agent_id, fake_text_content):
         from unittest.mock import patch
 
-        with patch("mcp.types.TextContent", mcp_types):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_text_content):
             from agent_memory_sdk.adapters.mcp_server import _tool_remember
 
             args: dict[str, Any] = {
@@ -351,11 +346,11 @@ class TestMcpAdapterIntegration:
         fetched = store.working.get_by_id(payload["id"], scope)
         assert fetched is not None, "Row written by _tool_remember must be retrievable"
 
-    def test_tool_recall_returns_inserted_row(self, store, unique_agent_id, mcp_types, vec_dim):
+    def test_tool_recall_returns_inserted_row(self, store, unique_agent_id, fake_text_content, vec_dim):
         from unittest.mock import patch
 
         vec = make_unit_vec(vec_dim, 30)
-        with patch("mcp.types.TextContent", mcp_types):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_text_content):
             from agent_memory_sdk.adapters.mcp_server import _tool_recall, _tool_remember
 
             # Insert via remember
@@ -391,10 +386,10 @@ class TestMcpAdapterIntegration:
             "_tool_recall must return the row we inserted and set the embedding for"
         )
 
-    def test_tool_forget_tombstones_row(self, store, unique_agent_id, mcp_types):
+    def test_tool_forget_tombstones_row(self, store, unique_agent_id, fake_text_content):
         from unittest.mock import patch
 
-        with patch("mcp.types.TextContent", mcp_types):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_text_content):
             from agent_memory_sdk.adapters.mcp_server import _tool_forget, _tool_remember
 
             # Insert
@@ -423,10 +418,10 @@ class TestMcpAdapterIntegration:
         fetched = store.working.get_by_id(record_id, scope)
         assert fetched is None, "_tool_forget must tombstone the row"
 
-    def test_tool_list_returns_inserted_rows(self, store, unique_agent_id, mcp_types):
+    def test_tool_list_returns_inserted_rows(self, store, unique_agent_id, fake_text_content):
         from unittest.mock import patch
 
-        with patch("mcp.types.TextContent", mcp_types):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_text_content):
             from agent_memory_sdk.adapters.mcp_server import _tool_list, _tool_remember
 
             # Insert two rows
@@ -449,11 +444,11 @@ class TestMcpAdapterIntegration:
         assert "list-test row 0" in contents
         assert "list-test row 1" in contents
 
-    def test_tool_recall_fallback_to_list_when_no_embedding(self, store, unique_agent_id, mcp_types):
+    def test_tool_recall_fallback_to_list_when_no_embedding(self, store, unique_agent_id, fake_text_content):
         """When no query_embedding is given, _tool_recall falls back to list_all."""
         from unittest.mock import patch
 
-        with patch("mcp.types.TextContent", mcp_types):
+        with patch("agent_memory_sdk.adapters.mcp_server._TextContent", fake_text_content):
             from agent_memory_sdk.adapters.mcp_server import _tool_recall, _tool_remember
 
             self._run(_tool_remember(store, {

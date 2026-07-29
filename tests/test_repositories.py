@@ -212,7 +212,8 @@ class TestWorkingMemoryRepository:
         repo.create(wm, _SCOPE_AGENT_ONLY)
         sql = pool.cursor.last_sql
         assert "INSERT INTO working_memory" in sql
-        assert "TO_VECTOR" in sql
+        assert "CAST(" in sql
+        assert "AS VECTOR(" in sql
         assert pool.conn.committed
 
     def test_create_requires_agent_id(self):

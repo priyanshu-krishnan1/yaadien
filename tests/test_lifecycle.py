@@ -193,7 +193,8 @@ class TestUpdate:
         assert "UPDATE working_memory" in sql
         assert "content = ?" in sql
         assert "metadata = ?" in sql
-        assert "TO_VECTOR(?, FLOAT32)" in sql
+        assert "CAST(" in sql
+        assert "AS VECTOR(" in sql
         assert "version = ?" in sql
         assert result is record
 
