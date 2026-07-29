@@ -579,6 +579,100 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-07-31 — Step 6: Framework adapters (LangChain, OpenAI Agents SDK, MCP)
+
+- **Decision (adapter module layout):**
+  All three adapters live under `src/agent_memory_sdk/adapters/`, each in
+  its own file:
+  - `adapters/langchain.py` — `Db2ChatMessageHistory`, `Db2MemoryStore`
+  - `adapters/openai_agents.py` — `Db2Session`
+  - `adapters/mcp_server.py` — `create_server(store)` factory
+  The `adapters/__init__.py` is documentation-only (no runtime imports of
+  framework packages).  All framework imports are deferred to
+  `_require_<framework>()` guard functions that run at class instantiation
+  time (not at `import agent_memory_sdk` time), so the core is importable
+  with zero adapter dependencies installed.
+
+- **Decision (LangChain — Db2ChatMessageHistory):**
+  Implements LangChain's `BaseChatMessageHistory` interface
+  (`messages` property, `add_message()`, `add_messages()`, `clear()`)
+  backed by `store.working`.  Each LangChain `BaseMessage` is serialised to
+  one `WorkingMemory` row: the message `.content` is stored in the `content`
+  column; the message type (`HumanMessage`, `AIMessage`, …), `additional_kwargs`,
+  `response_metadata`, and `tool_call_id` / `tool_calls` are stored in the
+  `metadata` JSON column.  On read, `_metadata_to_message()` reconstructs
+  the correct subclass.  This approach is lossless for all common message
+  types and degrades gracefully (falls back to `HumanMessage`) for unknown
+  types.  The scope (`agent_id`, `thread_id`) must be supplied by the caller;
+  `thread_id` = LangChain `session_id` is the recommended mapping.
+
+- **Decision (LangChain — Db2MemoryStore):**
+  Implements LangChain's `BaseStore[str, str]` (`mget`, `mset`, `mdelete`,
+  `yield_keys`) backed by `store.facts` (default) or `store.profiles` (when
+  `namespace != "facts"`).  Keys are stored in `metadata["store_key"]`.
+  Look-up is a linear scan over `list_all()` results — acceptable for the
+  expected key counts per agent scope (< 1000); a production deployment
+  should add a JSON value index on the `metadata` column for scale.
+  This maps naturally: semantic facts → known key-value facts about the world
+  or user preferences; entity profiles → aggregated user/entity state.
+
+- **Decision (OpenAI Agents SDK — Db2Session):**
+  Implements the OpenAI Agents SDK `Session` protocol (`add_message()`,
+  `get_messages()`, `clear()`).  Messages are stored as JSON-serialised
+  dicts in `WorkingMemory.content` (preserving every field without schema
+  coupling).  `get_messages()` reverses `list_all()` output to restore
+  chronological order.  `clear()` soft-deletes all rows for the scope.
+  A non-protocol bonus method `recall_episodes(query_embedding, top_k)`
+  searches `store.episodic` at agent+user scope (not thread-scoped) so
+  past episode summaries can be injected before new agent runs without
+  mixing them into the live message list.
+
+- **Decision (MCP adapter — tool design):**
+  The MCP adapter exposes four tools via `create_server(store)`:
+  1. `remember` — creates a record of any memory type.
+  2. `recall` — semantic search (if `query_embedding` provided) or recency
+     list (fallback when no embedding given).  The embedding is a caller
+     parameter because the MCP server has no built-in embedding model.
+  3. `forget` — soft-deletes a record by id.
+  4. `list_memories` — recency-based list, no vector search.
+  All tools accept optional `user_id`, `thread_id`, and `tenant_id` params
+  so MCP callers can set the full `MemoryScope`.  Tools return
+  `TextContent(type="text", text=json_string)` — structured data is
+  JSON-serialised to a single text blob, which is the most portable MCP
+  return format.  The server is created as a `Server("agent-memory-sdk")`
+  instance; callers run it with `server.run(read_stream, write_stream)` in
+  an async context.  A `__main__` entry point (`python -m
+  agent_memory_sdk.adapters.mcp_server`) starts a stdio MCP server
+  automatically using `ConnectionPool()` (reads `DB2_*` env vars).
+
+- **Decision (BaseChatMessageHistory is NOT dynamically subclassed):**
+  An earlier design idea was to inherit from `BaseChatMessageHistory` at
+  runtime so that `isinstance(history, BaseChatMessageHistory)` returns
+  `True`.  This was rejected because:
+  (a) `RunnableWithMessageHistory` and most LangChain tooling calls the
+  interface methods duck-typing style, not `isinstance` checks;
+  (b) dynamic inheritance from a deferred import complicates `__class__`
+  resolution and breaks mypy strict mode;
+  (c) the duck-typing interface (`messages`, `add_message`, `clear`) is all
+  that callers actually need.
+  `Db2ChatMessageHistory` therefore does NOT inherit from
+  `BaseChatMessageHistory`; it satisfies the structural subtype protocol
+  (duck typing). Same for `Db2MemoryStore` vs `BaseStore`.
+
+- **Decision (test strategy: all adapters tested without real frameworks):**
+  `tests/test_adapters.py` patches `_require_<framework>()` and stubs out
+  framework types (MagicMock for LangChain messages, simple dicts for
+  OpenAI Agents, `patch.dict(sys.modules, ...)` for MCP types) so the
+  adapter logic is exercised without installing the actual framework
+  packages.  The 48 tests cover: message serialisation round-trips,
+  SQL delegation (INSERT/UPDATE/SELECT assertions on the fake cursor),
+  scope propagation, import-guard error messages, and fallback behaviours
+  (list fallback when no embedding; corrupted content fallback).
+
+- **Made during:** Step 6 (Framework adapters)
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```

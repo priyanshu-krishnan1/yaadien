@@ -16,7 +16,7 @@ lands (see the "Last updated" line per section).
 
 ## 1. System overview
 
-_Last updated: Step 3 — class/module names confirmed; actual files written_
+_Last updated: Step 6 — adapters implemented; module paths updated_
 
 ```mermaid
 flowchart TB
@@ -26,10 +26,10 @@ flowchart TB
         A3[Any MCP-compatible agent]
     end
 
-    subgraph Adapters["Adapters (optional, thin)"]
-        L[LangChain adapter<br/>BaseChatMessageHistory / BaseStore]
-        O[OpenAI Agents SDK adapter<br/>Session protocol]
-        M[MCP adapter<br/>remember/recall/forget/list tools]
+    subgraph Adapters["Adapters (optional, thin — pip install agent-memory-sdk[extra])"]
+        L["LangChain adapter<br/>Db2ChatMessageHistory<br/>Db2MemoryStore<br/>[langchain]"]
+        O["OpenAI Agents SDK adapter<br/>Db2Session<br/>[openai-agents]"]
+        M["MCP adapter<br/>remember / recall / forget / list_memories<br/>[mcp]"]
     end
 
     subgraph Core["agent_memory_sdk core (framework-agnostic)"]
@@ -76,7 +76,8 @@ flowchart TB
 
 Key points this diagram encodes (see DECISIONS.md for the reasoning):
 - Adapters are optional and sit *outside* the core — core has zero
-  framework dependencies.
+  framework dependencies.  Each adapter is gated behind its own extras
+  group in `pyproject.toml`.
 - Every repository talks to its own Db2 table (normalized, not one
   polymorphic table).
 - Consolidation is a pluggable callback the core *can* invoke inline; it's
@@ -84,7 +85,7 @@ Key points this diagram encodes (see DECISIONS.md for the reasoning):
 - Embeddings are supplied by the caller via `EmbeddingProvider`; the SDK
   doesn't ship a specific embedding model.
 
-Actual module paths (as of Step 4):
+Actual module paths (as of Step 6):
 - `src/agent_memory_sdk/types.py` — `EmbeddingProvider` (Protocol),
   `Consolidator` (Protocol), `NoOpConsolidator` (default no-op),
   `DistanceMetric` (enum), `SearchMode` (enum)
@@ -100,6 +101,17 @@ Actual module paths (as of Step 4):
 - `src/agent_memory_sdk/repositories/procedural.py` — `ProceduralMemoryRepository`
 - `src/agent_memory_sdk/store.py` — `MemoryStore` facade
   (includes `remember`, `forget`, `purge_expired` since Step 4)
+- `src/agent_memory_sdk/adapters/__init__.py` — adapter package (docstring only)
+- `src/agent_memory_sdk/adapters/langchain.py` — `Db2ChatMessageHistory`
+  (LangChain `BaseChatMessageHistory` backed by `store.working`) +
+  `Db2MemoryStore` (LangChain `BaseStore[str, str]` backed by
+  `store.facts` or `store.profiles`)
+- `src/agent_memory_sdk/adapters/openai_agents.py` — `Db2Session`
+  (OpenAI Agents SDK `Session` protocol backed by `store.working`;
+  bonus `recall_episodes()` via `store.episodic`)
+- `src/agent_memory_sdk/adapters/mcp_server.py` — `create_server(store)`
+  factory returning an MCP `Server` with four tools: `remember`,
+  `recall`, `forget`, `list_memories`
 - `scripts/purge_expired.py` — cron-callable maintenance script
 - `scripts/consolidate_pending.py` — reference async consolidation pattern
 
