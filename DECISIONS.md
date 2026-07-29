@@ -488,6 +488,97 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-07-31 — Step 5: MemoryScope value object, SQL scope enforcement, cross-scope isolation tests
+
+- **Decision (MemoryScope shape — confirmed as-built):**
+  `MemoryScope` is a **frozen** Pydantic v2 model defined in `models.py`:
+
+      class MemoryScope(BaseModel):
+          tenant_id: str | None = None  # broadest; single-tenant callers omit
+          agent_id: str                 # required; minimum isolation unit
+          user_id: str | None = None    # narrows to a specific end-user
+          thread_id: str | None = None  # narrows to a single conversation
+
+  `model_config = {"frozen": True}` makes it hashable and immutable — safe
+  to use as a dict key or set member, and prevents accidental mutation after
+  construction.  This shape was established in Step 3 and is unchanged by
+  Step 5; the step confirmed it is the right object and added tests.
+
+- **Decision (scope enforcement is always additive, never subtractive):**
+  `_scope_predicates(scope)` always emits `agent_id = ?` (required).
+  `tenant_id = ?`, `user_id = ?`, and `thread_id = ?` are only added when
+  the corresponding field is not `None`.  A narrower scope (e.g. adding
+  `thread_id`) *increases* isolation; it cannot decrease it.  A caller
+  passing only `agent_id` sees all rows for that agent across all users and
+  threads — this is the widest safe query.
+
+- **Decision (every SQL path includes scope predicates):**
+  Audit of all six mutating/reading SQL paths in `BaseRepository` confirmed
+  that every generated statement includes scope predicates as part of the
+  `WHERE` clause.  No path issues SQL with only a primary-key predicate and
+  no scope check.  Specific guarantees:
+  - `create()` — stamps all four scope columns onto the row at INSERT time.
+  - `get_by_id()` — `WHERE id = ? AND <scope_sql> AND deleted_at IS NULL`
+  - `list_all()` — `WHERE <scope_sql> AND deleted_at IS NULL`
+  - `search()` — `WHERE <scope_sql> AND deleted_at IS NULL` (before ORDER BY)
+  - `forget()` — `WHERE id = ? AND <scope_sql> AND deleted_at IS NULL`
+  - `update()` — `WHERE id = ? AND <scope_sql> AND version = ? AND deleted_at IS NULL`
+  - `purge_expired()` — `WHERE deleted_at IS NOT NULL AND <scope_sql>`
+
+- **Decision (cross-scope read isolation is enforced by bound parameters, not application logic):**
+  The isolation boundary is the SQL WHERE clause — a row in scope A cannot
+  be found by a query carrying scope B's `agent_id` / `tenant_id` values, because
+  the predicates are bound parameters, not string interpolation.  There is no
+  application-layer list-and-filter step; Db2 does the filtering.
+  `tests/test_scoping.py` captures this: the fake cursor returns an empty
+  result set (as Db2 would for a mismatched scope predicate) and the test
+  asserts `None` / `[]` — never the owner's row.
+
+- **Edge cases resolved:**
+  1. **`update()` with wrong scope raises `StaleWriteError`, not a custom
+     scope error.** The UPDATE conditions on `id = ? AND <scope_sql> AND
+     version = ?`. If the scope doesn't match, `rowcount == 0`, and the
+     same `StaleWriteError` that fires on a version conflict fires here.
+     This is intentional: from the caller's perspective, the row "wasn't
+     there" — which is the correct observable behaviour for a cross-scope
+     attempt.  A dedicated `ScopeViolationError` was considered and
+     rejected because (a) it would require distinguishing "row doesn't
+     exist", "row belongs to wrong scope", and "row has a stale version" —
+     all requiring a separate SELECT — and (b) leaking which of the three
+     conditions occurred provides information to a misbehaving caller.
+  2. **`purge_expired()` with the wrong scope returns 0, not an error.**
+     Same reason: the DELETE silently affects 0 rows.  The caller receives a
+     count of 0, which is safe.
+  3. **`create()` overwrites the model's scope fields from the `scope` arg.**
+     If `record.agent_id` differs from `scope.agent_id`, the scope argument
+     wins.  This prevents the caller from inserting a row into one scope
+     while passing a different scope for the connection.
+  4. **Empty string `agent_id` is rejected at the `_require_agent_id()` guard**
+     before any SQL is issued.  Pydantic allows constructing a `MemoryScope`
+     with `agent_id=""` (it's a valid `str`), but the guard
+     (`if not scope.agent_id: raise ValueError(...)`) treats it as missing.
+     This behaviour is tested and intentional; callers must not pass
+     empty-string scope values.
+
+- **What was NOT changed in Step 5:**
+  - No schema changes (all scope columns already existed from Step 2).
+  - No API surface changes (MemoryScope was already the required parameter
+    type on every repository and store method since Step 3).
+  - No new exceptions.  The decision to surface cross-scope update attempts
+    as `StaleWriteError` (see edge case 1 above) avoids introducing a
+    misleading new exception path.
+
+- **New test file:** `tests/test_scoping.py` — 91 unit tests covering:
+  `MemoryScope` value object contract, `_scope_predicates()` helper,
+  cross-scope isolation for `get_by_id`/`list_all`/`search`/`forget`/
+  `update`/`purge_expired` on all five repository types (5 × 6 = 30
+  parametrized tests), `MemoryStore` facade scope propagation, and empty
+  `agent_id` rejection on every operation.  Total test suite: 195 tests.
+
+- **Made during:** Step 5 (Governance / scoping enforcement)
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```
