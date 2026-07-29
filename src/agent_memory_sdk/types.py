@@ -11,7 +11,10 @@ their own module to avoid circular imports.
 from __future__ import annotations
 
 import enum
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from agent_memory_sdk.models import _MemoryBase
 
 # ---------------------------------------------------------------------------
 # EmbeddingProvider
@@ -51,6 +54,148 @@ class EmbeddingProvider(Protocol):
             A list of float coordinates (the embedding vector).
         """
         ...
+
+
+# ---------------------------------------------------------------------------
+# Consolidator
+# ---------------------------------------------------------------------------
+
+class Consolidator(Protocol):
+    """Protocol for pluggable memory consolidation callbacks.
+
+    A ``Consolidator`` is called synchronously by :class:`MemoryStore` after
+    a write to **working** or **episodic** memory.  It receives the raw
+    memories just written and returns zero or more *derived* memory objects
+    (semantic facts, entity-profile updates, procedural memories) that the
+    store will persist.
+
+    Shape::
+
+        (raw_memories: list[_MemoryBase]) -> list[_MemoryBase]
+
+    The returned list may contain any mix of
+    :class:`~agent_memory_sdk.models.SemanticFact`,
+    :class:`~agent_memory_sdk.models.EntityProfile`, and
+    :class:`~agent_memory_sdk.models.ProceduralMemory` instances.  The
+    caller is responsible for setting ``agent_id`` (and any other scope
+    fields) on the returned records; the store passes each one straight to
+    the appropriate repository's ``create()`` method with the same scope
+    that was used for the triggering write.
+
+    **Sync path (default)**
+    -----------------------
+    Pass a ``Consolidator`` to :class:`MemoryStore` at construction time::
+
+        store = MemoryStore(pool, consolidator=MyLLMConsolidator())
+
+    The consolidator is called inline, blocking the current thread until it
+    returns.  This is simple and correct for low-latency or test workloads,
+    but will block the agent's hot path if the consolidator makes slow LLM
+    calls.
+
+    **Async / background path (extension point)**
+    -----------------------------------------------
+    For production workloads, run the consolidator out-of-band:
+
+    1. **Leave the sync consolidator as the no-op default** (or omit it
+       entirely) so the write path is fast.
+    2. Add a ``consolidated_at`` field (or a boolean flag in ``metadata``) to
+       rows that need processing.
+    3. In a cron job or background worker, query for
+       ``consolidated_at IS NULL`` rows, call your ``Consolidator``
+       implementation, persist the derived records, and mark the source rows
+       as consolidated.
+
+    See ``scripts/consolidate_pending.py`` for a reference implementation of
+    this async polling pattern.
+
+    **LLM-based consolidator example**
+    ------------------------------------
+    ::
+
+        import openai
+        from agent_memory_sdk.models import SemanticFact
+        from agent_memory_sdk.types import Consolidator
+
+        class LLMConsolidator:
+            \"\"\"Extract atomic facts from raw working/episodic memories.\"\"\"
+
+            def __init__(self, client: openai.OpenAI, agent_id: str) -> None:
+                self._client = client
+                self._agent_id = agent_id
+
+            def __call__(
+                self, raw_memories: list
+            ) -> list:
+                if not raw_memories:
+                    return []
+
+                combined = "\\n".join(m.content for m in raw_memories)
+                resp = self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Extract atomic facts from the conversation below. "
+                                "Return one fact per line, nothing else."
+                            ),
+                        },
+                        {"role": "user", "content": combined},
+                    ],
+                )
+                facts_text = resp.choices[0].message.content or ""
+                return [
+                    SemanticFact(
+                        agent_id=self._agent_id,
+                        content=line.strip(),
+                        metadata={"source": "llm_consolidator"},
+                    )
+                    for line in facts_text.splitlines()
+                    if line.strip()
+                ]
+
+        # Wire in at store construction:
+        store = MemoryStore(
+            pool,
+            consolidator=LLMConsolidator(openai.OpenAI(), agent_id="agent-001"),
+        )
+
+    The above is a **synchronous** example.  For the async/background
+    variant, see the docstring above and ``scripts/consolidate_pending.py``.
+    """
+
+    def __call__(self, raw_memories: list[_MemoryBase]) -> list[_MemoryBase]:
+        """Consolidate raw memories into derived memory records.
+
+        Args:
+            raw_memories: The memories just written to working or episodic
+                memory.  Each element is a fully-populated model instance
+                with ``id``, ``agent_id``, ``content``, etc. set.
+
+        Returns:
+            A (possibly empty) list of derived memory objects.  May contain
+            any mix of :class:`~agent_memory_sdk.models.SemanticFact`,
+            :class:`~agent_memory_sdk.models.EntityProfile`, and
+            :class:`~agent_memory_sdk.models.ProceduralMemory` instances.
+            Return ``[]`` to produce no derived memories.
+        """
+        ...
+
+
+class NoOpConsolidator:
+    """Default consolidator that does nothing.
+
+    Returned derived list is always empty.  This is the default used by
+    :class:`MemoryStore` when no ``consolidator`` argument is supplied —
+    callers opt in to consolidation explicitly.
+
+    Because it returns an empty list, the store skips all derived-memory
+    writes, making writes identical in cost to Step 3 behaviour.
+    """
+
+    def __call__(self, raw_memories: list[_MemoryBase]) -> list[_MemoryBase]:
+        return []
 
 
 # ---------------------------------------------------------------------------

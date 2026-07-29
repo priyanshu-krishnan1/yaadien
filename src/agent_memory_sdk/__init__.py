@@ -12,8 +12,50 @@ Memory types:
 Quick start::
 
     from agent_memory_sdk.db.connection import ConnectionPool
-    pool = ConnectionPool()          # reads env vars automatically
-    # Step 3+ adds: from agent_memory_sdk import MemoryStore
+    from agent_memory_sdk import MemoryStore, MemoryScope, WorkingMemory
+
+    pool = ConnectionPool()          # reads DB2_* env vars automatically
+    store = MemoryStore(pool)
+    scope = MemoryScope(agent_id="agent-001")
+
+    record = store.remember(
+        WorkingMemory(agent_id="agent-001", content="Hello!"),
+        scope,
+    )
+    store.forget(record.id, "working", scope)
+    store.purge_expired(scope)
 """
 
+from agent_memory_sdk.exceptions import StaleWriteError
+from agent_memory_sdk.models import (
+    EntityProfile,
+    EpisodicMemory,
+    MemoryScope,
+    ProceduralMemory,
+    SemanticFact,
+    WorkingMemory,
+)
+from agent_memory_sdk.store import MemoryStore
+from agent_memory_sdk.types import (
+    DistanceMetric,
+    EmbeddingProvider,
+    NoOpConsolidator,
+    SearchMode,
+)
+
 __version__ = "0.1.0"
+
+__all__ = [
+    "MemoryStore",
+    "MemoryScope",
+    "WorkingMemory",
+    "EpisodicMemory",
+    "SemanticFact",
+    "EntityProfile",
+    "ProceduralMemory",
+    "EmbeddingProvider",
+    "DistanceMetric",
+    "SearchMode",
+    "NoOpConsolidator",
+    "StaleWriteError",
+]

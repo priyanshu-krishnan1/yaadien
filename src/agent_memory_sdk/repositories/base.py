@@ -11,6 +11,16 @@ Every concrete repository:
   - Provides a ``search()`` method that builds the VECTOR_DISTANCE query
     with the correct FETCH EXACT / FETCH APPROX modifier.
 
+Step-4 additions
+----------------
+- ``forget(id, scope)``      — soft-delete (tombstone) a row.
+- ``update(record, scope)``  — update content/metadata/embedding with
+                               optimistic concurrency on ``version``.
+- ``purge_expired(scope)``   — maintenance-only hard-DELETE for rows that
+                               are both tombstoned AND past their TTL, OR
+                               rows with an expired TTL that are not
+                               tombstoned.  Never called automatically.
+
 DB-API usage notes
 ------------------
 - Parameter placeholder: ``?`` (ibm_db_dbi uses qmark style, like SQLite).
@@ -34,6 +44,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
+from agent_memory_sdk.exceptions import StaleWriteError
 from agent_memory_sdk.models import MemoryScope, _MemoryBase
 from agent_memory_sdk.types import DistanceMetric, SearchMode
 
@@ -325,8 +336,7 @@ class BaseRepository(ABC, Generic[M]):
     def soft_delete(self, record_id: str, scope: MemoryScope) -> bool:
         """Tombstone a row by setting deleted_at to now.
 
-        Never issues a hard DELETE.  The row remains in the table and can
-        be recovered or audited until purge_expired() removes it.
+        Alias kept for backwards-compatibility; prefer :meth:`forget`.
 
         Args:
             record_id: UUID of the row to tombstone.
@@ -335,6 +345,30 @@ class BaseRepository(ABC, Generic[M]):
         Returns:
             True if the row was found and tombstoned; False if not found
             (already deleted or wrong scope).
+        """
+        return self.forget(record_id, scope)
+
+    def forget(self, record_id: str, scope: MemoryScope) -> bool:
+        """Tombstone a row by setting ``deleted_at`` to now.
+
+        Never issues a hard DELETE.  The row remains in the table for
+        audit / recovery purposes and is excluded from all normal reads
+        (``get_by_id``, ``list_all``, ``search``) because every query
+        filters on ``deleted_at IS NULL``.
+
+        To permanently remove rows, call :meth:`purge_expired` from a
+        maintenance script or cron job — it is never invoked automatically.
+
+        Args:
+            record_id: UUID of the row to tombstone.
+            scope:     Must include at minimum agent_id.
+
+        Returns:
+            True if the row was found and tombstoned; False if not found
+            (already deleted or wrong scope).
+
+        Raises:
+            ValueError: if scope.agent_id is missing.
         """
         _require_agent_id(scope)
         scope_sql, scope_params = _scope_predicates(scope)
@@ -353,8 +387,139 @@ class BaseRepository(ABC, Generic[M]):
             conn.commit()
             affected = cur.rowcount
 
-        logger.debug("soft_delete %s id=%s affected=%d", self._TABLE, record_id, affected)
+        logger.debug("forget %s id=%s affected=%d", self._TABLE, record_id, affected)
         return bool(affected > 0)
+
+    def update(self, record: M, scope: MemoryScope) -> M:
+        """Update ``content``, ``metadata``, and ``embedding`` for an existing row.
+
+        Uses **optimistic concurrency**: the UPDATE is conditioned on
+        ``version = record.version``.  If another writer has incremented the
+        version since the caller fetched the record, the update is rejected
+        with :exc:`StaleWriteError`.
+
+        The ``version`` is atomically incremented by 1 on success, and
+        ``updated_at`` is refreshed.
+
+        Only the three mutable fields are changed:
+        - ``content``
+        - ``metadata``
+        - ``embedding``
+
+        Scope fields (agent_id, tenant_id, user_id, thread_id), ``id``,
+        ``created_at``, and ``deleted_at`` are never modified by this method.
+
+        Args:
+            record: The model instance with the desired new ``content``,
+                    ``metadata``, and ``embedding`` values.  The ``version``
+                    field must equal the current DB version (as returned by
+                    ``get_by_id`` or ``create``).
+            scope:  Must include at minimum agent_id.
+
+        Returns:
+            The updated record with ``version`` incremented by 1 and
+            ``updated_at`` refreshed.
+
+        Raises:
+            ValueError:       if scope.agent_id is missing.
+            StaleWriteError:  if the row's version in DB != record.version
+                              (concurrent writer detected).
+        """
+        _require_agent_id(scope)
+        scope_sql, scope_params = _scope_predicates(scope)
+
+        now = _now()
+        vec_str = _vec_to_str(record.embedding) if record.embedding else self._zero_vec_str()
+        metadata_str = json.dumps(record.metadata)
+        new_version = record.version + 1
+
+        sql = f"""
+            UPDATE {self._TABLE}
+            SET content = ?,
+                metadata = ?,
+                embedding = TO_VECTOR(?, FLOAT32),
+                updated_at = ?,
+                version = ?
+            WHERE id = ?
+              AND {scope_sql}
+              AND version = ?
+              AND deleted_at IS NULL
+        """
+        params = [
+            record.content,
+            metadata_str,
+            vec_str,
+            now,
+            new_version,
+            record.id,
+            *scope_params,
+            record.version,   # optimistic lock check
+        ]
+
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            conn.commit()
+            affected = cur.rowcount
+
+        if not affected:
+            raise StaleWriteError(
+                f"Stale write on {self._TABLE} id={record.id!r}: "
+                f"expected version={record.version} but the row was modified "
+                f"concurrently (or does not exist / is deleted)."
+            )
+
+        record.version = new_version
+        record.updated_at = now
+        logger.debug("update %s id=%s new_version=%d", self._TABLE, record.id, new_version)
+        return record
+
+    def purge_expired(self, scope: MemoryScope) -> int:
+        """Hard-delete rows eligible for permanent removal within *scope*.
+
+        A row is eligible when **either** condition holds:
+          1. ``deleted_at IS NOT NULL`` (tombstoned) AND
+             ``expires_at < CURRENT TIMESTAMP`` (TTL has elapsed); OR
+          2. ``deleted_at IS NOT NULL`` (tombstoned) AND
+             ``expires_at IS NULL`` (no TTL set — tombstoned rows without an
+             expiry are always eligible for purge once this method is called).
+
+        In short: **all tombstoned rows are eligible for purge**.  Rows with
+        an ``expires_at`` in the past but NOT yet tombstoned are left alone —
+        the normal read filters exclude them from query results, but they are
+        not deleted until the caller explicitly tombstones them first with
+        :meth:`forget` and then runs this method.
+
+        This method must be called explicitly — from a cron job or a
+        maintenance script (see ``scripts/purge_expired.py``).  It is never
+        invoked automatically by the SDK.
+
+        Args:
+            scope: Must include at minimum agent_id.  Purge is always
+                   scoped so that cross-tenant/agent data is never touched.
+
+        Returns:
+            Number of rows hard-deleted.
+
+        Raises:
+            ValueError: if scope.agent_id is missing.
+        """
+        _require_agent_id(scope)
+        scope_sql, scope_params = _scope_predicates(scope)
+
+        sql = f"""
+            DELETE FROM {self._TABLE}
+            WHERE deleted_at IS NOT NULL
+              AND {scope_sql}
+        """
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, scope_params)
+            conn.commit()
+            deleted = cur.rowcount
+
+        logger.info("purge_expired %s scope=%s deleted=%d", self._TABLE, scope, deleted)
+        return int(deleted)
 
     # ------------------------------------------------------------------
     # Vector search

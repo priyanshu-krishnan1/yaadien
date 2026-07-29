@@ -375,6 +375,86 @@ explicitly supersedes it and say why.
   column nullability — CORRECTED 2026-07-30" entry (which incorrectly stated the
   column was NULLABLE).
 
+## 2026-07-30 — Step 4: lifecycle — Consolidator protocol, purge_expired() semantics, forget(), and optimistic concurrency
+
+- **Decision (Consolidator protocol shape):** The `Consolidator` is a
+  `@typing.Protocol` defined in `types.py` with a single `__call__`
+  method:
+
+      def __call__(self, raw_memories: list[_MemoryBase]) -> list[_MemoryBase]: ...
+
+  Input: a list of fully-persisted model instances just written to
+  **working** or **episodic** memory (never the other three types).
+  Output: a (possibly empty) list of derived records — any mix of
+  `SemanticFact`, `EntityProfile`, or `ProceduralMemory`.
+  `MemoryStore` calls this **synchronously** on the `remember()` call
+  path, then persists each derived record via the appropriate repository
+  with the same scope.  Errors in the consolidator are caught,
+  logged, and swallowed — a consolidation failure must never roll
+  back or suppress the original write.
+
+- **Decision (NoOpConsolidator is the default):** `MemoryStore` uses
+  `NoOpConsolidator` (always returns `[]`) when no consolidator is
+  supplied.  Callers opt in by passing `consolidator=` at construction
+  time.  This keeps Step-4 writes identical in cost to Step-3 writes for
+  callers who don't use consolidation.
+
+- **Decision (async extension point — documented, not implemented in sync path):**
+  The sync consolidator path is the only runtime mechanism implemented.
+  The async / out-of-band pattern (mark rows with `consolidated: false` in
+  metadata at write time; poll with a cron job; call the consolidator;
+  persist derived records; mark rows as processed) is documented in
+  `types.py`'s `Consolidator` docstring and in `scripts/consolidate_pending.py`
+  (a reference implementation).  No schema changes (e.g., `consolidated_at`
+  column) are made in Step 4; a future migration would add that column
+  to support the polling query efficiently.
+
+- **Decision (purge_expired() semantics):** Hard-deletes rows where
+  `deleted_at IS NOT NULL` (tombstoned), scoped to the caller's
+  `MemoryScope`.  The condition is `deleted_at IS NOT NULL` only — not
+  paired with `expires_at < NOW`.  Rationale: once a row is tombstoned
+  via `forget()`, it is intentionally invisible to all normal queries
+  (all `list_all` / `search` / `get_by_id` filter on `deleted_at IS NULL`)
+  and has no further operational value — it is eligible for removal as
+  soon as `purge_expired` is called.  Rows with `expires_at` in the past
+  but NOT tombstoned are left by `purge_expired`; the normal query filters
+  already exclude them from results, and they can only be hard-deleted
+  after the caller explicitly tombstones them with `forget()`.
+  This separates the "hide from reads" concern (handled by TTL filters at
+  query time) from the "free disk space" concern (requires explicit
+  tombstone + explicit purge call).  `purge_expired` is always called
+  explicitly (cron / `scripts/purge_expired.py`); never automatically.
+
+- **Decision (forget() is the canonical name; soft_delete() is the alias):**
+  `BaseRepository.forget(id, scope)` is the primary soft-delete method,
+  matching the `forget()` API name used in the Step 0 foundational decision
+  and in `MemoryStore.forget()`.  `soft_delete()` remains as a backwards-
+  compatible alias that delegates to `forget()`.  No behaviour change.
+
+- **Decision (optimistic concurrency on version):** `BaseRepository.update()`
+  conditions the UPDATE on `WHERE version = record.version AND deleted_at IS NULL`.
+  If `rowcount == 0` after the UPDATE, `StaleWriteError` (from
+  `agent_memory_sdk.exceptions`) is raised.  The version is atomically
+  incremented to `record.version + 1` in the same UPDATE.  `update()`
+  only modifies `content`, `metadata`, `embedding`, `updated_at`, and
+  `version`; scope fields, `id`, `created_at`, and `deleted_at` are
+  never touched.  The caller should retry after re-fetching the row with
+  `get_by_id()`.
+
+- **Decision (MemoryStore.remember() is the new primary write entry point):**
+  Previously callers called `store.working.create(record, scope)` directly.
+  `store.remember(record, scope)` is now the recommended path because it
+  dispatches to the correct repository by model type AND runs the
+  consolidator.  Direct `.create()` calls on individual repos still work
+  (they skip consolidation — useful for derived writes inside the
+  consolidator itself to avoid re-triggering it recursively).
+
+- **Decision (StaleWriteError is re-exported from store.py and __init__.py):**
+  `from agent_memory_sdk import StaleWriteError` works without callers
+  needing to know the `exceptions` submodule.
+
+- **Made during:** Step 4 (Lifecycle: TTL, versioning, forget, consolidation)
+
 ---
 
 ### Entry template (copy this for every new decision)

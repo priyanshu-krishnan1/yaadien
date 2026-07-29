@@ -84,18 +84,24 @@ Key points this diagram encodes (see DECISIONS.md for the reasoning):
 - Embeddings are supplied by the caller via `EmbeddingProvider`; the SDK
   doesn't ship a specific embedding model.
 
-Actual module paths (as of Step 3):
+Actual module paths (as of Step 4):
 - `src/agent_memory_sdk/types.py` — `EmbeddingProvider` (Protocol),
+  `Consolidator` (Protocol), `NoOpConsolidator` (default no-op),
   `DistanceMetric` (enum), `SearchMode` (enum)
+- `src/agent_memory_sdk/exceptions.py` — `StaleWriteError`
 - `src/agent_memory_sdk/models.py` — `MemoryScope`, `WorkingMemory`,
   `EpisodicMemory`, `SemanticFact`, `EntityProfile`, `ProceduralMemory`
 - `src/agent_memory_sdk/repositories/base.py` — `BaseRepository` ABC
+  (includes `forget`, `update`, `purge_expired` since Step 4)
 - `src/agent_memory_sdk/repositories/working.py` — `WorkingMemoryRepository`
 - `src/agent_memory_sdk/repositories/episodic.py` — `EpisodicMemoryRepository`
 - `src/agent_memory_sdk/repositories/facts.py` — `SemanticFactRepository`
 - `src/agent_memory_sdk/repositories/profiles.py` — `EntityProfileRepository`
 - `src/agent_memory_sdk/repositories/procedural.py` — `ProceduralMemoryRepository`
 - `src/agent_memory_sdk/store.py` — `MemoryStore` facade
+  (includes `remember`, `forget`, `purge_expired` since Step 4)
+- `scripts/purge_expired.py` — cron-callable maintenance script
+- `scripts/consolidate_pending.py` — reference async consolidation pattern
 
 ---
 
@@ -230,7 +236,7 @@ erDiagram
 
 ## 4. Flow: `remember()`
 
-_Last updated: Step 0 (design only); Step 3 implements repos that execute these queries_
+_Last updated: Step 4 — sync consolidation implemented; async pattern documented_
 
 ```mermaid
 sequenceDiagram
@@ -240,16 +246,32 @@ sequenceDiagram
     participant Consolidator
     participant Db2
 
-    Agent->>MemoryStore: remember(content, type, scope)
-    MemoryStore->>Repo: create(content, scope, embedding)
-    Repo->>Db2: INSERT ... (VECTOR NOT NULL)
-    Db2-->>Repo: row id
-    MemoryStore->>Consolidator: on_write(raw memory)  [if configured]
-    Consolidator-->>MemoryStore: derived facts/profile/skill updates
-    MemoryStore->>Repo: upsert derived memory (facts/profiles/procedural)
-    Repo->>Db2: INSERT/UPDATE
-    MemoryStore-->>Agent: memory id
+    Agent->>MemoryStore: remember(record, scope)
+    MemoryStore->>Repo: create(record, scope)
+    Repo->>Db2: INSERT ... (VECTOR NOT NULL, version=1)
+    Db2-->>Repo: stored record (id, created_at set)
+    Repo-->>MemoryStore: stored record
+
+    alt memory_type is working or episodic
+        MemoryStore->>Consolidator: __call__([stored record])
+        note over Consolidator: NoOpConsolidator (default): returns []<br/>LLMConsolidator (custom): returns derived records
+        Consolidator-->>MemoryStore: [] or [SemanticFact, EntityProfile, ProceduralMemory, ...]
+        loop for each derived record
+            MemoryStore->>Repo: create(derived_record, scope)
+            Repo->>Db2: INSERT derived memory
+        end
+        note over MemoryStore: Consolidator errors caught + logged;<br/>never propagated to caller
+    end
+
+    MemoryStore-->>Agent: stored record
 ```
+
+**Async / out-of-band extension point (not yet implemented as schema):**
+When consolidation is too slow for the inline path, omit the consolidator,
+mark rows with `metadata={"consolidated": false}` at write time, and run
+`scripts/consolidate_pending.py` as a cron job.  See
+`src/agent_memory_sdk/types.py` (Consolidator docstring) and DECISIONS.md
+Step 4 entry for details.
 
 ## 5. Flow: `recall()` / semantic search
 

@@ -3,46 +3,126 @@ store.py
 ~~~~~~~~
 MemoryStore — the top-level facade that composes all five repositories.
 
-Callers normally import and use only this class::
+Basic usage (Step 3 and later)::
 
     from agent_memory_sdk.store import MemoryStore
     from agent_memory_sdk.models import MemoryScope, WorkingMemory
 
     store = MemoryStore(pool)
-
     scope = MemoryScope(agent_id="agent-001", user_id="user-42")
 
     # Write
-    record = store.working.create(
+    record = store.remember(
         WorkingMemory(agent_id=scope.agent_id, content="Hello!"),
         scope,
     )
 
-    # Read back
-    found = store.working.get_by_id(record.id, scope)
+    # Soft-delete (tombstone)
+    store.forget(record.id, "working", scope)
 
-    # Semantic search
+    # Semantic search — still goes directly through the repo
     results = store.working.search(
         query_embedding=[0.1, 0.2, ...],
         scope=scope,
         top_k=5,
     )
 
-The ``MemoryStore`` itself adds no business logic on top of the
-repositories in Step 3; it is a composition root only.  Lifecycle logic
-(TTL, soft-delete via ``forget()``, consolidation callbacks) will be
-added in Step 4.
+Step-4 lifecycle additions
+--------------------------
+``remember(record, scope)``
+    Writes to the appropriate repository then calls the optional
+    :class:`~agent_memory_sdk.types.Consolidator` synchronously.  When a
+    consolidator is configured and the memory type is ``working`` or
+    ``episodic``, the consolidator is invoked with the newly written record
+    and any derived memories it returns are persisted via the appropriate
+    repository.
+
+``forget(record_id, memory_type, scope)``
+    Facade-level tombstone.  Delegates to the correct repository's
+    ``forget()`` method.  The ``memory_type`` argument accepts a string
+    (``"working"``, ``"episodic"``, ``"facts"``, ``"profiles"``,
+    ``"procedures"``) or the repository instance itself.
+
+``purge_expired(scope)``
+    Facade-level maintenance entry point.  Calls ``purge_expired(scope)``
+    on every repository and returns a dict mapping table name → rows deleted.
+    This method must be called explicitly (e.g. from a cron job); it is
+    never invoked automatically.
+
+Consolidator — sync vs. async
+------------------------------
+The default consolidator is :class:`~agent_memory_sdk.types.NoOpConsolidator`
+which does nothing.  Supply a real implementation at construction time::
+
+    store = MemoryStore(pool, consolidator=MyLLMConsolidator())
+
+The consolidator runs **synchronously** on the ``remember()`` call path.
+This is the simplest, lowest-dependency design: no background threads, no
+queues, no external services required.
+
+For production workloads where LLM calls are too slow to run inline,
+run the consolidator out-of-band:
+
+1. Leave ``consolidator`` as the default ``NoOpConsolidator`` so writes
+   are fast.
+2. Add a ``consolidated_at`` timestamp (or a ``"consolidated": false``
+   flag) to each record's ``metadata`` at write time.
+3. In a cron job or background worker, query for records where
+   ``consolidated_at IS NULL`` (or ``metadata->'$.consolidated' = false``),
+   call your consolidator, persist the derived memories, and mark the
+   source rows as processed.
+
+See ``scripts/consolidate_pending.py`` for a reference implementation of
+the polling pattern.
+
+See :class:`~agent_memory_sdk.types.Consolidator` for the full protocol
+documentation and an LLM-based example.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from agent_memory_sdk.exceptions import StaleWriteError as StaleWriteError  # re-export
+from agent_memory_sdk.models import (
+    EntityProfile,
+    EpisodicMemory,
+    MemoryScope,
+    ProceduralMemory,
+    SemanticFact,
+    WorkingMemory,
+    _MemoryBase,
+)
 from agent_memory_sdk.repositories.episodic import EpisodicMemoryRepository
 from agent_memory_sdk.repositories.facts import SemanticFactRepository
 from agent_memory_sdk.repositories.procedural import ProceduralMemoryRepository
 from agent_memory_sdk.repositories.profiles import EntityProfileRepository
 from agent_memory_sdk.repositories.working import WorkingMemoryRepository
+from agent_memory_sdk.types import NoOpConsolidator
+
+logger = logging.getLogger(__name__)
+
+# Map from memory model class → repository attribute name
+_MODEL_TO_REPO_ATTR: dict[type, str] = {
+    WorkingMemory: "working",
+    EpisodicMemory: "episodic",
+    SemanticFact: "facts",
+    EntityProfile: "profiles",
+    ProceduralMemory: "procedures",
+}
+
+# String aliases accepted by forget() / purge_expired()
+_ALIAS_TO_ATTR: dict[str, str] = {
+    "working": "working",
+    "episodic": "episodic",
+    "facts": "facts",
+    "semantic_facts": "facts",
+    "profiles": "profiles",
+    "entity_profiles": "profiles",
+    "procedures": "procedures",
+    "procedural": "procedures",
+}
 
 
 class MemoryStore:
@@ -62,12 +142,19 @@ class MemoryStore:
         embedding_dim: The vector dimension used by all tables (default
               1536, matching the DDL default in 0002_memory_tables.sql).
               Override if you change the schema to a different model.
+        consolidator: A :class:`~agent_memory_sdk.types.Consolidator`
+              implementation (any callable matching the protocol).  Called
+              synchronously after every ``remember()`` write to
+              ``working`` or ``episodic`` memory.  Defaults to
+              :class:`~agent_memory_sdk.types.NoOpConsolidator` (does
+              nothing).
     """
 
     def __init__(
         self,
         pool: Any,
         embedding_dim: int = 1536,
+        consolidator: Any | None = None,
     ) -> None:
         self.working = WorkingMemoryRepository(pool)
         self.episodic = EpisodicMemoryRepository(pool)
@@ -85,3 +172,177 @@ class MemoryStore:
             self.procedures,
         ):
             repo.EMBEDDING_DIM = embedding_dim
+
+        self._consolidator = consolidator if consolidator is not None else NoOpConsolidator()
+
+    # ------------------------------------------------------------------
+    # remember() — primary write entry point
+    # ------------------------------------------------------------------
+
+    def remember(self, record: _MemoryBase, scope: MemoryScope) -> _MemoryBase:
+        """Write a memory record and optionally run consolidation.
+
+        Determines the target repository from the record's type, calls
+        ``create()``, then — if the memory type is ``working`` or
+        ``episodic`` — calls the configured
+        :attr:`consolidator` synchronously with the written record.
+
+        Any derived memories returned by the consolidator are persisted
+        immediately via the appropriate repository (facts, profiles, or
+        procedures) with the same *scope*.
+
+        Args:
+            record: A model instance (WorkingMemory, EpisodicMemory,
+                    SemanticFact, EntityProfile, or ProceduralMemory).
+            scope:  Must include at minimum agent_id.
+
+        Returns:
+            The persisted record (same object, with ``id``, ``created_at``,
+            etc. populated by the repository).
+
+        Raises:
+            TypeError:    if ``record`` is not one of the five known model types.
+            ValueError:   if scope.agent_id is missing.
+        """
+        repo_attr = _MODEL_TO_REPO_ATTR.get(type(record))
+        if repo_attr is None:
+            raise TypeError(
+                f"Unknown memory type: {type(record).__name__}. "
+                "Expected one of: WorkingMemory, EpisodicMemory, SemanticFact, "
+                "EntityProfile, ProceduralMemory."
+            )
+
+        repo = getattr(self, repo_attr)
+        stored: _MemoryBase = repo.create(record, scope)
+
+        # Run consolidation only for working / episodic writes.
+        if repo_attr in ("working", "episodic"):
+            self._run_consolidator([stored], scope)
+
+        return stored
+
+    def _run_consolidator(
+        self, raw_memories: list[_MemoryBase], scope: MemoryScope
+    ) -> None:
+        """Invoke the consolidator and persist any derived records.
+
+        Errors in the consolidator are logged but do not bubble up —
+        a consolidation failure must not roll back the original write.
+        Callers who need strict guarantees should wrap ``remember()``
+        themselves.
+        """
+        try:
+            derived = self._consolidator(raw_memories)
+        except Exception:
+            logger.exception(
+                "Consolidator raised an exception; derived memories not written."
+            )
+            return
+
+        for derived_record in derived:
+            repo_attr = _MODEL_TO_REPO_ATTR.get(type(derived_record))
+            if repo_attr is None:
+                logger.warning(
+                    "Consolidator returned unknown type %s; skipping.",
+                    type(derived_record).__name__,
+                )
+                continue
+            try:
+                getattr(self, repo_attr).create(derived_record, scope)
+                logger.debug(
+                    "Persisted derived %s id=%s from consolidator.",
+                    type(derived_record).__name__,
+                    derived_record.id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist derived %s from consolidator.",
+                    type(derived_record).__name__,
+                )
+
+    # ------------------------------------------------------------------
+    # forget() — tombstone a row
+    # ------------------------------------------------------------------
+
+    def forget(
+        self,
+        record_id: str,
+        memory_type: str,
+        scope: MemoryScope,
+    ) -> bool:
+        """Tombstone a row without hard-deleting it.
+
+        This is the facade-level entry point for ``forget``.  For
+        per-repository soft-delete, use ``store.<repo>.forget(id, scope)``
+        directly.
+
+        Args:
+            record_id:   UUID of the row to tombstone.
+            memory_type: One of ``"working"``, ``"episodic"``, ``"facts"``
+                         (or ``"semantic_facts"``), ``"profiles"``
+                         (or ``"entity_profiles"``), ``"procedures"``
+                         (or ``"procedural"``).
+            scope:       Must include at minimum agent_id.
+
+        Returns:
+            True if the row was found and tombstoned; False if not found.
+
+        Raises:
+            ValueError: if ``memory_type`` is not a recognised alias, or
+                        if scope.agent_id is missing.
+        """
+        repo = self._resolve_repo(memory_type)
+        result: bool = repo.forget(record_id, scope)
+        return result
+
+    # ------------------------------------------------------------------
+    # purge_expired() — maintenance hard-delete
+    # ------------------------------------------------------------------
+
+    def purge_expired(self, scope: MemoryScope) -> dict[str, int]:
+        """Hard-delete tombstoned rows across all five tables.
+
+        Calls ``purge_expired(scope)`` on every repository.  The scope is
+        required so that cross-tenant/agent data is never touched.
+
+        This method must be called explicitly (e.g. from a cron job or the
+        ``scripts/purge_expired.py`` script).  It is **never** invoked
+        automatically.
+
+        Args:
+            scope: Must include at minimum agent_id.
+
+        Returns:
+            A dict mapping table name to the number of rows deleted, e.g.::
+
+                {
+                    "working_memory": 12,
+                    "episodic_memory": 3,
+                    "semantic_facts": 0,
+                    "entity_profiles": 0,
+                    "procedural_memory": 1,
+                }
+        """
+        results: dict[str, int] = {}
+        for repo in (
+            self.working,
+            self.episodic,
+            self.facts,
+            self.profiles,
+            self.procedures,
+        ):
+            results[repo._TABLE] = repo.purge_expired(scope)
+        return results
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_repo(self, memory_type: str) -> Any:
+        attr = _ALIAS_TO_ATTR.get(memory_type)
+        if attr is None:
+            raise ValueError(
+                f"Unknown memory_type {memory_type!r}. "
+                f"Expected one of: {', '.join(sorted(_ALIAS_TO_ATTR))}."
+            )
+        return getattr(self, attr)
