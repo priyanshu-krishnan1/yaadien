@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>agent-memory-sdk — Local Board</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161922;
+    --panel-border: #262b38;
+    --text: #e6e9f0;
+    --muted: #8b93a7;
+    --accent: #2dd4bf;
+    --todo: #3a3f4d;
+    --todo-text: #b8bfcf;
+    --progress: #1e3a8a;
+    --progress-text: #93c5fd;
+    --done: #14532d;
+    --done-text: #86efac;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 32px;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  h1 { font-size: 20px; margin: 0; }
+  .epic-tag {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .column {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 14px;
+    min-height: 200px;
+  }
+  .column h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 0 0 12px 0;
+    display: flex;
+    justify-content: space-between;
+  }
+  .card {
+    background: #1c202b;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card-id {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .pill.To-Do { background: var(--todo); color: var(--todo-text); }
+  .pill.In-Progress { background: var(--progress); color: var(--progress-text); }
+  .pill.Done { background: var(--done); color: var(--done-text); }
+  .comment-count {
+    float: right;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    max-width: 640px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .modal h3 { margin-top: 0; }
+  .modal .desc {
+    color: var(--muted);
+    white-space: pre-wrap;
+    line-height: 1.5;
+    margin-bottom: 16px;
+  }
+  .modal .comments h4 {
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .comment {
+    border-left: 2px solid var(--panel-border);
+    padding-left: 10px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .comment .date { color: var(--muted); font-size: 11px; }
+  .close-btn {
+    float: right;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 18px;
+    cursor: pointer;
+  }
+  footer {
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1 id="epic-title">agent-memory-sdk</h1>
+    <div class="epic-tag" id="epic-desc"></div>
+  </div>
+  <div class="epic-tag">Local board — no server, no login. Edit the JSON in this file to update it.</div>
+</header>
+
+<div class="board">
+  <div class="column" id="col-todo"><h2>To Do <span id="count-todo"></span></h2></div>
+  <div class="column" id="col-progress"><h2>In Progress <span id="count-progress"></span></h2></div>
+  <div class="column" id="col-done"><h2>Done <span id="count-done"></span></h2></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <button class="close-btn" onclick="closeModal()">✕</button>
+    <div class="card-id" id="modal-id"></div>
+    <h3 id="modal-title"></h3>
+    <span class="pill" id="modal-status"></span>
+    <div class="desc" id="modal-desc"></div>
+    <div class="comments">
+      <h4>Comments</h4>
+      <div id="modal-comments"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Full step specs live in <code>PROMPTS.md</code>. This board mirrors their
+  status; it's a plain data file, not a live app — an agent updates the JSON
+  block below directly as part of each step's working agreement, then
+  commits it alongside the code.
+</footer>
+
+<!--
+  BOARD DATA — this is what an agent edits to update the board.
+  To change a story's status: change its "status" field to one of
+  "To Do", "In Progress", "Done".
+  To add a comment: push {"date": "YYYY-MM-DD", "text": "..."} into its
+  "comments" array (used for the "summary + commit hash" note required
+  when a step finishes).
+-->
+<script id="board-data" type="application/json">
+{
+  "epic": {
+    "id": "EPIC-1",
+    "title": "agent-memory-sdk",
+    "description": "Python SDK giving AI agents governed, multi-type memory (working/episodic/semantic/procedural) backed by IBM Db2 LUW, with native vector search."
+  },
+  "stories": [
+    {
+      "id": "STEP-1",
+      "title": "Step 1: Scaffold",
+      "status": "To Do",
+      "description": "Scaffold the agent-memory-sdk Python package (src-layout, pyproject.toml, deps: ibm_db, ibm_db_dbi, pydantic v2) and a Db2 connection/pool module with a connectivity check script. Full spec in PROMPTS.md.",
+      "comments": []
+    },
+    {
+      "id": "STEP-2",
+      "title": "Step 2: Schema & migrations",
+      "status": "To Do",
+      "description": "Write Db2 DDL for the five per-type memory tables (working, episodic, semantic_facts, entity_profiles, procedural) including VECTOR columns and CREATE VECTOR INDEX statements, plus a minimal SQL migration runner. Full spec in PROMPTS.md.",
+      "comments": []
+    },
+    {
+      "id": "STEP-3",
+      "title": "Step 3: Core models & repositories",
+      "status": "To Do",
+      "description": "Implement Pydantic models and a repository class per memory type, an EmbeddingProvider protocol, and a MemoryStore facade composing all repositories. Full spec in PROMPTS.md.",
+      "comments": []
+    },
+    {
+      "id": "STEP-4",
+      "title": "Step 4: Lifecycle: TTL, versioning, forget, consolidation",
+      "status": "To Do",
+      "description": "Add forget()/tombstone soft-delete, purge_expired(), optimistic concurrency via version, and a pluggable Consolidator protocol invoked synchronously by default. Full spec in PROMPTS.md.",
+      "comments": []
+    },
+    {
+      "id": "STEP-5",
+      "title": "Step 5: Governance / scoping enforcement",
+      "status": "To Do",
+      "description": "Add a MemoryScope value object required on every MemoryStore call; ensure every query includes scope predicates; test cross-scope isolation. Full spec in PROMPTS.md.",
+      "comments": []
+    },
+    {
+      "id": "STEP-6",
+      "title": "Step 6: Framework adapters",
+      "status": "To Do",
+      "description": "Build thin optional adapters: LangChain (BaseChatMessageHistory/BaseStore), OpenAI Agents SDK (Session protocol), and MCP (remember/recall/forget/list tools), each gated behind extras. Full spec in PROMPTS.md.",
+      "comments": []
+    },
+    {
+      "id": "STEP-7",
+      "title": "Step 7: Integration tests",
+      "status": "To Do",
+      "description": "Add integration tests against a real Db2 LUW instance (Docker), gated behind an env var/marker, covering migrations, vector search correctness, scope isolation, TTL purge, and each adapter's round-trip. Full spec in PROMPTS.md.",
+      "comments": []
+    },
+    {
+      "id": "STEP-8",
+      "title": "Step 8: Docs & examples",
+      "status": "To Do",
+      "description": "Write the README and one short runnable example per adapter under examples/. Full spec in PROMPTS.md.",
+      "comments": []
+    }
+  ]
+}
+</script>
+
+<script>
+  const data = JSON.parse(document.getElementById('board-data').textContent);
+
+  document.getElementById('epic-title').textContent = data.epic.title;
+  document.getElementById('epic-desc').textContent = data.epic.description;
+
+  const columns = {
+    'To Do': document.getElementById('col-todo'),
+    'In Progress': document.getElementById('col-progress'),
+    'Done': document.getElementById('col-done')
+  };
+  const counts = { 'To Do': 0, 'In Progress': 0, 'Done': 0 };
+
+  data.stories.forEach(story => {
+    counts[story.status] = (counts[story.status] || 0) + 1;
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-id">${story.id}</div>
+      <div class="card-title">${story.title}</div>
+      <span class="pill ${story.status.replace(' ', '-')}">${story.status}</span>
+      <span class="comment-count">${story.comments.length ? story.comments.length + ' comment' + (story.comments.length > 1 ? 's' : '') : ''}</span>
+    `;
+    card.onclick = () => openModal(story);
+    columns[story.status].appendChild(card);
+  });
+
+  document.getElementById('count-todo').textContent = '(' + counts['To Do'] + ')';
+  document.getElementById('count-progress').textContent = '(' + counts['In Progress'] + ')';
+  document.getElementById('count-done').textContent = '(' + counts['Done'] + ')';
+
+  function openModal(story) {
+    document.getElementById('modal-id').textContent = story.id;
+    document.getElementById('modal-title').textContent = story.title;
+    const pill = document.getElementById('modal-status');
+    pill.textContent = story.status;
+    pill.className = 'pill ' + story.status.replace(' ', '-');
+    document.getElementById('modal-desc').textContent = story.description;
+    const commentsEl = document.getElementById('modal-comments');
+    commentsEl.innerHTML = story.comments.length
+      ? story.comments.map(c => `<div class="comment"><div class="date">${c.date}</div>${c.text}</div>`).join('')
+      : '<div class="comment" style="border:none;color:var(--muted);padding-left:0;">No comments yet.</div>';
+    document.getElementById('overlay').classList.add('open');
+  }
+  function closeModal() {
+    document.getElementById('overlay').classList.remove('open');
+  }
+  document.getElementById('overlay').addEventListener('click', e => {
+    if (e.target.id === 'overlay') closeModal();
+  });
+</script>
+
+</body>
+</html>

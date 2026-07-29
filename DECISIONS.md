@@ -48,26 +48,40 @@ explicitly supersedes it and say why.
   separate `purge_expired()` maintenance method (not automatic), and a
   `version` column for optimistic concurrency.
 
-## 2026-07-30 — Bob MCP tool usage and Jira tracking
+## 2026-07-30 — Bob MCP tool usage (superseded re: Jira, see next entry)
 
-- **Decision:** Of Bob's available MCP connections, only three are used for
-  this project: **Jira** (issue tracking — one Epic + one Story per build
-  step, created in Step 0, transitioned In Progress → Done per step with a
-  comment + commit hash), **Product Knowledge** (Milvus-backed semantic
-  search over IBM docs — consulted for Db2 VECTOR/index syntax in Step 2 and
-  ibm_db driver behavior in Step 1, since these are IBM-specific and
-  fast-moving), and **Web search** (Tavily — fallback for anything Product
-  Knowledge doesn't cover). Figma, Carbon, and Mural are left unused
-  (design/UI tools, no fit for a headless library). Airtable, Amplitude,
-  and Monday.com are left unused and unconfigured (require setup, and none
-  fit this project's needs — Monday.com would just duplicate Jira).
+- **Decision:** Of Bob's available MCP connections, **Product Knowledge**
+  (Milvus-backed semantic search over IBM docs — consulted for Db2
+  VECTOR/index syntax in Step 2 and ibm_db driver behavior in Step 1, since
+  these are IBM-specific and fast-moving) and **Web search** (Tavily —
+  fallback for anything Product Knowledge doesn't cover) are used. Figma,
+  Carbon, and Mural are left unused (design/UI tools, no fit for a headless
+  library). Airtable, Amplitude, and Monday.com are left unused and
+  unconfigured (require setup, and none fit this project's needs).
 - **Reason:** Avoid setup/maintenance overhead on tools that don't serve
-  this project, while using the two research-relevant tools (Product
-  Knowledge, Web search) to reduce the risk of the agent guessing at
-  IBM/Db2-specific syntax from possibly-stale trained knowledge.
+  this project, while using the two research-relevant tools to reduce the
+  risk of the agent guessing at IBM/Db2-specific syntax from possibly-stale
+  trained knowledge.
 - **Made during:** Step 0 setup (before any build step ran).
-- **Note:** `PROMPTS.md` uses the placeholder `<JIRA_PROJECT_KEY>` — replace
-  it with the real Jira project key before pasting Step 0 into Bob.
+
+## 2026-07-30 — Jira MCP dropped; tracking moved to a local HTML board
+
+- **Decision:** Jira was originally planned for tracking (see prior entry),
+  but Bob's Jira MCP connection isn't working. Tracking now uses
+  `BOARD.html` — a single self-contained HTML file (Kanban-style: To
+  Do/In Progress/Done) with the Epic and all 8 Stories embedded as JSON
+  directly in the file. No server, no login, nothing to authorize. Agents
+  update it by editing that embedded JSON and committing, the same way
+  they update DECISIONS.md and ARCHITECTURE.md.
+- **Reason:** The MCP connection failing is an external blocker, not a
+  reason to stop tracking altogether — a local file has zero dependency on
+  any external service being reachable, which also makes it more robust
+  than Jira would have been for a build that may span disconnected
+  sessions/tools.
+- **Made during:** Step 0 setup (before any build step ran).
+- **Supersedes:** the Jira-tracking half of the 2026-07-30 "Bob MCP tool
+  usage" entry above. That entry's Product Knowledge/Web search decisions
+  still stand.
 
 ## 2026-07-30 — Architecture/flow design lives in ARCHITECTURE.md, not a Bob MCP tool
 

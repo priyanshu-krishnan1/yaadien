@@ -48,8 +48,6 @@ Python/Db2 SDK with no UI — use these deliberately, and leave the rest
 alone so Bob doesn't burn time setting up things this project doesn't need:
 
 **Use these:**
-- **Jira** (ready to use) — tracking for every step. See "Jira tracking"
-  below.
 - **Product Knowledge** (ready to use, Milvus-backed semantic search over
   IBM's product knowledge bases) — check this first for anything
   IBM/Db2-specific: exact `VECTOR` type syntax, `CREATE VECTOR INDEX`
@@ -61,26 +59,39 @@ alone so Bob doesn't burn time setting up things this project doesn't need:
   details, general Python packaging questions.
 
 **Not used — explicitly out of scope for this project:**
+- **Jira** — not working in this Bob setup (MCP connection unreachable).
+  Tracking uses a local HTML board instead — see "Tracking: local board,
+  not Jira MCP" below. Don't retry Jira MCP calls; if it starts working
+  again later, that's a separate decision, not an assumption to make
+  mid-build.
 - **Figma, Carbon, Mural** — design/UI tools; this is a headless library
   with nothing to design. Leave disabled, don't invoke them.
 - **Airtable, Amplitude, Monday.com** — require setup, and none fit this
   project (Airtable/Amplitude are structured-data and analytics tools,
-  Monday.com would just duplicate Jira as a tracker). Don't set these up
-  for this project.
+  Monday.com would just duplicate the local board as a tracker). Don't set
+  these up for this project.
 
-## Jira tracking
+## Tracking: local board, not Jira MCP
 
-Before pasting Step 0, replace every `<JIRA_PROJECT_KEY>` in this file with
-your actual Jira project key.
+Jira wasn't reachable through Bob's Jira MCP connection, so tracking is a
+**local, self-contained HTML board** instead: [`BOARD.html`](BOARD.html).
+No server, no login, nothing to authorize — open it directly in a browser.
+It's pre-populated with one Epic ("agent-memory-sdk") and one Story per
+build step (STEP-1 through STEP-8), each already carrying that step's
+summary.
 
-All work is tracked under one Epic, "agent-memory-sdk", with one Story per
-build step (Step 1–8), titled "Step N: <step name>" and described using
-that step's prompt text. Step 0 creates the Epic and all 8 Stories up
-front. From then on, the working agreement is: at the *start* of a step,
-transition its Story to In Progress; at the *end*, alongside the
-DECISIONS.md append and git commit already required, transition the Story
-to Done with a comment summarizing what was built and the commit hash. This
-is already folded into each step's prompt below.
+The board's data is a plain JSON blob embedded in `BOARD.html` itself (look
+for `<script id="board-data" type="application/json">`), so an agent
+updates it the same way it updates `DECISIONS.md` or `ARCHITECTURE.md` —
+edit the file, then commit. The working agreement is: at the *start* of a
+step, edit that story's `"status"` field to `"In Progress"`; at the *end*,
+alongside the DECISIONS.md append and git commit already required, set
+`"status"` to `"Done"` and push a `{"date": "...", "text": "..."}` entry
+into its `"comments"` array summarizing what was built — include that edit
+in the same commit as the rest of the step's work (git log already has the
+exact commit, no need to reference the hash). This is already folded into
+each step's prompt below. Refresh the page in a browser any time to see
+current status.
 
 ---
 
@@ -127,12 +138,11 @@ DECISIONS ALREADY MADE (do not re-litigate these):
 Do not change these decisions. If something here seems wrong once you're in
 the code, flag it explicitly and ask before deviating.
 
-Using the Jira MCP tool: create an Epic named "agent-memory-sdk" in project
-<JIRA_PROJECT_KEY>, then create 8 Stories under it — one per build step
-(Step 1 through Step 8) — titled "Step N: <step name>" (use the step names
-from PROMPTS.md) with each Story's description set to that step's full
-prompt text. Leave all 8 in the backlog/To Do state; later steps will
-transition their own Story as work happens.
+Tracking uses BOARD.html, a local self-contained HTML board (not Jira —
+Jira's MCP connection isn't working). It already exists, pre-populated with
+an Epic and one Story per step, all in "To Do" — no setup needed. Open it
+in a browser to see current status; later steps update its embedded JSON
+directly as work happens.
 ```
 
 ---
@@ -140,8 +150,7 @@ transition their own Story as work happens.
 ## Step 1 — Scaffold
 
 ```
-Before starting: transition the Jira Story "Step 1: Scaffold" to In
-Progress.
+Before starting: in BOARD.html, set STEP-1's status to "In Progress".
 
 Scaffold the `agent-memory-sdk` Python package. Use a standard src-layout
 (`src/agent_memory_sdk/`), `pyproject.toml` (build via hatchling or
@@ -167,10 +176,8 @@ schema or memory logic yet — this step is scaffolding + connectivity only.
 
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry (use its entry template at the bottom) recording your build
-backend choice and reason, and any other decision/deviation you made. Then
-`git add -A && git commit -m "step 1: scaffold"`, and transition "Step 1:
-Scaffold" to Done with a comment summarizing what you built and the commit
-hash.
+backend choice and reason, and any other decision/deviation you made. In BOARD.html, set STEP-1's status to "Done" and add a comment summarizing
+what you built. Then `git add -A && git commit -m "step 1: scaffold"`.
 ```
 
 ---
@@ -178,8 +185,7 @@ hash.
 ## Step 2 — Schema & migrations
 
 ```
-Before starting: transition the Jira Story "Step 2: Schema & migrations" to
-In Progress.
+Before starting: in BOARD.html, set STEP-2's status to "In Progress".
 
 Design and write the Db2 DDL for the four per-type memory tables (working,
 episodic, semantic_facts, entity_profiles, procedural), per the Step 0
@@ -211,10 +217,9 @@ Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording the distance metric you chose per table (and why),
 and the content/metadata column types you chose (CLOB/VARCHAR/JSON), plus
 any other deviation. Update section 3 (schema ER diagram) of
-ARCHITECTURE.md to match what you actually built. Then
-`git add -A && git commit -m "step 2: schema"`,
-and transition "Step 2: Schema & migrations" to Done with a comment
-summarizing what you built and the commit hash.
+ARCHITECTURE.md to match what you actually built. In BOARD.html, set
+STEP-2's status to "Done" and add a comment summarizing what you built.
+Then `git add -A && git commit -m "step 2: schema"`.
 ```
 
 ---
@@ -222,8 +227,7 @@ summarizing what you built and the commit hash.
 ## Step 3 — Core models & repositories
 
 ```
-Before starting: transition the Jira Story "Step 3: Core models &
-repositories" to In Progress.
+Before starting: in BOARD.html, set STEP-3's status to "In Progress".
 
 Implement Pydantic models for the four memory types (WorkingMemory,
 EpisodicMemory, SemanticFact, EntityProfile, ProceduralMemory) matching the
@@ -249,10 +253,9 @@ Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording the embedding-dimension approach (how it's
 parameterized) and any repository/API-shape decisions you made. Update
 section 1 (system overview) of ARCHITECTURE.md if the actual class/module
-names or boundaries differ from what's drawn there. Then
-`git add -A && git commit -m "step 3: models and repositories"`, and
-transition "Step 3: Core models & repositories" to Done with a comment
-summarizing what you built and the commit hash.
+names or boundaries differ from what's drawn there. In BOARD.html, set
+STEP-3's status to "Done" and add a comment summarizing what you built.
+Then `git add -A && git commit -m "step 3: models and repositories"`.
 ```
 
 ---
@@ -260,8 +263,7 @@ summarizing what you built and the commit hash.
 ## Step 4 — Lifecycle: TTL, versioning, forget, consolidation
 
 ```
-Before starting: transition the Jira Story "Step 4: Lifecycle: TTL,
-versioning, forget, consolidation" to In Progress.
+Before starting: in BOARD.html, set STEP-4's status to "In Progress".
 
 Add lifecycle features to the repositories/MemoryStore from Step 3:
 - `forget(id, scope)` — sets deleted_at (tombstone), never hard-deletes by
@@ -282,10 +284,9 @@ Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording the Consolidator protocol shape and the
 purge_expired() semantics you settled on. Update section 4 (remember()
 flow) of ARCHITECTURE.md if the actual consolidation trigger/timing
-differs from what's drawn there. Then
-`git add -A && git commit -m "step 4: lifecycle"`, and transition "Step 4:
-Lifecycle: TTL, versioning, forget, consolidation" to Done with a comment
-summarizing what you built and the commit hash.
+differs from what's drawn there. In BOARD.html, set STEP-4's status to
+"Done" and add a comment summarizing what you built. Then
+`git add -A && git commit -m "step 4: lifecycle"`.
 ```
 
 ---
@@ -293,8 +294,7 @@ summarizing what you built and the commit hash.
 ## Step 5 — Governance / scoping enforcement
 
 ```
-Before starting: transition the Jira Story "Step 5: Governance / scoping
-enforcement" to In Progress.
+Before starting: in BOARD.html, set STEP-5's status to "In Progress".
 
 Harden scoping across the SDK: add a `MemoryScope` value object
 (tenant_id, agent_id, user_id, thread_id) that's required on every
@@ -306,9 +306,9 @@ scope's row id.
 
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording the MemoryScope shape and any edge cases you had to
-resolve. Then `git add -A && git commit -m "step 5: scoping"`, and
-transition "Step 5: Governance / scoping enforcement" to Done with a
-comment summarizing what you built and the commit hash.
+resolve. In BOARD.html, set STEP-5's status to "Done" and add a comment
+summarizing what you built. Then
+`git add -A && git commit -m "step 5: scoping"`.
 ```
 
 ---
@@ -316,8 +316,7 @@ comment summarizing what you built and the commit hash.
 ## Step 6 — Framework adapters
 
 ```
-Before starting: transition the Jira Story "Step 6: Framework adapters" to
-In Progress.
+Before starting: in BOARD.html, set STEP-6's status to "In Progress".
 
 Build three thin adapters on top of the Step 3-5 core, each in its own
 optional-dependency submodule (agent_memory_sdk.adapters.langchain,
@@ -338,10 +337,9 @@ gate each adapter behind an extras_require group in pyproject.toml
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording any adapter-specific decisions (e.g. how LangChain's
 BaseStore maps onto facts vs profiles). Update section 1 (system overview)
-of ARCHITECTURE.md's adapter boxes to match what you actually built. Then
-`git add -A && git commit -m "step 6: adapters"`, and transition "Step 6:
-Framework adapters" to Done with a comment summarizing what you built and
-the commit hash.
+of ARCHITECTURE.md's adapter boxes to match what you actually built. In
+BOARD.html, set STEP-6's status to "Done" and add a comment summarizing
+what you built. Then `git add -A && git commit -m "step 6: adapters"`.
 ```
 
 ---
@@ -349,8 +347,7 @@ the commit hash.
 ## Step 7 — Integration tests
 
 ```
-Before starting: transition the Jira Story "Step 7: Integration tests" to
-In Progress.
+Before starting: in BOARD.html, set STEP-7's status to "In Progress".
 
 Add integration tests that run against a real Db2 LUW instance (document
 how to spin one up locally, e.g. the ibmcom/db2 Docker image) gated behind
@@ -361,10 +358,9 @@ basic round-trip (LangChain history, OpenAI Session, MCP tool calls).
 
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry noting any gaps found between what DECISIONS.md says and what
-the code actually does (fix or flag them). Then
-`git add -A && git commit -m "step 7: integration tests"`, and transition
-"Step 7: Integration tests" to Done with a comment summarizing what you
-built and the commit hash.
+the code actually does (fix or flag them). In BOARD.html, set STEP-7's
+status to "Done" and add a comment summarizing what you built. Then
+`git add -A && git commit -m "step 7: integration tests"`.
 ```
 
 ---
@@ -372,8 +368,7 @@ built and the commit hash.
 ## Step 8 — Docs & examples
 
 ```
-Before starting: transition the Jira Story "Step 8: Docs & examples" to In
-Progress.
+Before starting: in BOARD.html, set STEP-8's status to "In Progress".
 
 Write the README (install, quickstart with docker Db2, the four memory
 types explained, scoping model, lifecycle features) and one runnable
@@ -382,7 +377,7 @@ each, showing store setup, a remember() call, and a recall() call.
 
 Before starting: read DECISIONS.md in full — the README should reflect it
 accurately, not the original Step 0 aspiration if anything changed along
-the way. Then `git add -A && git commit -m "step 8: docs and examples"`,
-and transition "Step 8: Docs & examples" to Done with a comment
-summarizing what you built and the commit hash.
+the way. In BOARD.html, set STEP-8's status to "Done" and add a comment
+summarizing what you built. Then
+`git add -A && git commit -m "step 8: docs and examples"`.
 ```
