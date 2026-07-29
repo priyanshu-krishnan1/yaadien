@@ -250,9 +250,11 @@ class Db2ChatMessageHistory:
     row.  Message type (HumanMessage, AIMessage, …) and additional fields
     are round-tripped through the ``metadata`` JSON column.
 
-    The class dynamically inherits from ``BaseChatMessageHistory`` at
-    instantiation time so that ``langchain_core`` is only imported when
-    this class is actually used, not when the module is imported.
+    This class does **not** inherit from ``BaseChatMessageHistory``; it
+    satisfies the interface via duck-typing (``messages`` property,
+    ``add_message()``, ``add_messages()``, ``clear()``).  ``langchain_core``
+    is only imported at construction time via the ``_require_langchain()``
+    guard, so the SDK core remains importable without LangChain installed.
 
     Args:
         store:   A configured :class:`~agent_memory_sdk.store.MemoryStore`.
@@ -316,7 +318,16 @@ class Db2ChatMessageHistory:
         self._store.remember(record, self._scope)
 
     def add_messages(self, messages: Sequence[Any]) -> None:
-        """Append multiple messages (batch helper for LangChain >= 0.2)."""
+        """Append multiple messages (batch helper for LangChain >= 0.2).
+
+        .. note::
+            This method is not yet optimised for batching — it calls
+            :meth:`add_message` (and therefore checks out a separate DB
+            connection) for each message.  It fulfils the LangChain interface
+            contract but does not reduce round-trips compared with calling
+            :meth:`add_message` in a loop.  A future improvement could
+            checkpoint a single connection for the whole batch.
+        """
         for message in messages:
             self.add_message(message)
 

@@ -673,6 +673,64 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-07-31 — Db2Session protocol correction (add_items / get_items / pop_item / clear_session)
+
+- **Decision:**
+  Rewrote `Db2Session` in `adapters/openai_agents.py` to implement the
+  real OpenAI Agents SDK `Session` protocol as documented at
+  https://openai.github.io/openai-agents-python/ref/memory/session/.
+  All four protocol methods are now `async def` with the correct names and
+  signatures:
+  - `async def add_items(self, items: list[dict[str, Any]]) -> None` — iterates
+    the list and persists each item via the private `_persist_message()` helper
+    (same storage logic as the old `add_message`).
+  - `async def get_items(self, limit: int | None = None) -> list[dict[str, Any]]`
+    — returns all non-deleted messages in chronological order; when `limit` is
+    provided, returns only the most-recent `limit` messages (tail of the
+    chronological list), matching the `SQLiteSession` convention.
+  - `async def pop_item(self) -> dict[str, Any] | None` — fetches the single
+    most-recent non-deleted row (`list_all(..., limit=1)`), soft-deletes it via
+    `store.working.forget()`, and returns its deserialized content; returns
+    `None` if the session is empty.
+  - `async def clear_session(self) -> None` — same soft-delete-all logic as the
+    former `clear()`.
+  The underlying repository calls remain synchronous (matching the sync-first
+  design used throughout the SDK); only the four Session method signatures are
+  `async` so they satisfy the protocol.
+  The module-level usage-example docstring was updated to show `await` on all
+  four protocol calls.
+  `tests/test_adapters.py::TestDb2Session` was updated to call
+  `add_items`/`get_items`/`pop_item`/`clear_session` via `asyncio.run()`, with
+  new tests covering: multi-item `add_items`, `get_items(limit=N)` truncation,
+  `pop_item` returns/tombstones the most-recent row, and `pop_item` returns
+  `None` on an empty session.  Five tests were renamed (old names removed).
+
+- **Reason:**
+  The old method names (`add_message`, `get_messages`, `clear`) did not match
+  the actual `Session` protocol.  `pop_item` was missing entirely.  All four
+  methods must be `async def`.  Passing a `Db2Session` to `Runner.run(...,
+  session=session)` would have failed immediately at runtime because the SDK
+  calls `await session.add_items(...)`.
+
+- **Minor fixes bundled in the same commit:**
+  1. `Db2ChatMessageHistory` class docstring — removed the false claim that the
+     class "dynamically inherits from `BaseChatMessageHistory` at instantiation
+     time".  The actual design (deliberate duck-typing, no dynamic inheritance)
+     is now stated correctly, consistent with the "BaseChatMessageHistory is NOT
+     dynamically subclassed" decision recorded in the Step 6 entry above.
+  2. `Db2ChatMessageHistory.add_messages()` docstring — added an explicit note
+     that the method is not yet optimised for batching (each message still
+     checks out a separate DB connection via `add_message`).  The prior
+     one-liner implied it was a real batch operation.
+
+- **Made during:** Step 6 audit / correctness pass
+- **Supersedes:** "OpenAI Agents SDK — Db2Session" bullet in the
+  *2026-07-31 — Step 6: Framework adapters* entry above, which recorded
+  the wrong protocol method names (`add_message`, `get_messages`, `clear`)
+  and omitted `pop_item`.
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```

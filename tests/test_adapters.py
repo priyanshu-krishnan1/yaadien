@@ -20,6 +20,7 @@ contained.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from contextlib import contextmanager
@@ -136,50 +137,105 @@ class TestDb2Session:
         session._pool = pool  # keep a ref for inspection
         return session, pool
 
-    def test_add_message_writes_working_memory(self):
+    def test_add_items_writes_working_memory(self):
         session, pool = self._make_session()
-        session.add_message({"role": "user", "content": "Hello!"})
+        asyncio.run(session.add_items([{"role": "user", "content": "Hello!"}]))
         last_sql = pool.cursor.last_sql
         assert "INSERT INTO working_memory" in last_sql
 
-    def test_add_message_stores_role_in_metadata(self):
+    def test_add_items_stores_role_in_metadata(self):
         session, pool = self._make_session()
-        session.add_message({"role": "assistant", "content": "Hi!"})
+        asyncio.run(session.add_items([{"role": "assistant", "content": "Hi!"}]))
         # Params include the JSON-serialised metadata string
         metadata_param = pool.cursor.last_params[6]  # metadata column
         meta = json.loads(metadata_param)
         assert meta["role"] == "assistant"
 
-    def test_add_message_content_is_json_serialised(self):
+    def test_add_items_content_is_json_serialised(self):
         """Message dict must be stored as JSON so it round-trips."""
         session, pool = self._make_session()
         msg = {"role": "user", "content": "ping"}
-        session.add_message(msg)
+        asyncio.run(session.add_items([msg]))
         content_param = pool.cursor.last_params[5]  # content column
         parsed = json.loads(content_param)
         assert parsed["content"] == "ping"
         assert parsed["role"] == "user"
 
-    def test_get_messages_deserialises_rows(self):
+    def test_add_items_persists_multiple(self):
+        """add_items must persist every item in the list."""
+        session, pool = self._make_session()
+        msgs = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "second"},
+        ]
+        asyncio.run(session.add_items(msgs))
+        inserts = [s for s in pool.cursor.all_sqls if "INSERT INTO working_memory" in s]
+        assert len(inserts) == 2
+
+    def test_get_items_deserialises_rows(self):
         msg = {"role": "user", "content": "hello"}
         row = _row(id_="r1", content=json.dumps(msg))
         session, pool = self._make_session(rows=[row])
-        messages = session.get_messages()
+        messages = asyncio.run(session.get_items())
         assert len(messages) == 1
         assert messages[0]["content"] == "hello"
         assert messages[0]["role"] == "user"
 
-    def test_get_messages_returns_empty_when_no_rows(self):
+    def test_get_items_returns_empty_when_no_rows(self):
         session, pool = self._make_session(rows=[])
-        assert session.get_messages() == []
+        assert asyncio.run(session.get_items()) == []
 
-    def test_clear_soft_deletes_all_rows(self):
+    def test_get_items_limit_returns_most_recent(self):
+        """get_items(limit=N) should return the last N items in chron order."""
+        # The fake cursor returns rows in the order given; the real DB returns
+        # newest-first (ORDER BY created_at DESC), so we pass them newest-first
+        # here to match what list_all would produce.
+        rows = [
+            _row(id_="r2", content=json.dumps({"role": "user", "content": "newest"})),
+            _row(id_="r1", content=json.dumps({"role": "assistant", "content": "middle"})),
+            _row(id_="r0", content=json.dumps({"role": "user", "content": "oldest"})),
+        ]
+        session, pool = self._make_session(rows=rows)
+        # get_items reverses (→ oldest, middle, newest) then slices the tail
+        messages = asyncio.run(session.get_items(limit=2))
+        assert len(messages) == 2
+        # The two most-recent (chronologically) should be middle and newest
+        contents = [m["content"] for m in messages]
+        assert "newest" in contents
+        assert "middle" in contents
+        assert "oldest" not in contents
+
+    def test_clear_session_soft_deletes_all_rows(self):
         rows = [_row(id_=f"r{i}") for i in range(3)]
         session, pool = self._make_session(rows=rows)
-        session.clear()
+        asyncio.run(session.clear_session())
         # Each row triggers an UPDATE (forget = soft-delete)
         update_sqls = [s for s in pool.cursor.all_sqls if "UPDATE working_memory" in s]
         assert len(update_sqls) == 3
+
+    def test_pop_item_returns_most_recent(self):
+        """pop_item() should return the newest row's content."""
+        msg = {"role": "assistant", "content": "latest"}
+        row = _row(id_="r1", content=json.dumps(msg))
+        session, pool = self._make_session(rows=[row])
+        result = asyncio.run(session.pop_item())
+        assert result is not None
+        assert result["content"] == "latest"
+        assert result["role"] == "assistant"
+
+    def test_pop_item_tombstones_the_row(self):
+        """After pop_item(), the row must be soft-deleted (UPDATE issued)."""
+        row = _row(id_="r1", content=json.dumps({"role": "user", "content": "hi"}))
+        session, pool = self._make_session(rows=[row])
+        asyncio.run(session.pop_item())
+        update_sqls = [s for s in pool.cursor.all_sqls if "UPDATE working_memory" in s]
+        assert len(update_sqls) >= 1
+
+    def test_pop_item_returns_none_when_empty(self):
+        """pop_item() on an empty session must return None."""
+        session, pool = self._make_session(rows=[])
+        result = asyncio.run(session.pop_item())
+        assert result is None
 
     def test_scope_uses_session_id_as_thread_id(self):
         session, _ = self._make_session()

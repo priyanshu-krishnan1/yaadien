@@ -6,7 +6,7 @@ OpenAI Agents SDK adapter — requires
 
 Provides :class:`Db2Session` which implements the OpenAI Agents SDK
 ``Session`` protocol (see
-https://openai.github.io/openai-agents-python/sandbox/memory/).
+https://openai.github.io/openai-agents-python/ref/memory/session/).
 
 A ``Session`` is responsible for storing and retrieving the conversational
 message list for a single agent run.  ``Db2Session`` maps this to:
@@ -55,13 +55,19 @@ Usage example::
         user_id="user-42",         # optional
     )
 
-    # Wire into the OpenAI Agents SDK:
+    # Wire into the OpenAI Agents SDK — all Session methods are async:
     from agents import Agent, Runner
     result = await Runner.run(
         Agent(name="MyAgent"),
         input="Hello!",
         session=session,
     )
+
+    # Direct async usage:
+    await session.add_items([{"role": "user", "content": "Hello!"}])
+    messages = await session.get_items()
+    last = await session.pop_item()
+    await session.clear_session()
 """
 
 from __future__ import annotations
@@ -124,10 +130,13 @@ class Db2Session:
     (``openai-agents>=0.0.10``).  The instance can be passed directly as
     the ``session=`` argument to ``Runner.run()`` or stored on an ``Agent``.
 
-    Each call to :meth:`add_message` writes one ``WorkingMemory`` row.
-    :meth:`get_messages` returns all non-deleted rows for the scope, in
-    conversation order (oldest first).  :meth:`clear` soft-deletes all
-    working-memory rows for the scope.
+    Protocol methods (all ``async``):
+
+    - :meth:`add_items` — persist a list of message dicts.
+    - :meth:`get_items` — retrieve all (or the most recent *limit*) messages
+      in chronological order.
+    - :meth:`pop_item` — fetch and tombstone the single most-recent message.
+    - :meth:`clear_session` — soft-delete all messages for this scope.
 
     For cross-session retrieval, :meth:`recall_episodes` searches
     ``store.episodic`` by vector similarity — useful for injecting relevant
@@ -160,15 +169,14 @@ class Db2Session:
         )
 
     # ------------------------------------------------------------------ #
-    # Session protocol                                                     #
+    # Internal helper                                                      #
     # ------------------------------------------------------------------ #
 
-    def add_message(self, message: dict[str, Any]) -> None:
-        """Persist a single message dict.
+    def _persist_message(self, message: dict[str, Any]) -> None:
+        """Write a single message dict to ``store.working``.
 
-        The message is stored as a JSON-serialized string in the
-        ``content`` column; the ``role`` is also captured in ``metadata``
-        for fast filtering without JSON parsing.
+        Extracted from :meth:`add_items` so the per-item logic lives in
+        one place.
 
         Args:
             message: A dict with at least ``"role"`` and ``"content"``
@@ -185,15 +193,42 @@ class Db2Session:
         )
         self._store.remember(record, self._scope)
 
-    def get_messages(self) -> list[dict[str, Any]]:
-        """Return all non-deleted messages in chronological order.
+    # ------------------------------------------------------------------ #
+    # Session protocol                                                     #
+    # ------------------------------------------------------------------ #
+
+    async def add_items(self, items: list[dict[str, Any]]) -> None:
+        """Persist a list of message dicts.
+
+        Each item is written as a separate ``WorkingMemory`` row.  The
+        underlying store call is synchronous (matching the sync-first
+        design used throughout this SDK); the method is ``async`` so the
+        signature matches the OpenAI Agents SDK ``Session`` protocol.
+
+        Args:
+            items: A list of dicts, each with at least ``"role"`` and
+                   ``"content"`` keys (OpenAI Agents SDK convention).
+        """
+        for item in items:
+            self._persist_message(item)
+
+    async def get_items(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Return non-deleted messages in chronological order.
 
         ``list_all`` returns newest-first (``ORDER BY created_at DESC``);
         this method reverses the list to restore conversation order.
+        When *limit* is provided only the most recent *limit* messages are
+        returned (the tail of the chronological list), matching the
+        convention used by other ``Session`` backends (e.g.
+        ``SQLiteSession``).
+
+        Args:
+            limit: Maximum number of messages to return (most-recent).
+                   ``None`` returns all messages.
 
         Returns:
             A list of message dicts (same format as passed to
-            :meth:`add_message`).
+            :meth:`add_items`).
         """
         rows = self._store.working.list_all(
             scope=self._scope,
@@ -201,6 +236,8 @@ class Db2Session:
         )
         # Reverse to chronological order (oldest first)
         rows = list(reversed(rows))
+        if limit is not None:
+            rows = rows[-limit:]
         messages: list[dict[str, Any]] = []
         for row in rows:
             try:
@@ -211,11 +248,34 @@ class Db2Session:
                 )
         return messages
 
-    def clear(self) -> None:
+    async def pop_item(self) -> dict[str, Any] | None:
+        """Fetch and tombstone the single most-recent message.
+
+        Retrieves the newest non-deleted row for this scope, soft-deletes
+        it via :meth:`~agent_memory_sdk.repositories.base.BaseRepository.forget`,
+        and returns its deserialized content.  Returns ``None`` when there
+        are no messages left in the session.
+
+        Returns:
+            The most-recent message dict, or ``None`` if the session is
+            empty.
+        """
+        rows = self._store.working.list_all(scope=self._scope, limit=1)
+        if not rows:
+            return None
+        row = rows[0]
+        self._store.working.forget(row.id, self._scope)
+        try:
+            return _content_to_msg(row.content)
+        except Exception as exc:
+            logger.warning("Could not deserialise popped message id=%s: %s", row.id, exc)
+            return {"role": "user", "content": row.content}
+
+    async def clear_session(self) -> None:
         """Soft-delete all messages for the current session scope.
 
-        Uses :meth:`~agent_memory_sdk.store.MemoryStore.forget` on each
-        row so the data is tombstoned (invisible to reads) but not
+        Uses :meth:`~agent_memory_sdk.repositories.base.BaseRepository.forget`
+        on each row so the data is tombstoned (invisible to reads) but not
         immediately hard-deleted.  Call
         :meth:`~agent_memory_sdk.store.MemoryStore.purge_expired` from a
         maintenance script to reclaim disk space.
