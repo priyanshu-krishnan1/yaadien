@@ -254,13 +254,15 @@ sequenceDiagram
 
     alt memory_type is working or episodic
         MemoryStore->>Consolidator: __call__([stored record])
-        note over Consolidator: NoOpConsolidator (default): returns []<br/>LLMConsolidator (custom): returns derived records
+        note over Consolidator: NoOpConsolidator (default): returns []
+        note over Consolidator: LLMConsolidator (custom): returns derived records
         Consolidator-->>MemoryStore: [] or [SemanticFact, EntityProfile, ProceduralMemory, ...]
         loop for each derived record
             MemoryStore->>Repo: create(derived_record, scope)
             Repo->>Db2: INSERT derived memory
         end
-        note over MemoryStore: Consolidator errors caught + logged;<br/>never propagated to caller
+        note over MemoryStore: Consolidator errors caught + logged
+        note over MemoryStore: never propagated to caller
     end
 
     MemoryStore-->>Agent: stored record
