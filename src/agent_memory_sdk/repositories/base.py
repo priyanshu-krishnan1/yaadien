@@ -477,14 +477,8 @@ class BaseRepository(ABC, Generic[M]):
     def purge_expired(self, scope: MemoryScope) -> int:
         """Hard-delete rows eligible for permanent removal within *scope*.
 
-        A row is eligible when **either** condition holds:
-          1. ``deleted_at IS NOT NULL`` (tombstoned) AND
-             ``expires_at < CURRENT TIMESTAMP`` (TTL has elapsed); OR
-          2. ``deleted_at IS NOT NULL`` (tombstoned) AND
-             ``expires_at IS NULL`` (no TTL set — tombstoned rows without an
-             expiry are always eligible for purge once this method is called).
-
-        In short: **all tombstoned rows are eligible for purge**.  Rows with
+        **All tombstoned rows are eligible for purge** — the only condition is
+        ``deleted_at IS NOT NULL``.  Rows with
         an ``expires_at`` in the past but NOT yet tombstoned are left alone —
         the normal read filters exclude them from query results, but they are
         not deleted until the caller explicitly tombstones them first with

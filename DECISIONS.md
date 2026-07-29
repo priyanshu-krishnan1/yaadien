@@ -455,6 +455,37 @@ explicitly supersedes it and say why.
 
 - **Made during:** Step 4 (Lifecycle: TTL, versioning, forget, consolidation)
 
+## 2026-07-30 — Step 4 audit: two doc-consistency fixes
+
+- **Decision:** Applied two documentation-only fixes found during the Step 4
+  audit; no code changes were made.
+
+  1. **ARCHITECTURE.md section 3 ER diagram — `embedding` annotation updated.**
+     All five tables (`working_memory`, `episodic_memory`, `semantic_facts`,
+     `entity_profiles`, `procedural_memory`) still annotated the `embedding`
+     column as `"NOT NULL default zero-vec"` in the Mermaid ER diagram.  This
+     contradicts the prose column-type legend directly above the diagram (already
+     correctly updated to "NOT NULL, no DB-side default; application layer always
+     supplies an explicit vector") and the authoritative Step 2 / hygiene-fix-pass
+     entries in this file.  Changed all five annotations to `"NOT NULL, app-supplied"`.
+
+  2. **`repositories/base.py` `purge_expired()` docstring — stale numbered
+     conditions removed.**  The docstring opened with two numbered conditions
+     implying `expires_at` gates purge eligibility (condition 1: tombstoned AND
+     `expires_at < NOW`; condition 2: tombstoned AND `expires_at IS NULL`),
+     followed immediately by an "In short" line that correctly stated "all
+     tombstoned rows are eligible for purge."  The numbered conditions were stale
+     draft text that contradicted the actual SQL (`WHERE deleted_at IS NOT NULL`
+     with no `expires_at` predicate) and the deliberate design recorded in the
+     Step 4 "purge_expired() semantics" entry above.  Removed the two numbered
+     conditions; the docstring now leads directly with the accurate summary.
+
+- **Reason:** Diagram/prose and code/docstring inconsistencies mislead readers
+  into wrong assumptions about schema defaults and purge eligibility.  Both
+  fixes bring the docs into agreement with the code and the already-recorded
+  decisions; neither changes any behaviour.
+- **Made during:** Step 4 audit (doc-consistency pass)
+
 ---
 
 ### Entry template (copy this for every new decision)
