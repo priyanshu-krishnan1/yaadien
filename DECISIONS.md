@@ -167,13 +167,22 @@ explicitly supersedes it and say why.
   schema default. A new migration with an ALTER TABLE or DROP/CREATE of the
   embedding column is needed to change the dimension. This decision is
   recorded here to close the open item from the Step 0 design.
-- **Decision (NOT NULL + zero-vector default):** `VECTOR_FILL(1536,FLOAT32,0.0)`
-  is the default for rows inserted without a pre-computed embedding. Zero-
-  vectors rank at the bottom of any cosine-distance search (zero cosine-
-  similarity with non-zero query vectors) so they never surface as false
-  matches. Application layer (Step 3+) MUST replace zero-vectors with real
-  embeddings before meaningful recall. NOT NULL is required for the Db2 ANN
-  index to activate.
+- **Decision (embedding column nullability — CORRECTED 2026-07-30):** The
+  embedding column is **NULLABLE** with no DEFAULT. IBM Db2 12.1 docs
+  (https://www.ibm.com/docs/en/db2/12.1.x?topic=list-vector-values and
+  https://www.ibm.com/docs/en/db2/12.1.x?topic=statements-create-table)
+  explicitly state: "If a column is defined as XML or VECTOR, a default value
+  cannot be specified (SQLSTATE 42613). The only possible default is NULL."
+  `VECTOR_FILL` is not a recognized scalar function for DEFAULT expressions
+  and does not appear in the Db2 12.1 vector function list (confirmed via IBM
+  docs + web search during the 2026-07-30 hygiene audit). The original Step 2
+  DDL comment claiming `VECTOR_FILL(1536,FLOAT32,0.0)` was valid was
+  incorrect — the DDL was fixed in the hygiene audit commit before any real
+  Db2 run. The application layer (`repositories/base.py`) always supplies an
+  explicit zero-vector string via `TO_VECTOR(?, FLOAT32)` on INSERT when no
+  real embedding is provided, so in practice the column is never NULL from
+  the application. Raw SQL inserts without the embedding column will produce
+  NULL, and those rows will not participate in `VECTOR_DISTANCE` searches.
 - **Decision (migration runner):** Plain Python using only stdlib + ibm_db_dbi
   DB-API. No alembic. ibm_db_dbi/Db2 support in alembic is inconsistent.
   Files: `000N_*.sql` in `src/agent_memory_sdk/db/migrations/`.
@@ -226,6 +235,73 @@ explicitly supersedes it and say why.
   It adds no business logic.  Lifecycle hooks (forget, purge, consolidation)
   are Step 4's responsibility.
 - **Made during:** Step 3 (Core models & repositories)
+
+## 2026-07-30 — BOARD.html redesign (retroactive)
+
+- **Decision:** `BOARD.html` was redesigned from its original minimal form
+  to a styled Kanban board with a dark header, progress bar on the epic
+  banner, stats row (pill counters), and card-level move buttons (▶ Start,
+  ✓ Done, ↩ Back, Reset). A `summary` field was added to every story object
+  in the embedded JSON (one-line description shown on the card face). Toast
+  notifications were added for user feedback on card moves. A detail modal
+  with an "Add comment" textarea was added.
+- **Reason:** Improved usability for multi-session reviews; the original
+  plain file was hard to scan at a glance. Retroactive entry added during
+  the 2026-07-30 hygiene audit.
+- **Important — buttons are in-memory only:** The Start/Done/Back/Reset
+  buttons in the modal footer update the in-page board state only. They do
+  **not** persist to disk. Real status changes require editing the JSON
+  block inside `BOARD.html` and committing, consistent with the existing
+  working agreement (see 2026-07-30 "Jira MCP dropped" entry).
+- **Made during:** Interstitial work between Steps 2 and 3 (exact session
+  not recorded; discovered during hygiene audit).
+
+## 2026-07-30 — Repo hygiene audit (7-item fix)
+
+- **Decision:** Applied 7 hygiene fixes as a single commit ("fix: repo
+  hygiene from audit"):
+  1. **`.gitignore` replaced** — original file was backwards: it tracked
+     `ARCHITECTURE.md`, `BOARD.html`, `Chats.md`, `DECISIONS.md`, and
+     `PROMPTS.md` (files that must be tracked) while ignoring none of the
+     standard Python artifacts. Replaced with a correct `.gitignore`
+     covering `.env`, `__pycache__/`, `*.py[cod]`, `*.egg-info/`, `.venv/`,
+     `.pytest_cache/`, `.ruff_cache/`, `.mypy_cache/`, `.claude`. The risk
+     was that a real `.env` file with `DB2_UID`/`DB2_PWD` would have been
+     committed on the next `git add -A && git commit`.
+  2. **19 `.pyc`/`__pycache__` files untracked** — committed before
+     `.gitignore` existed (a symptom of issue 1). Removed from the index
+     via `git rm -r --cached`; files left on disk. New `.gitignore` prevents
+     re-tracking.
+  3. **`Chats.md` committed** — existed on disk but was silently excluded
+     by the old `.gitignore`. Reviewed: contains only early planning notes
+     and prompt-drafting text; no credentials or sensitive data. Now tracked.
+  4. **README.md "Development setup" added** — `pytest` failed with
+     `ModuleNotFoundError: No module named 'agent_memory_sdk'` without a
+     prior `pip install -e ".[dev]"`. Added a short section above the
+     "Full documentation" placeholder covering venv creation, editable
+     install, and the three standard checks (`pytest`, `ruff check .`,
+     `mypy src`).
+  5. **`mypy` strict fix in `migrate.py`** — `Migrator.__init__`'s `pool`
+     parameter had no type annotation. Fixed with a `TYPE_CHECKING` guard
+     import of `ConnectionPool` from `db/connection.py`. Because
+     `migrate.py` already has `from __future__ import annotations`, the
+     annotation is never evaluated at runtime, avoiding any circular-import
+     or missing-ibm_db risk.
+  6. **Migration 0002 `VECTOR_FILL`/`NOT NULL` corrected** — the original
+     DDL used `VECTOR(1536,FLOAT32) NOT NULL DEFAULT VECTOR_FILL(1536,FLOAT32,0.0)`.
+     Per IBM Db2 12.1 docs (confirmed during this audit via Product Knowledge
+     MCP + Tavily web search): VECTOR columns accept only NULL as a DEFAULT;
+     `VECTOR_FILL` is not a DDL DEFAULT expression. Both `NOT NULL` and the
+     `DEFAULT VECTOR_FILL(...)` clause were removed. The column is now
+     nullable; the application layer always supplies an explicit vector on
+     INSERT. The migration had never been applied to a real Db2 instance so
+     it was safe to edit in place. See the corrected Step 2 entry above.
+  7. **Retroactive BOARD.html entry added** — see the entry immediately
+     above this one.
+- **Reason:** Safety (credential leak risk), correctness (invalid DDL would
+  fail on first real Db2 run), and consistency with the project's own rule
+  that every deviation gets logged.
+- **Made during:** Hygiene audit, between Step 3 and Step 4.
 
 ## Open / not yet decided (fill in as steps happen)
 

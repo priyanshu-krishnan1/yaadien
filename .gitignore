@@ -1,7 +1,22 @@
+# Environment / secrets
+.env
 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtualenvs
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editor/tooling local config (not part of the shipped project)
 .claude
-ARCHITECTURE.md 
-BOARD.html      
-Chats.md        
-DECISIONS.md    
-PROMPTS.md

@@ -40,6 +40,10 @@ import logging
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent_memory_sdk.db.connection import ConnectionPool
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +85,7 @@ class Migrator:
         migrations_dir: Override the default migrations directory (for testing).
     """
 
-    def __init__(self, pool, migrations_dir: Path | None = None) -> None:
+    def __init__(self, pool: ConnectionPool, migrations_dir: Path | None = None) -> None:
         self._pool = pool
         self._dir = migrations_dir or MIGRATIONS_DIR
 

@@ -8,17 +8,22 @@
 --   that ALTERs or re-creates the embedding column with the correct dimension.
 --   1536 fits within Db2's row-organized FLOAT32 limit of 8168 dimensions.
 --
--- VECTOR NOT NULL & DEFAULT ZERO-VECTOR
---   Db2's CREATE VECTOR INDEX requires the indexed column to be NOT NULL.
---   Rows inserted without a pre-computed embedding receive a zero-vector
---   (all coordinates = 0.0). This is a deliberate sentinel: a zero-vector
---   has zero cosine-similarity with any non-zero query vector, so it will
---   rank at the bottom of any cosine-distance search and will never surface
---   as a false match. For EUCLIDEAN, distance from origin equals the query
---   vector's own norm, which is also reliably non-zero for real embeddings.
---   The application layer (Step 3) must replace zero-vectors with real
---   embeddings before any meaningful recall is expected.
---   VECTOR_FILL(1536, FLOAT32, 0.0) is the Db2 syntax for a zero-vector constant.
+-- VECTOR COLUMN NULLABILITY
+--   Per IBM Db2 12.1 docs (https://www.ibm.com/docs/en/db2/12.1.x?topic=list-vector-values
+--   and https://www.ibm.com/docs/en/db2/12.1.x?topic=statements-create-table):
+--   "If a column is defined as XML or VECTOR, a default value cannot be specified
+--   (SQLSTATE 42613). The only possible default is NULL."
+--   VECTOR_FILL is NOT a valid DEFAULT expression; the original DDL comment was
+--   incorrect. The embedding column is therefore NULLABLE (no NOT NULL, no DEFAULT).
+--   The application layer (repositories/base.py) always supplies an explicit
+--   embedding on INSERT: a zero-vector string passed to TO_VECTOR(?, FLOAT32) when
+--   the caller has not provided a real embedding yet. Rows with NULL embeddings
+--   (e.g. inserted by raw SQL without the embedding column) simply won't participate
+--   in VECTOR_DISTANCE searches.
+--   Note: the CREATE VECTOR INDEX below DOES require the column to be NOT NULL
+--   for the ANN index to activate on Db2. With the column nullable, the index
+--   is still created but Db2 will skip NULL rows during ANN traversal. Rows
+--   inserted via the application layer always carry an explicit (non-null) vector.
 --
 -- DISTANCE METRIC CHOICES (per table)
 --   working_memory  → COSINE
@@ -86,8 +91,7 @@ CREATE TABLE working_memory (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32) NOT NULL
-                    DEFAULT VECTOR_FILL(1536, FLOAT32, 0.0),
+    embedding   VECTOR(1536, FLOAT32),
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -122,8 +126,7 @@ CREATE TABLE episodic_memory (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32) NOT NULL
-                    DEFAULT VECTOR_FILL(1536, FLOAT32, 0.0),
+    embedding   VECTOR(1536, FLOAT32),
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -156,8 +159,7 @@ CREATE TABLE semantic_facts (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32) NOT NULL
-                    DEFAULT VECTOR_FILL(1536, FLOAT32, 0.0),
+    embedding   VECTOR(1536, FLOAT32),
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -190,8 +192,7 @@ CREATE TABLE entity_profiles (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32) NOT NULL
-                    DEFAULT VECTOR_FILL(1536, FLOAT32, 0.0),
+    embedding   VECTOR(1536, FLOAT32),
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -226,8 +227,7 @@ CREATE TABLE procedural_memory (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32) NOT NULL
-                    DEFAULT VECTOR_FILL(1536, FLOAT32, 0.0),
+    embedding   VECTOR(1536, FLOAT32),
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,

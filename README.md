@@ -3,3 +3,28 @@
 Governed multi-type memory system for AI agents backed by IBM Db2 LUW.
 
 > Full documentation added in Step 8.
+
+## Development setup
+
+```bash
+# 1. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# 2. Install the package and dev dependencies (editable)
+pip install -e ".[dev]"
+
+# 3. Run tests
+pytest
+
+# 4. Lint
+ruff check .
+
+# 5. Type-check
+mypy src
+```
+
+> **Note:** `ibm_db` requires the Db2 CLI driver. For a live Db2 connection,
+> set the env vars documented in `.env.example` before running any
+> integration tests or the `scripts/check_connection.py` script.
+> The unit-test suite mocks ibm_db and runs without a live Db2 instance.
