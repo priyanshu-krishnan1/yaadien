@@ -147,9 +147,14 @@
       "id": "STEP-3",
       "title": "Step 3: Core models & repositories",
       "summary": "Pydantic models, per-type repos with vector search, MemoryStore facade, unit tests.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Implement Pydantic models for the four memory types (WorkingMemory,\nEpisodicMemory, SemanticFact, EntityProfile, ProceduralMemory) matching the\nStep 2 schema.\n\nImplement a repository class per type (e.g. `WorkingMemoryRepository`) with:\n- create/upsert, get_by_id, list (scoped + filtered), soft_delete\n- a `search(query_embedding, scope, top_k, metric, mode=EXACT|APPROX)`\n  method that builds the VECTOR_DISTANCE SQL with FETCH EXACT/APPROX\n- all methods REQUIRE at minimum agent_id scope; reject calls missing scope\n\nDefine an `EmbeddingProvider` protocol (a callable: text -> vector) that\ncallers inject — the SDK must not hard-depend on a specific embedding model.\n\nAdd a top-level `MemoryStore` facade that composes all four repositories\nbehind one object (`store.working`, `store.episodic`, `store.facts`,\n`store.profiles`, `store.procedures`).\n\nWrite unit tests using a fake/in-memory repository (mock ibm_db_dbi cursor)\nso tests don't require a live Db2 instance.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-07-30",
+          "text": "Built types.py (EmbeddingProvider Protocol, DistanceMetric+SearchMode enums), models.py (MemoryScope + 5 Pydantic models mirroring the DDL columns), repositories/base.py (BaseRepository ABC with create/get_by_id/list/soft_delete/search — all scope-enforced via _scope_predicates), five concrete repos (working/episodic/facts/profiles/procedural), and store.py (MemoryStore composition root with embedding_dim propagation). SQL uses TO_VECTOR(?,FLOAT32) on write and VECTOR_SERIALIZE on read. Pagination uses ROW_NUMBER() for offset>0. All 68 unit tests pass (no live Db2 needed)."
+        }
+      ]
     },
     {
       "id": "STEP-4",

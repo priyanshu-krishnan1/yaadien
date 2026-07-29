@@ -16,7 +16,7 @@ lands (see the "Last updated" line per section).
 
 ## 1. System overview
 
-_Last updated: Step 0 (design only, no code yet)_
+_Last updated: Step 3 — class/module names confirmed; actual files written_
 
 ```mermaid
 flowchart TB
@@ -84,11 +84,24 @@ Key points this diagram encodes (see DECISIONS.md for the reasoning):
 - Embeddings are supplied by the caller via `EmbeddingProvider`; the SDK
   doesn't ship a specific embedding model.
 
+Actual module paths (as of Step 3):
+- `src/agent_memory_sdk/types.py` — `EmbeddingProvider` (Protocol),
+  `DistanceMetric` (enum), `SearchMode` (enum)
+- `src/agent_memory_sdk/models.py` — `MemoryScope`, `WorkingMemory`,
+  `EpisodicMemory`, `SemanticFact`, `EntityProfile`, `ProceduralMemory`
+- `src/agent_memory_sdk/repositories/base.py` — `BaseRepository` ABC
+- `src/agent_memory_sdk/repositories/working.py` — `WorkingMemoryRepository`
+- `src/agent_memory_sdk/repositories/episodic.py` — `EpisodicMemoryRepository`
+- `src/agent_memory_sdk/repositories/facts.py` — `SemanticFactRepository`
+- `src/agent_memory_sdk/repositories/profiles.py` — `EntityProfileRepository`
+- `src/agent_memory_sdk/repositories/procedural.py` — `ProceduralMemoryRepository`
+- `src/agent_memory_sdk/store.py` — `MemoryStore` facade
+
 ---
 
 ## 2. Scoping model
 
-_Last updated: Step 0 (design only, no code yet)_
+_Last updated: Step 0 (design only, no code yet) — MemoryScope model built in Step 3_
 
 ```mermaid
 flowchart LR
@@ -217,7 +230,7 @@ erDiagram
 
 ## 4. Flow: `remember()`
 
-_Last updated: Step 0 (design only, no code yet)_
+_Last updated: Step 0 (design only); Step 3 implements repos that execute these queries_
 
 ```mermaid
 sequenceDiagram
@@ -240,7 +253,7 @@ sequenceDiagram
 
 ## 5. Flow: `recall()` / semantic search
 
-_Last updated: Step 0 (design only, no code yet)_
+_Last updated: Step 0 (design only); Step 3 implements repos that execute these queries_
 
 ```mermaid
 sequenceDiagram

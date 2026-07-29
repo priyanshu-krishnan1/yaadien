@@ -183,6 +183,50 @@ explicitly supersedes it and say why.
   SQLite-backed unit tests.
 - **Made during:** Step 2 (Schema & migrations)
 
+## 2026-07-30 — Step 3: models, repositories, EmbeddingProvider, MemoryStore
+
+- **Decision (embedding parameterization):** The `EMBEDDING_DIM` class
+  attribute on `BaseRepository` (default: 1536) is the single override
+  point for a different embedding model.  `MemoryStore.__init__` accepts
+  an `embedding_dim` argument and propagates it to all five repositories,
+  so callers change dimension in one place.  The DDL value is still 1536;
+  changing the stored dimension requires a new schema migration.
+- **Decision (embedding field on models):** `embedding: list[float]`
+  defaults to `[]` (empty list).  An empty list is the Python-side sentinel
+  meaning "not yet embedded"; the repository stores `VECTOR_FILL(dim,FLOAT32,0.0)`
+  in Db2 in that case (matching the NOT NULL column default already in the DDL).
+  The caller is responsible for providing a real embedding before meaningful
+  recall is expected.
+- **Decision (EmbeddingProvider):** A `@runtime_checkable` Protocol in
+  `types.py` — a callable `(str) -> list[float]`.  `MemoryStore` does NOT
+  store or call the provider in Step 3; the caller embeds text and passes the
+  vector directly to `search()` / sets `record.embedding` before `create()`.
+  Step 4+ will add optional auto-embedding via the provider on `remember()`.
+- **Decision (VECTOR_SERIALIZE for SELECT):** The SELECT list in all
+  repositories uses `VECTOR_SERIALIZE(embedding) AS embedding` to convert
+  the Db2 VECTOR column back to a string `'[f1,f2,…]'` that the Python
+  `_parse_vector()` helper can deserialize.  This is the portable way to
+  read VECTOR columns via ibm_db_dbi (which does not natively deserialize
+  VECTOR into a list).
+- **Decision (TO_VECTOR for INSERT/SEARCH):** INSERT and VECTOR_DISTANCE
+  queries use `TO_VECTOR(?, FLOAT32)` with the vector serialized as the
+  string `'[f1,f2,…]'` as the bound parameter.  This keeps the parameter
+  type as a plain Python string, which ibm_db_dbi handles reliably.
+- **Decision (scope enforcement):** Every repository method calls
+  `_require_agent_id(scope)` and builds scope predicates via
+  `_scope_predicates(scope)`.  These predicates are part of every WHERE
+  clause — including `get_by_id`, which pairs `id = ?` with the full scope
+  check so callers cannot read another scope's row by guessing the id.
+- **Decision (pagination):** `list()` with `offset=0` uses a plain
+  `FETCH FIRST n ROWS ONLY` clause.  With `offset>0` it switches to a
+  `ROW_NUMBER() OVER` sub-query, which is the portable Db2 idiom for
+  offset pagination (Db2 does not support `OFFSET` in all configurations).
+- **Decision (MemoryStore is a composition root only in Step 3):**
+  `MemoryStore` holds the five repositories and propagates `embedding_dim`.
+  It adds no business logic.  Lifecycle hooks (forget, purge, consolidation)
+  are Step 4's responsibility.
+- **Made during:** Step 3 (Core models & repositories)
+
 ## Open / not yet decided (fill in as steps happen)
 
 - Embedding dimension(s) per memory type — **resolved in Step 2**: default
