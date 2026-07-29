@@ -29,6 +29,14 @@ redundant within one continuous session — they're what keeps a fresh
 session (or a different tool) from silently re-deciding something already
 settled, or losing a decision it made that nobody wrote down.
 
+There's also [`ARCHITECTURE.md`](ARCHITECTURE.md) — the current-state design
+doc (component diagram, schema ER diagram, sequence flows, all in Mermaid).
+Unlike DECISIONS.md, it's updated **in place**, not appended to: it should
+always reflect what the system looks like right now, not a history. Steps
+2, 3, 4, and 6 below call out when to update it; if any other step ends up
+changing a boundary or flow, update it there too even if not explicitly
+told to.
+
 Also commit after each step (`git add -A && git commit -m "step N: ..."`).
 That gives you a clean checkpoint to roll back to if a later step goes
 sideways, without losing earlier steps.
@@ -202,7 +210,9 @@ since ibm_db_dbi/Db2 support in alembic is inconsistent.
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording the distance metric you chose per table (and why),
 and the content/metadata column types you chose (CLOB/VARCHAR/JSON), plus
-any other deviation. Then `git add -A && git commit -m "step 2: schema"`,
+any other deviation. Update section 3 (schema ER diagram) of
+ARCHITECTURE.md to match what you actually built. Then
+`git add -A && git commit -m "step 2: schema"`,
 and transition "Step 2: Schema & migrations" to Done with a comment
 summarizing what you built and the commit hash.
 ```
@@ -237,7 +247,9 @@ so tests don't require a live Db2 instance.
 
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording the embedding-dimension approach (how it's
-parameterized) and any repository/API-shape decisions you made. Then
+parameterized) and any repository/API-shape decisions you made. Update
+section 1 (system overview) of ARCHITECTURE.md if the actual class/module
+names or boundaries differ from what's drawn there. Then
 `git add -A && git commit -m "step 3: models and repositories"`, and
 transition "Step 3: Core models & repositories" to Done with a comment
 summarizing what you built and the commit hash.
@@ -268,7 +280,9 @@ Add lifecycle features to the repositories/MemoryStore from Step 3:
 
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording the Consolidator protocol shape and the
-purge_expired() semantics you settled on. Then
+purge_expired() semantics you settled on. Update section 4 (remember()
+flow) of ARCHITECTURE.md if the actual consolidation trigger/timing
+differs from what's drawn there. Then
 `git add -A && git commit -m "step 4: lifecycle"`, and transition "Step 4:
 Lifecycle: TTL, versioning, forget, consolidation" to Done with a comment
 summarizing what you built and the commit hash.
@@ -323,7 +337,8 @@ gate each adapter behind an extras_require group in pyproject.toml
 
 Before starting: read DECISIONS.md in full. Before finishing: append a
 dated entry recording any adapter-specific decisions (e.g. how LangChain's
-BaseStore maps onto facts vs profiles). Then
+BaseStore maps onto facts vs profiles). Update section 1 (system overview)
+of ARCHITECTURE.md's adapter boxes to match what you actually built. Then
 `git add -A && git commit -m "step 6: adapters"`, and transition "Step 6:
 Framework adapters" to Done with a comment summarizing what you built and
 the commit hash.

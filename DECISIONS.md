@@ -69,6 +69,29 @@ explicitly supersedes it and say why.
 - **Note:** `PROMPTS.md` uses the placeholder `<JIRA_PROJECT_KEY>` — replace
   it with the real Jira project key before pasting Step 0 into Bob.
 
+## 2026-07-30 — Architecture/flow design lives in ARCHITECTURE.md, not a Bob MCP tool
+
+- **Decision:** Current-state architecture and flow diagrams (component
+  diagram, scoping model, schema ER diagram, remember()/recall() sequence
+  diagrams) are captured in `ARCHITECTURE.md` at the repo root, using
+  Mermaid — updated in place (overwritten) as the design evolves, not
+  appended to like this file. None of Bob's MCP-connected tools were used
+  for this, on evaluation.
+- **Reason:** Mural's MCP access is read-only (can't write diagrams there).
+  Product Knowledge is a read-only search index over IBM's own docs, not a
+  place to store ours. Jira is a tracker — fine for linking to a design
+  doc, bad as the doc itself (no diagramming, no single current-state
+  view, gets unwieldy). Figma/Carbon are UI-design tools, wrong domain for
+  a headless library. Airtable/Amplitude/Monday.com don't fit this project
+  (see the 2026-07-30 MCP tool usage entry above). A versioned markdown
+  file with Mermaid diagrams has no external auth dependency, is diffable,
+  and renders natively in GitHub and most markdown viewers.
+- **Made during:** Step 0 setup (before any build step ran).
+- **How to apply:** Every build step that changes the design (schema,
+  component boundaries, flows) must update the relevant section of
+  `ARCHITECTURE.md`, not just append a DECISIONS.md entry. DECISIONS.md
+  answers "why"; ARCHITECTURE.md answers "what, right now."
+
 ## Open / not yet decided (fill in as steps happen)
 
 - Embedding dimension(s) per memory type — depends on embedding model
