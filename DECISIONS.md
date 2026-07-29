@@ -135,14 +135,58 @@ explicitly supersedes it and say why.
   do it themselves.
 - **Made during:** Step 1 (Scaffold)
 
+## 2026-07-30 — Step 2: schema column types, distance metrics, embedding dimension
+
+- **Decision (content column type):** `CLOB(65536)` for all five tables.
+  Reason: VARCHAR maxes at 32 672 bytes in Db2 — too small for multi-turn
+  conversation history, long episode summaries, or verbose procedural
+  instructions. CLOB(65536) = 64 KB inline storage, no separate LOB
+  tablespace overhead for values that fit, and sufficient for all four
+  memory types. Can be widened in a later migration if needed.
+- **Decision (metadata column type):** `VARCHAR(4096)` (JSON text) for all
+  five tables. Reason: metadata is a small JSON object (< 4 KB). VARCHAR
+  supports `JSON_VALUE`/`JSON_EXISTS` predicates natively in Db2 12.1
+  without BSON conversion. SYSTOOLS JSON UDFs are deprecated in Db2 12.1.
+  If larger metadata is needed, a follow-up migration can ALTER to CLOB.
+- **Decision (distance metric):** **COSINE** for all five tables.
+  Confirmed by IBM Db2 12.1 docs (ANN index implementation page): "Ideal
+  for text embeddings and semantic similarity where vector length is
+  normalized." All dominant embedding providers (OpenAI, sentence-
+  transformers) produce L2-normalized FLOAT32 vectors. EUCLIDEAN and COSINE
+  rank identically for normalized vectors, so there is no accuracy trade-off
+  in choosing COSINE uniformly. Using one metric across all tables simplifies
+  repository query logic (no per-type metric dispatch in SQL).
+  Note: the Db2 CREATE VECTOR INDEX doc explicitly states "COSINE is only
+  available for FLOAT32 vectors" — our column type is FLOAT32, so this is
+  valid. The distance metric in `VECTOR_DISTANCE(...)` queries MUST match
+  `WITH DISTANCE COSINE` in the index for the ANN index to be selected.
+- **Decision (embedding dimension default):** 1536 (OpenAI
+  `text-embedding-3-small` / `ada-002`). This fits within Db2's row-organized
+  FLOAT32 limit of 8168 dimensions. The SDK is dimension-agnostic at runtime:
+  callers supply embeddings via `EmbeddingProvider`; the 1536 in DDL is a
+  schema default. A new migration with an ALTER TABLE or DROP/CREATE of the
+  embedding column is needed to change the dimension. This decision is
+  recorded here to close the open item from the Step 0 design.
+- **Decision (NOT NULL + zero-vector default):** `VECTOR_FILL(1536,FLOAT32,0.0)`
+  is the default for rows inserted without a pre-computed embedding. Zero-
+  vectors rank at the bottom of any cosine-distance search (zero cosine-
+  similarity with non-zero query vectors) so they never surface as false
+  matches. Application layer (Step 3+) MUST replace zero-vectors with real
+  embeddings before meaningful recall. NOT NULL is required for the Db2 ANN
+  index to activate.
+- **Decision (migration runner):** Plain Python using only stdlib + ibm_db_dbi
+  DB-API. No alembic. ibm_db_dbi/Db2 support in alembic is inconsistent.
+  Files: `000N_*.sql` in `src/agent_memory_sdk/db/migrations/`.
+  Runner: `src/agent_memory_sdk/db/migrate.py` (`Migrator` class).
+  Bootstrap strategy: check if `schema_migrations` exists first; create only
+  if absent. This makes the bootstrap idempotent and compatible with the
+  SQLite-backed unit tests.
+- **Made during:** Step 2 (Schema & migrations)
+
 ## Open / not yet decided (fill in as steps happen)
 
-- Embedding dimension(s) per memory type — depends on embedding model
-  chosen by the SDK user; document how the schema parameterizes this.
-- Exact distance metric per table (cosine vs euclidean vs dot) — decide in
-  Step 2, record per-table choice + reason here.
-- Whether `content`/`metadata` use CLOB vs VARCHAR vs Db2 JSON type —
-  decide in Step 2.
+- Embedding dimension(s) per memory type — **resolved in Step 2**: default
+  1536 (FLOAT32). Change by writing a new migration that ALTERs the column.
 
 ---
 

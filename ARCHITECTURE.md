@@ -106,70 +106,110 @@ scope before ranking by vector distance. See `MemoryScope` (built in Step
 
 ## 3. Schema (entity-relationship)
 
-_Last updated: Step 0 (design only — exact column types/metrics chosen in
-Step 2, this diagram should be revised to match)_
+_Last updated: Step 2 — reflects actual DDL in `0002_memory_tables.sql`_
+
+Column type legend:
+- `id` → `VARCHAR(36)` (UUID)
+- `*_id` scope cols → `VARCHAR(128)`, tenant_id nullable, agent_id NOT NULL
+- `content` → `CLOB(65536)` (64 KB; see DECISIONS.md Step 2 entry)
+- `metadata` → `VARCHAR(4096)` (JSON text; see DECISIONS.md Step 2 entry)
+- `embedding` → `VECTOR(1536, FLOAT32) NOT NULL DEFAULT VECTOR_FILL(1536,FLOAT32,0.0)`
+- `created_at`, `updated_at` → `TIMESTAMP NOT NULL DEFAULT CURRENT TIMESTAMP`
+- `expires_at`, `deleted_at` → `TIMESTAMP` (nullable)
+- `version` → `INTEGER NOT NULL DEFAULT 1`
+
+Each table has: a `CREATE VECTOR INDEX … WITH DISTANCE COSINE`, a composite
+scope index on `(agent_id, tenant_id, user_id, thread_id)`, an agent-only
+index, and a partial index on `expires_at WHERE expires_at IS NOT NULL`.
+
+Migration runner: `src/agent_memory_sdk/db/migrate.py` (Migrator class).
+Migration files: `src/agent_memory_sdk/db/migrations/000N_*.sql`.
 
 ```mermaid
 erDiagram
+    schema_migrations {
+        VARCHAR_255 version PK
+        TIMESTAMP applied_at
+    }
+
     working_memory {
-        id id PK
-        tenant_id string
-        agent_id string
-        user_id string
-        thread_id string
-        content text
-        metadata json
-        embedding vector "NOT NULL"
-        created_at timestamp
-        expires_at timestamp
-        version int
-        deleted_at timestamp
+        VARCHAR_36 id PK
+        VARCHAR_128 tenant_id "nullable"
+        VARCHAR_128 agent_id "NOT NULL"
+        VARCHAR_128 user_id "nullable"
+        VARCHAR_128 thread_id "nullable"
+        CLOB_65536 content "NOT NULL"
+        VARCHAR_4096 metadata "NOT NULL default {}"
+        VECTOR_1536_FLOAT32 embedding "NOT NULL default zero-vec"
+        TIMESTAMP created_at "NOT NULL"
+        TIMESTAMP updated_at "NOT NULL"
+        TIMESTAMP expires_at "nullable"
+        INTEGER version "NOT NULL default 1"
+        TIMESTAMP deleted_at "nullable"
     }
+
     episodic_memory {
-        id id PK
-        tenant_id string
-        agent_id string
-        user_id string
-        thread_id string
-        content text
-        metadata json
-        embedding vector "NOT NULL"
-        created_at timestamp
-        expires_at timestamp
-        version int
-        deleted_at timestamp
+        VARCHAR_36 id PK
+        VARCHAR_128 tenant_id "nullable"
+        VARCHAR_128 agent_id "NOT NULL"
+        VARCHAR_128 user_id "nullable"
+        VARCHAR_128 thread_id "nullable"
+        CLOB_65536 content "NOT NULL"
+        VARCHAR_4096 metadata "NOT NULL default {}"
+        VECTOR_1536_FLOAT32 embedding "NOT NULL default zero-vec"
+        TIMESTAMP created_at "NOT NULL"
+        TIMESTAMP updated_at "NOT NULL"
+        TIMESTAMP expires_at "nullable"
+        INTEGER version "NOT NULL default 1"
+        TIMESTAMP deleted_at "nullable"
     }
+
     semantic_facts {
-        id id PK
-        tenant_id string
-        agent_id string
-        user_id string
-        content text
-        metadata json
-        embedding vector "NOT NULL"
-        version int
-        deleted_at timestamp
+        VARCHAR_36 id PK
+        VARCHAR_128 tenant_id "nullable"
+        VARCHAR_128 agent_id "NOT NULL"
+        VARCHAR_128 user_id "nullable"
+        VARCHAR_128 thread_id "nullable"
+        CLOB_65536 content "NOT NULL"
+        VARCHAR_4096 metadata "NOT NULL default {}"
+        VECTOR_1536_FLOAT32 embedding "NOT NULL default zero-vec"
+        TIMESTAMP created_at "NOT NULL"
+        TIMESTAMP updated_at "NOT NULL"
+        TIMESTAMP expires_at "nullable"
+        INTEGER version "NOT NULL default 1"
+        TIMESTAMP deleted_at "nullable"
     }
+
     entity_profiles {
-        id id PK
-        tenant_id string
-        agent_id string
-        user_id string
-        content text
-        metadata json
-        embedding vector "NOT NULL"
-        version int
-        deleted_at timestamp
+        VARCHAR_36 id PK
+        VARCHAR_128 tenant_id "nullable"
+        VARCHAR_128 agent_id "NOT NULL"
+        VARCHAR_128 user_id "nullable"
+        VARCHAR_128 thread_id "nullable"
+        CLOB_65536 content "NOT NULL"
+        VARCHAR_4096 metadata "NOT NULL default {}"
+        VECTOR_1536_FLOAT32 embedding "NOT NULL default zero-vec"
+        TIMESTAMP created_at "NOT NULL"
+        TIMESTAMP updated_at "NOT NULL"
+        TIMESTAMP expires_at "nullable"
+        INTEGER version "NOT NULL default 1"
+        TIMESTAMP deleted_at "nullable"
     }
+
     procedural_memory {
-        id id PK
-        tenant_id string
-        agent_id string
-        content text
-        metadata json
-        embedding vector "NOT NULL"
-        version int
-        deleted_at timestamp
+        VARCHAR_36 id PK
+        VARCHAR_128 tenant_id "nullable"
+        VARCHAR_128 agent_id "NOT NULL"
+        VARCHAR_128 user_id "nullable"
+        VARCHAR_128 thread_id "nullable"
+        CLOB_65536 content "NOT NULL"
+        VARCHAR_4096 metadata "NOT NULL default {}"
+        VECTOR_1536_FLOAT32 embedding "NOT NULL default zero-vec"
+        TIMESTAMP created_at "NOT NULL"
+        TIMESTAMP updated_at "NOT NULL"
+        TIMESTAMP expires_at "nullable"
+        INTEGER version "NOT NULL default 1"
+        TIMESTAMP deleted_at "nullable"
     }
 ```
 
