@@ -167,22 +167,22 @@ explicitly supersedes it and say why.
   schema default. A new migration with an ALTER TABLE or DROP/CREATE of the
   embedding column is needed to change the dimension. This decision is
   recorded here to close the open item from the Step 0 design.
-- **Decision (embedding column nullability — CORRECTED 2026-07-30):** The
-  embedding column is **NULLABLE** with no DEFAULT. IBM Db2 12.1 docs
+- **Decision (embedding column nullability — CORRECTED 2026-07-30, re-corrected same day):**
+  The embedding column is **NOT NULL** with **no DB-side DEFAULT**. IBM Db2 12.1 docs
   (https://www.ibm.com/docs/en/db2/12.1.x?topic=list-vector-values and
   https://www.ibm.com/docs/en/db2/12.1.x?topic=statements-create-table)
   explicitly state: "If a column is defined as XML or VECTOR, a default value
   cannot be specified (SQLSTATE 42613). The only possible default is NULL."
   `VECTOR_FILL` is not a recognized scalar function for DEFAULT expressions
   and does not appear in the Db2 12.1 vector function list (confirmed via IBM
-  docs + web search during the 2026-07-30 hygiene audit). The original Step 2
-  DDL comment claiming `VECTOR_FILL(1536,FLOAT32,0.0)` was valid was
-  incorrect — the DDL was fixed in the hygiene audit commit before any real
-  Db2 run. The application layer (`repositories/base.py`) always supplies an
-  explicit zero-vector string via `TO_VECTOR(?, FLOAT32)` on INSERT when no
-  real embedding is provided, so in practice the column is never NULL from
-  the application. Raw SQL inserts without the embedding column will produce
-  NULL, and those rows will not participate in `VECTOR_DISTANCE` searches.
+  docs + web search during the 2026-07-30 hygiene audit). The original DDL
+  `DEFAULT VECTOR_FILL(...)` clause was invalid and has been removed. `NOT NULL`
+  is retained — it is required for Db2's ANN vector index to activate; NULL rows
+  are skipped by the index, degrading recall. The application layer
+  (`repositories/base.py create()`) **always** supplies an explicit vector on
+  every INSERT — a real embedding via `TO_VECTOR(?, FLOAT32)`, or `_zero_vec_str()`
+  as a sentinel when the caller hasn't embedded yet — so the NOT NULL constraint
+  is never violated by application code.
 - **Decision (migration runner):** Plain Python using only stdlib + ibm_db_dbi
   DB-API. No alembic. ibm_db_dbi/Db2 support in alembic is inconsistent.
   Files: `000N_*.sql` in `src/agent_memory_sdk/db/migrations/`.
@@ -202,10 +202,11 @@ explicitly supersedes it and say why.
   changing the stored dimension requires a new schema migration.
 - **Decision (embedding field on models):** `embedding: list[float]`
   defaults to `[]` (empty list).  An empty list is the Python-side sentinel
-  meaning "not yet embedded"; the repository stores `VECTOR_FILL(dim,FLOAT32,0.0)`
-  in Db2 in that case (matching the NOT NULL column default already in the DDL).
-  The caller is responsible for providing a real embedding before meaningful
-  recall is expected.
+  meaning "not yet embedded"; the column is `NOT NULL` with no DB-side default,
+  and the application layer (`repositories/base.py create()`) always supplies
+  an explicit vector on every INSERT — a real embedding, or `_zero_vec_str()`
+  as a zero-vector sentinel when none is provided.  The caller is responsible
+  for providing a real embedding before meaningful recall is expected.
 - **Decision (EmbeddingProvider):** A `@runtime_checkable` Protocol in
   `types.py` — a callable `(str) -> list[float]`.  `MemoryStore` does NOT
   store or call the provider in Step 3; the caller embeds text and passes the
@@ -226,10 +227,12 @@ explicitly supersedes it and say why.
   `_scope_predicates(scope)`.  These predicates are part of every WHERE
   clause — including `get_by_id`, which pairs `id = ?` with the full scope
   check so callers cannot read another scope's row by guessing the id.
-- **Decision (pagination):** `list()` with `offset=0` uses a plain
-  `FETCH FIRST n ROWS ONLY` clause.  With `offset>0` it switches to a
-  `ROW_NUMBER() OVER` sub-query, which is the portable Db2 idiom for
-  offset pagination (Db2 does not support `OFFSET` in all configurations).
+- **Decision (pagination):** `list_all()` (formerly `list()` — renamed to
+  avoid shadowing the Python builtin, see hygiene-fix-pass entry) with
+  `offset=0` uses a plain `FETCH FIRST n ROWS ONLY` clause.  With `offset>0`
+  it switches to a `ROW_NUMBER() OVER` sub-query, which is the portable Db2
+  idiom for offset pagination (Db2 does not support `OFFSET` in all
+  configurations).
 - **Decision (MemoryStore is a composition root only in Step 3):**
   `MemoryStore` holds the five repositories and propagates `embedding_dim`.
   It adds no business logic.  Lifecycle hooks (forget, purge, consolidation)
@@ -287,15 +290,17 @@ explicitly supersedes it and say why.
      `migrate.py` already has `from __future__ import annotations`, the
      annotation is never evaluated at runtime, avoiding any circular-import
      or missing-ibm_db risk.
-  6. **Migration 0002 `VECTOR_FILL`/`NOT NULL` corrected** — the original
+  6. **Migration 0002 `VECTOR_FILL` DEFAULT removed** — the original
      DDL used `VECTOR(1536,FLOAT32) NOT NULL DEFAULT VECTOR_FILL(1536,FLOAT32,0.0)`.
      Per IBM Db2 12.1 docs (confirmed during this audit via Product Knowledge
      MCP + Tavily web search): VECTOR columns accept only NULL as a DEFAULT;
-     `VECTOR_FILL` is not a DDL DEFAULT expression. Both `NOT NULL` and the
-     `DEFAULT VECTOR_FILL(...)` clause were removed. The column is now
-     nullable; the application layer always supplies an explicit vector on
-     INSERT. The migration had never been applied to a real Db2 instance so
-     it was safe to edit in place. See the corrected Step 2 entry above.
+     `VECTOR_FILL` is not a DDL DEFAULT expression. The invalid `DEFAULT
+     VECTOR_FILL(...)` clause was removed, but `NOT NULL` was retained —
+     it is required for Db2's ANN vector index to activate, and the
+     application layer always supplies an explicit vector on every INSERT
+     (real embedding or zero-vector sentinel), so NOT NULL is never at risk.
+     The migration had never been applied to a real Db2 instance so it was
+     safe to edit in place. See the corrected Step 2 entry above.
   7. **Retroactive BOARD.html entry added** — see the entry immediately
      above this one.
 - **Reason:** Safety (credential leak risk), correctness (invalid DDL would
@@ -307,6 +312,68 @@ explicitly supersedes it and say why.
 
 - Embedding dimension(s) per memory type — **resolved in Step 2**: default
   1536 (FLOAT32). Change by writing a new migration that ALTERs the column.
+
+## 2026-07-30 — Hygiene fix pass (post-audit regression + 4 additional improvements)
+
+- **Decision:** Applied 5 targeted fixes as a single commit on top of the staged
+  hygiene-audit changes, correcting one regression introduced by that audit and
+  resolving additional correctness and tooling issues:
+
+  1. **`NOT NULL` restored on `embedding` column (migration 0002)** — The hygiene
+     audit correctly removed the invalid `DEFAULT VECTOR_FILL(...)` clause, but
+     also removed `NOT NULL` as an overcorrection.  `NOT NULL` is required for
+     Db2's ANN (DiskANN) vector index to activate; without it the index is still
+     created but NULL rows are silently skipped, degrading recall.
+     `repositories/base.py`'s `create()` ALWAYS supplies an explicit vector on every
+     INSERT via `TO_VECTOR(?, FLOAT32)` — a real embedding or `_zero_vec_str()` as
+     a zero-vector sentinel — so the constraint is never violated by application code.
+     The column definition is now `VECTOR(1536, FLOAT32) NOT NULL` (no DEFAULT clause,
+     which was already correctly removed). The migration had never been applied to a
+     real Db2 instance, so editing it in place was safe.
+
+  2. **Stale "embedding" descriptions updated in four places** — `models.py` docstring
+     and `_MemoryBase` field comment, the Step 3 "embedding field on models" entry in
+     `DECISIONS.md`, and the `embedding` line in `ARCHITECTURE.md` section 3's column
+     type legend all still referenced the old `DEFAULT VECTOR_FILL(...)` or `NULLABLE`
+     form.  All four now state: NOT NULL, no DB-side default; application layer always
+     supplies an explicit vector on every INSERT.  The Step 2 "embedding column
+     nullability" entry and hygiene-audit item 6 in `DECISIONS.md` were also corrected
+     to remove the erroneous "NULLABLE" claim.
+
+  3. **`mypy` strict pass on `repositories/base.py` — 4 errors fixed:**
+     - `BaseRepository.list()` was renamed to `list_all()` to stop shadowing the
+       Python builtin `list` type inside the class body (mypy: "Function …
+       BaseRepository.list is not valid as a type"); all six call sites in
+       `tests/test_repositories.py` updated accordingly.
+     - Removed unused `# type: ignore[misc]` comment on the `_MODEL` class attribute.
+     - `soft_delete()` now returns `bool(affected > 0)` instead of the bare comparison
+       (mypy: "Returning Any from function declared to return bool" because
+       `cur.rowcount` is `Any`).
+
+  4. **`ruff check --fix .` — 6 errors auto-fixed** — 5 auto-fixed by ruff
+     (unsorted import blocks in `models.py`, `types.py`, `test_repositories.py`;
+     two unused imports in `test_repositories.py`), 1 manually fixed
+     (SIM108 ternary simplification in `base.py`'s `search()` method).
+
+  5. **`_parse_vector` and `_parse_dt` moved from `working.py` to `base.py`** —
+     Both helpers were defined in `repositories/working.py` but imported cross-module
+     by `episodic.py`, `facts.py`, `profiles.py`, and `procedural.py`, making
+     `working.py` an accidental shared-utils dependency.  Moved to `base.py`
+     alongside the existing `_vec_to_str` helper (the same kind of shared
+     serialization utility).  `working.py` now re-imports them from `base`.  All
+     four concrete repo files and `tests/test_repositories.py` updated to import
+     from `base` directly.  `working.py`'s now-unused `from datetime import datetime`
+     import was removed.
+
+- **Reason:** Correctness (NOT NULL regression would have caused silently degraded
+  ANN index on first real Db2 run), tooling hygiene (mypy strict and ruff clean on
+  every file), and structural soundness (no accidental cross-module util dependency
+  on `working.py`).
+- **Made during:** Post-audit hygiene fix pass, between Step 3 and Step 4.
+- **Supersedes:** Items 3b ("NOT NULL removed") and 6 ("column is now nullable")
+  in the 2026-07-30 "Repo hygiene audit" entry above, and the Step 2 "embedding
+  column nullability — CORRECTED 2026-07-30" entry (which incorrectly stated the
+  column was NULLABLE).
 
 ---
 

@@ -126,7 +126,7 @@ Column type legend:
 - `*_id` scope cols → `VARCHAR(128)`, tenant_id nullable, agent_id NOT NULL
 - `content` → `CLOB(65536)` (64 KB; see DECISIONS.md Step 2 entry)
 - `metadata` → `VARCHAR(4096)` (JSON text; see DECISIONS.md Step 2 entry)
-- `embedding` → `VECTOR(1536, FLOAT32) NOT NULL DEFAULT VECTOR_FILL(1536,FLOAT32,0.0)`
+- `embedding` → `VECTOR(1536, FLOAT32) NOT NULL` (no DB-side default; application layer always supplies an explicit vector — real embedding or zero-vector sentinel — on every INSERT)
 - `created_at`, `updated_at` → `TIMESTAMP NOT NULL DEFAULT CURRENT TIMESTAMP`
 - `expires_at`, `deleted_at` → `TIMESTAMP` (nullable)
 - `version` → `INTEGER NOT NULL DEFAULT 1`

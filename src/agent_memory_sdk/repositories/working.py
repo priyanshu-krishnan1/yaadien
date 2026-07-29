@@ -11,11 +11,10 @@ highest write rate of all memory types.
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
 from agent_memory_sdk.models import WorkingMemory
-from agent_memory_sdk.repositories.base import BaseRepository
+from agent_memory_sdk.repositories.base import BaseRepository, _parse_dt, _parse_vector
 
 
 class WorkingMemoryRepository(BaseRepository[WorkingMemory]):
@@ -66,32 +65,3 @@ class WorkingMemoryRepository(BaseRepository[WorkingMemory]):
         )
 
 
-# ---------------------------------------------------------------------------
-# Private helpers shared by all five concrete repos
-# ---------------------------------------------------------------------------
-
-def _parse_vector(val: Any) -> list[float]:
-    """Convert the VECTOR_SERIALIZE output (a string like ``'[0.1,0.2,…]'``)
-    back to a Python list.  Returns an empty list on None or parse error."""
-    if val is None:
-        return []
-    if isinstance(val, list):
-        return [float(x) for x in val]
-    s = str(val).strip()
-    if not s:
-        return []
-    # Strip surrounding brackets if present
-    s = s.lstrip("[").rstrip("]")
-    return [float(x) for x in s.split(",") if x.strip()]
-
-
-def _parse_dt(val: Any) -> datetime | None:
-    """Coerce a DB-API TIMESTAMP value to a Python datetime, or None."""
-    if val is None:
-        return None
-    if isinstance(val, datetime):
-        return val
-    # Some DB-API drivers return a string
-    if isinstance(val, str):
-        return datetime.fromisoformat(val)
-    return None

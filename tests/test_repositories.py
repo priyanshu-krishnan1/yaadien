@@ -19,7 +19,6 @@ import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,15 +30,18 @@ from agent_memory_sdk.models import (
     SemanticFact,
     WorkingMemory,
 )
-from agent_memory_sdk.repositories.base import _scope_predicates, _vec_to_str
+from agent_memory_sdk.repositories.base import (
+    _parse_vector,
+    _scope_predicates,
+    _vec_to_str,
+)
 from agent_memory_sdk.repositories.episodic import EpisodicMemoryRepository
 from agent_memory_sdk.repositories.facts import SemanticFactRepository
 from agent_memory_sdk.repositories.procedural import ProceduralMemoryRepository
 from agent_memory_sdk.repositories.profiles import EntityProfileRepository
-from agent_memory_sdk.repositories.working import WorkingMemoryRepository, _parse_vector
+from agent_memory_sdk.repositories.working import WorkingMemoryRepository
 from agent_memory_sdk.store import MemoryStore
-from agent_memory_sdk.types import DistanceMetric, SearchMode
-
+from agent_memory_sdk.types import SearchMode
 
 # ---------------------------------------------------------------------------
 # Fake connection pool
@@ -262,7 +264,7 @@ class TestWorkingMemoryRepository:
     def test_list_sql_structure(self):
         pool = _FakePool([])
         repo = WorkingMemoryRepository(pool)
-        repo.list(_SCOPE)
+        repo.list_all(_SCOPE)
         sql = pool.cursor.last_sql
         assert "ORDER BY created_at DESC" in sql
         assert "FETCH FIRST" in sql
@@ -271,14 +273,14 @@ class TestWorkingMemoryRepository:
     def test_list_excludes_expired_by_default(self):
         pool = _FakePool([])
         repo = WorkingMemoryRepository(pool)
-        repo.list(_SCOPE)
+        repo.list_all(_SCOPE)
         sql = pool.cursor.last_sql
         assert "expires_at IS NULL" in sql
 
     def test_list_include_expired_flag(self):
         pool = _FakePool([])
         repo = WorkingMemoryRepository(pool)
-        repo.list(_SCOPE, include_expired=True)
+        repo.list_all(_SCOPE, include_expired=True)
         sql = pool.cursor.last_sql
         # No expires_at filter when include_expired=True
         assert "expires_at IS NULL" not in sql
@@ -286,14 +288,14 @@ class TestWorkingMemoryRepository:
     def test_list_offset_uses_row_number(self):
         pool = _FakePool([])
         repo = WorkingMemoryRepository(pool)
-        repo.list(_SCOPE, limit=10, offset=5)
+        repo.list_all(_SCOPE, limit=10, offset=5)
         sql = pool.cursor.last_sql
         assert "ROW_NUMBER" in sql
 
     def test_list_returns_models(self):
         rows = [_row(id_=f"id-{i}", content=f"content-{i}") for i in range(3)]
         repo = self._repo(rows)
-        results = repo.list(_SCOPE)
+        results = repo.list_all(_SCOPE)
         assert len(results) == 3
         assert all(isinstance(r, WorkingMemory) for r in results)
 
@@ -510,7 +512,7 @@ class TestScopeIsolation:
         pool = _FakePool([])
         repo = WorkingMemoryRepository(pool)
         scope = MemoryScope(agent_id="agent-B", tenant_id="tenant-X")
-        repo.list(scope)
+        repo.list_all(scope)
         sql = pool.cursor.last_sql
         assert "agent_id = ?" in sql
         assert "tenant_id = ?" in sql

@@ -13,17 +13,14 @@
 --   and https://www.ibm.com/docs/en/db2/12.1.x?topic=statements-create-table):
 --   "If a column is defined as XML or VECTOR, a default value cannot be specified
 --   (SQLSTATE 42613). The only possible default is NULL."
---   VECTOR_FILL is NOT a valid DEFAULT expression; the original DDL comment was
---   incorrect. The embedding column is therefore NULLABLE (no NOT NULL, no DEFAULT).
---   The application layer (repositories/base.py) always supplies an explicit
---   embedding on INSERT: a zero-vector string passed to TO_VECTOR(?, FLOAT32) when
---   the caller has not provided a real embedding yet. Rows with NULL embeddings
---   (e.g. inserted by raw SQL without the embedding column) simply won't participate
---   in VECTOR_DISTANCE searches.
---   Note: the CREATE VECTOR INDEX below DOES require the column to be NOT NULL
---   for the ANN index to activate on Db2. With the column nullable, the index
---   is still created but Db2 will skip NULL rows during ANN traversal. Rows
---   inserted via the application layer always carry an explicit (non-null) vector.
+--   VECTOR_FILL is NOT a valid DEFAULT expression — the original DDL comment was
+--   incorrect and the DEFAULT clause has been removed. The column IS declared NOT NULL
+--   because Db2's ANN vector index requires it to activate (NULL rows are silently
+--   skipped by the index, degrading recall). The application layer
+--   (repositories/base.py create()) ALWAYS supplies an explicit vector on every
+--   INSERT: a real embedding via TO_VECTOR(?, FLOAT32), or a zero-vector sentinel
+--   (_zero_vec_str()) when the caller has not yet provided one. The application
+--   never relies on a DB-side default, so NOT NULL is safe and correct here.
 --
 -- DISTANCE METRIC CHOICES (per table)
 --   working_memory  → COSINE
@@ -91,7 +88,7 @@ CREATE TABLE working_memory (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32),
+    embedding   VECTOR(1536, FLOAT32)         NOT NULL,
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -126,7 +123,7 @@ CREATE TABLE episodic_memory (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32),
+    embedding   VECTOR(1536, FLOAT32)         NOT NULL,
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -159,7 +156,7 @@ CREATE TABLE semantic_facts (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32),
+    embedding   VECTOR(1536, FLOAT32)         NOT NULL,
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -192,7 +189,7 @@ CREATE TABLE entity_profiles (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32),
+    embedding   VECTOR(1536, FLOAT32)         NOT NULL,
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,
@@ -227,7 +224,7 @@ CREATE TABLE procedural_memory (
     thread_id   VARCHAR(128),
     content     CLOB(65536)         NOT NULL,
     metadata    VARCHAR(4096)       NOT NULL DEFAULT '{}',
-    embedding   VECTOR(1536, FLOAT32),
+    embedding   VECTOR(1536, FLOAT32)         NOT NULL,
     created_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     updated_at  TIMESTAMP           NOT NULL DEFAULT CURRENT TIMESTAMP,
     expires_at  TIMESTAMP,

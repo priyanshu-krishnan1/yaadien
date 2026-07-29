@@ -83,6 +83,33 @@ def _scope_predicates(scope: MemoryScope) -> tuple[str, list[Any]]:
     return " AND ".join(parts), params
 
 
+def _parse_vector(val: Any) -> list[float]:
+    """Convert the VECTOR_SERIALIZE output (a string like ``'[0.1,0.2,…]'``)
+    back to a Python list.  Returns an empty list on None or parse error."""
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return [float(x) for x in val]
+    s = str(val).strip()
+    if not s:
+        return []
+    # Strip surrounding brackets if present
+    s = s.lstrip("[").rstrip("]")
+    return [float(x) for x in s.split(",") if x.strip()]
+
+
+def _parse_dt(val: Any) -> datetime | None:
+    """Coerce a DB-API TIMESTAMP value to a Python datetime, or None."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val
+    # Some DB-API drivers return a string
+    if isinstance(val, str):
+        return datetime.fromisoformat(val)
+    return None
+
+
 class BaseRepository(ABC, Generic[M]):
     """Abstract base for all five memory-type repositories.
 
@@ -95,7 +122,7 @@ class BaseRepository(ABC, Generic[M]):
     """
 
     _TABLE: str
-    _MODEL: type[M]  # type: ignore[misc]
+    _MODEL: type[M]
 
     # Default embedding dimension — matches 0002_memory_tables.sql.
     # Can be overridden per-instance if a different embedding model is used.
@@ -234,7 +261,7 @@ class BaseRepository(ABC, Generic[M]):
 
         return self._model_from_row(row) if row else None
 
-    def list(
+    def list_all(
         self,
         scope: MemoryScope,
         limit: int = 50,
@@ -327,7 +354,7 @@ class BaseRepository(ABC, Generic[M]):
             affected = cur.rowcount
 
         logger.debug("soft_delete %s id=%s affected=%d", self._TABLE, record_id, affected)
-        return affected > 0
+        return bool(affected > 0)
 
     # ------------------------------------------------------------------
     # Vector search
@@ -390,10 +417,7 @@ class BaseRepository(ABC, Generic[M]):
             extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP)"
 
         # Build the FETCH clause suffix.
-        if mode == SearchMode.APPROX:
-            fetch_suffix = "APPROX"
-        else:
-            fetch_suffix = ""  # EXACT and DEFAULT use plain FETCH FIRST
+        fetch_suffix = "APPROX" if mode == SearchMode.APPROX else ""  # EXACT/DEFAULT: plain FETCH FIRST
 
         approx_clause = f" {fetch_suffix}".rstrip()
 
