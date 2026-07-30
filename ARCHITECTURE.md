@@ -137,7 +137,7 @@ scope before ranking by vector distance. See `MemoryScope` (built in Step
 
 ## 3. Schema (entity-relationship)
 
-_Last updated: ENH-1 — `confidence` column added to all five tables (migration 0003)_
+_Last updated: ENH-2 — `content_hash` column added to all five tables (migration 0003)_
 
 Column type legend:
 - `id` → `VARCHAR(36)` (UUID)
@@ -146,6 +146,7 @@ Column type legend:
 - `metadata` → `VARCHAR(4096)` (JSON text; see DECISIONS.md Step 2 entry)
 - `embedding` → `VECTOR(1536, FLOAT32) NOT NULL` (no DB-side default; application layer always supplies an explicit vector — real embedding or zero-vector sentinel — on every INSERT)
 - `confidence` → `DOUBLE NOT NULL DEFAULT 1.0` (grounding-certainty score 0.0–1.0; see DECISIONS.md ENH-1 entry)
+- `content_hash` → `VARCHAR(64)` nullable (hex SHA-256 of normalized content; NULL for rows written before migration 0003; see DECISIONS.md ENH-2 entry)
 - `created_at`, `updated_at` → `TIMESTAMP NOT NULL DEFAULT CURRENT TIMESTAMP`
 - `expires_at`, `deleted_at` → `TIMESTAMP` (nullable)
 - `version` → `INTEGER NOT NULL DEFAULT 1`
@@ -178,6 +179,7 @@ erDiagram
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
         DOUBLE confidence "NOT NULL default 1.0"
+        VARCHAR_64 content_hash "nullable, hex SHA-256"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -195,6 +197,7 @@ erDiagram
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
         DOUBLE confidence "NOT NULL default 1.0"
+        VARCHAR_64 content_hash "nullable, hex SHA-256"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -212,6 +215,7 @@ erDiagram
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
         DOUBLE confidence "NOT NULL default 1.0"
+        VARCHAR_64 content_hash "nullable, hex SHA-256"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -229,6 +233,7 @@ erDiagram
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
         DOUBLE confidence "NOT NULL default 1.0"
+        VARCHAR_64 content_hash "nullable, hex SHA-256"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -246,6 +251,7 @@ erDiagram
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
         DOUBLE confidence "NOT NULL default 1.0"
+        VARCHAR_64 content_hash "nullable, hex SHA-256"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"

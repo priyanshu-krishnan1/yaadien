@@ -169,6 +169,12 @@ class BaseRepository(ABC, Generic[M]):
 
     And implement:
         _model_from_row(row)  — map a DB-API fetchone/fetchall tuple to M
+
+    Class attributes that control write behaviour (override in subclasses):
+        _DEDUP_ON_WRITE: bool — When True (default), ``create()`` issues a
+            dedup SELECT before every INSERT.  Set to False in repositories
+            where the same content legitimately repeats (WorkingMemory), so
+            the round-trip is skipped entirely.
     """
 
     _TABLE: str
@@ -177,6 +183,12 @@ class BaseRepository(ABC, Generic[M]):
     # Default embedding dimension — matches 0002_memory_tables.sql.
     # Can be overridden per-instance if a different embedding model is used.
     EMBEDDING_DIM: int = 1536
+
+    # Write-time dedup gate (ENH-2).  Repositories whose content is
+    # legitimately repetitive (e.g. WorkingMemory conversation turns) should
+    # override this to False so create() skips the dedup SELECT entirely —
+    # no wasted round-trip, and the append-only ordering is preserved.
+    _DEDUP_ON_WRITE: bool = True
 
     def __init__(self, pool: Any) -> None:
         """
@@ -221,12 +233,30 @@ class BaseRepository(ABC, Generic[M]):
     def create(self, record: M, scope: MemoryScope) -> M:
         """Insert a new row and return the record with server-assigned timestamps.
 
-        **Write-time deduplication (ENH-2):** before inserting, the method
-        computes the hex SHA-256 of the normalized content (lowercased, then
-        whitespace-collapsed) and checks whether a non-deleted row with the
-        same ``(agent_id scope, content_hash)`` already exists.  If one is
-        found, that existing row is returned immediately — no new row is
-        inserted.  This makes repeated writes of the same content idempotent.
+        **Write-time deduplication (ENH-2):** when ``_DEDUP_ON_WRITE`` is
+        True (the default), the method computes the hex SHA-256 of the
+        normalized content (lowercased, then whitespace-collapsed) and checks
+        whether a non-deleted row with the same ``(agent_id scope,
+        content_hash)`` already exists.  If one is found, that existing row is
+        returned immediately — no new row is inserted.  This makes repeated
+        writes of the same content idempotent for fact-style repositories
+        (SemanticFact, EntityProfile, ProceduralMemory).
+
+        When ``_DEDUP_ON_WRITE`` is False (WorkingMemory), the dedup SELECT is
+        **skipped entirely** — no wasted round-trip.  Working-memory is an
+        ordered append-only conversation log where short repeated utterances
+        ("ok", "yes", "thanks") are expected and must each produce a distinct
+        row to preserve correct turn count and ordering.
+
+        **Concurrency note (best-effort only):** the dedup check is *not*
+        atomic.  The SELECT and subsequent INSERT are two separate statements
+        with no transaction or row lock between them.  Under concurrent writers
+        to the same scope with identical content, both can pass the SELECT
+        before either INSERT lands, resulting in duplicate rows.  There is no
+        DB-level uniqueness backstop (no UNIQUE constraint — see DECISIONS.md
+        ENH-2 entry for the reasoning).  This is safe for the common
+        single-writer or low-concurrency case; it is not a uniqueness guarantee
+        under high-concurrency writers to the same scope.
 
         The dedup check uses ``deleted_at IS NULL``.  Once ENH-3 lands and
         ``superseded_at`` exists, the check should also add
@@ -242,8 +272,9 @@ class BaseRepository(ABC, Generic[M]):
             scope:   The caller's scope; agent_id is required.
 
         Returns:
-            The record as stored, with created_at / updated_at set.  If a
-            duplicate was detected the *existing* row is returned instead.
+            The record as stored, with created_at / updated_at set.  When
+            ``_DEDUP_ON_WRITE`` is True and a duplicate was detected, the
+            *existing* row is returned instead.
 
         Raises:
             ValueError: if scope.agent_id is missing.
@@ -256,30 +287,31 @@ class BaseRepository(ABC, Generic[M]):
         record.user_id = scope.user_id
         record.thread_id = scope.thread_id
 
-        # --- ENH-2: compute content_hash and dedup check -------------------
+        # --- ENH-2: compute content_hash ------------------------------------
         h = _content_hash(record.content)
         record.content_hash = h
 
-        scope_sql, scope_params = _scope_predicates(scope)
-        dedup_sql = f"""
-            SELECT {self._SELECT_COLS}
-            FROM {self._TABLE}
-            WHERE {scope_sql}
-              AND content_hash = ?
-              AND deleted_at IS NULL
-            FETCH FIRST 1 ROWS ONLY
-        """
-        with self._pool.get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(dedup_sql, [*scope_params, h])
-            existing_row = cur.fetchone()
+        if self._DEDUP_ON_WRITE:
+            scope_sql, scope_params = _scope_predicates(scope)
+            dedup_sql = f"""
+                SELECT {self._SELECT_COLS}
+                FROM {self._TABLE}
+                WHERE {scope_sql}
+                  AND content_hash = ?
+                  AND deleted_at IS NULL
+                FETCH FIRST 1 ROWS ONLY
+            """
+            with self._pool.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(dedup_sql, [*scope_params, h])
+                existing_row = cur.fetchone()
 
-        if existing_row is not None:
-            logger.debug(
-                "Dedup hit on %s content_hash=%s — returning existing id=%s",
-                self._TABLE, h[:8], existing_row[0],
-            )
-            return self._model_from_row(existing_row)
+            if existing_row is not None:
+                logger.debug(
+                    "Dedup hit on %s content_hash=%s — returning existing id=%s",
+                    self._TABLE, h[:8], existing_row[0],
+                )
+                return self._model_from_row(existing_row)
         # --- end dedup check ------------------------------------------------
 
         record.created_at = now

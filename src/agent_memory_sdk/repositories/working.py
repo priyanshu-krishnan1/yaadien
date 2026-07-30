@@ -18,10 +18,18 @@ from agent_memory_sdk.repositories.base import BaseRepository, _parse_dt, _parse
 
 
 class WorkingMemoryRepository(BaseRepository[WorkingMemory]):
-    """Repository for ``working_memory``."""
+    """Repository for ``working_memory``.
+
+    Dedup is intentionally disabled (``_DEDUP_ON_WRITE = False``).
+    Working memory is an ordered, append-only conversation log — short
+    repeated utterances like "ok", "yes", or "thanks" are valid distinct
+    turns and must each produce a new row.  Skipping the dedup SELECT also
+    eliminates a wasted round-trip on every high-frequency write.
+    """
 
     _TABLE = "working_memory"
     _MODEL = WorkingMemory
+    _DEDUP_ON_WRITE = False
 
     def _model_from_row(self, row: tuple[Any, ...]) -> WorkingMemory:
         """Map a DB-API result row to a :class:`WorkingMemory` instance.

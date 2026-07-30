@@ -764,32 +764,34 @@ class TestContentHash:
         assert _content_hash(content) == expected
 
     # ------------------------------------------------------------------
-    # create() — dedup check fires when duplicate exists
+    # create() — WorkingMemory MUST NOT dedup (new correct behaviour)
     # ------------------------------------------------------------------
 
     def test_create_dedup_returns_existing_when_hit(self):
-        """If a row with the same content_hash exists, create() returns it."""
+        """WorkingMemory.create() must always insert a new row even when
+        content_hash matches an existing row — no dedup for append-only logs."""
         existing = _row(id_="existing-id", content="hello world")
-        pool = _FakePool([existing])  # fetchone returns the existing row
+        pool = _FakePool([existing])
         repo = WorkingMemoryRepository(pool)
         wm = WorkingMemory(agent_id="agent-001", content="hello world")
         result = repo.create(wm, _SCOPE_AGENT_ONLY)
-        # Must return the existing row, not insert a new one
-        assert result.id == "existing-id"
-        # No INSERT should have been issued
-        assert "INSERT" not in pool.cursor.last_sql
+        # Must NOT return the old existing row — must insert and return the new one
+        assert result.id != "existing-id"
+        # An INSERT must have been issued
+        assert "INSERT INTO working_memory" in pool.cursor.last_sql
 
     def test_create_dedup_issues_select_before_insert(self):
-        """create() must issue a SELECT … content_hash = ? before INSERT."""
-        pool = _FakePool([])  # no existing row → proceeds to INSERT
+        """WorkingMemory.create() must issue only an INSERT — no dedup SELECT."""
+        pool = _FakePool([])
         repo = WorkingMemoryRepository(pool)
         wm = WorkingMemory(agent_id="agent-001", content="unique content xyz")
         repo.create(wm, _SCOPE_AGENT_ONLY)
-        # After a miss the last SQL should be the INSERT (dedup SELECT was first)
+        # The one and only SQL issued should be the INSERT — no dedup SELECT
         assert "INSERT INTO working_memory" in pool.cursor.last_sql
+        assert "content_hash = ?" not in pool.cursor.last_sql
 
     def test_create_dedup_select_contains_content_hash_predicate(self):
-        """The dedup SELECT must include content_hash = ? and deleted_at IS NULL."""
+        """SemanticFact.create() (dedup on) must issue a dedup SELECT before INSERT."""
         # Use a multi-cursor-tracking pool variant
         class _MultiCursorPool:
             """Records ALL executed SQL strings across all cursor() calls."""
@@ -823,9 +825,9 @@ class TestContentHash:
                 return []
 
         pool = _MultiCursorPool()
-        repo = WorkingMemoryRepository(pool)
-        wm = WorkingMemory(agent_id="agent-001", content="test content")
-        repo.create(wm, _SCOPE_AGENT_ONLY)
+        repo = SemanticFactRepository(pool)
+        fact = SemanticFact(agent_id="agent-001", content="test content")
+        repo.create(fact, _SCOPE_AGENT_ONLY)
         # First SQL must be the dedup SELECT
         assert len(pool.sqls) >= 2
         dedup_sql = pool.sqls[0]
@@ -833,7 +835,7 @@ class TestContentHash:
         assert "deleted_at IS NULL" in dedup_sql
         assert "FETCH FIRST 1 ROWS ONLY" in dedup_sql
         insert_sql = pool.sqls[1]
-        assert "INSERT INTO working_memory" in insert_sql
+        assert "INSERT INTO semantic_facts" in insert_sql
 
     def test_create_content_hash_in_insert_params(self):
         """The computed hash must be included in the INSERT params."""
@@ -854,7 +856,7 @@ class TestContentHash:
         assert result.content_hash == _content_hash("My Memory")
 
     def test_create_dedup_normalized_equivalents_hit(self):
-        """Different whitespace/case variants of same content must dedup."""
+        """SemanticFact dedup: whitespace/case variants of same content must dedup."""
         # "  HELLO  WORLD  " normalizes to "hello world" — same hash
         normalized_content = "hello world"
         existing = _row(
@@ -863,10 +865,30 @@ class TestContentHash:
             content_hash=_content_hash("  HELLO  WORLD  "),
         )
         pool = _FakePool([existing])
-        repo = WorkingMemoryRepository(pool)
-        wm = WorkingMemory(agent_id="agent-001", content="  HELLO  WORLD  ")
-        result = repo.create(wm, _SCOPE_AGENT_ONLY)
+        repo = SemanticFactRepository(pool)
+        fact = SemanticFact(agent_id="agent-001", content="  HELLO  WORLD  ")
+        result = repo.create(fact, _SCOPE_AGENT_ONLY)
         assert result.id == "norm-id"
+
+    def test_create_dedup_returns_existing_for_semantic_fact(self):
+        """SemanticFact.create() must return the existing row on a dedup hit."""
+        existing = _row(id_="sf-existing-id", content="User prefers Python")
+        pool = _FakePool([existing])
+        repo = SemanticFactRepository(pool)
+        fact = SemanticFact(agent_id="agent-001", content="User prefers Python")
+        result = repo.create(fact, _SCOPE_AGENT_ONLY)
+        # Must return the existing row without inserting a new one
+        assert result.id == "sf-existing-id"
+        assert "INSERT" not in pool.cursor.last_sql
+
+    def test_working_memory_dedup_on_write_is_false(self):
+        """WorkingMemoryRepository._DEDUP_ON_WRITE must be False."""
+        from agent_memory_sdk.repositories.working import WorkingMemoryRepository as WMR
+        assert WMR._DEDUP_ON_WRITE is False
+
+    def test_semantic_fact_dedup_on_write_is_true(self):
+        """SemanticFactRepository._DEDUP_ON_WRITE must be True (inherits default)."""
+        assert SemanticFactRepository._DEDUP_ON_WRITE is True
 
     def test_content_hash_read_back_from_row(self):
         """_model_from_row() must populate content_hash from column index 9."""

@@ -1241,19 +1241,6 @@ explicitly supersedes it and say why.
   (application-level convention)" line in the
   `2026-08-01 — ENH-1: confidence scoring on memory records` entry above.
 
----
-
-### Entry template (copy this for every new decision)
-
-```
-## YYYY-MM-DD — <short title>
-
-- **Decision:**
-- **Reason:**
-- **Made during:** Step N (<step name>)
-- **Supersedes:** (link to prior entry, if any — otherwise omit)
-```
-
 ## 2026-08-01 — ENH-2: write-time dedup via content hash
 
 - **Decision:** Added write-time idempotent-write logic to all five memory tables
@@ -1286,7 +1273,8 @@ explicitly supersedes it and say why.
 
   **`BaseRepository.create()` changes:**
   - Computes `_content_hash(record.content)` and sets `record.content_hash`.
-  - Issues a dedup SELECT:
+  - The dedup SELECT is gated on `_DEDUP_ON_WRITE` (a class-level bool,
+    default `True`).  When True, issues:
     ```sql
     SELECT ... FROM <table>
     WHERE <scope predicates>
@@ -1299,6 +1287,9 @@ explicitly supersedes it and say why.
     inserting — idempotent write, no duplicate created.
   - If no row is found, proceeds to INSERT with `content_hash` in the column
     list and bound params.
+  - When `_DEDUP_ON_WRITE` is `False`, the SELECT is **skipped entirely** —
+    no round-trip, no duplicate detection.  `WorkingMemoryRepository` sets
+    this to `False` (see below).
   - The dedup check deliberately uses **only `deleted_at IS NULL`** for now.
     Once ENH-3 lands and `superseded_at` exists, the check should also add
     `AND superseded_at IS NULL` to exclude superseded rows from the duplicate
@@ -1311,9 +1302,38 @@ explicitly supersedes it and say why.
     content value after every update.
   - Sets `record.content_hash = new_hash` on the returned model.
 
+  **`_DEDUP_ON_WRITE` class attribute (added in this follow-up fix):**
+  `BaseRepository._DEDUP_ON_WRITE: bool = True` — default on for
+  `SemanticFactRepository`, `EntityProfileRepository`, and
+  `ProceduralMemoryRepository`, where idempotent writes of the same fact are
+  the design intent.
+  `WorkingMemoryRepository._DEDUP_ON_WRITE = False` — working memory is an
+  ordered, append-only conversation log.  Short repeated utterances ("ok",
+  "yes", "thanks") are legitimate distinct turns and must each produce a new
+  row.  Applying dedup here would silently drop turns, corrupt the history
+  count, and feed stale rows to the Consolidator instead of the freshly written
+  one.
+  **EpisodicMemory keeps dedup on** (`_DEDUP_ON_WRITE = True`, inheriting the
+  default).  Episodic entries are Consolidator-produced summaries of a session,
+  not raw turn-by-turn utterances.  The exact same summary appearing twice is
+  far more likely to be an accidental double-write than a legitimate repetition,
+  so the idempotent-write protection is appropriate there.  If future usage
+  shows episodic summaries being legitimately repeated, this can be revisited.
+
   **No UNIQUE constraint in the schema** — uniqueness is enforced in application
   code because dedup is scoped to `(agent_id scope, content_hash)` and must allow
   a deleted or (future) superseded row to share a hash with a live row.
+
+  **Concurrency note (best-effort only):** the dedup check is not atomic — the
+  SELECT and the subsequent INSERT are two separate statements with no
+  transaction or row lock between them.  Two concurrent `create()` calls with
+  identical content can both pass the SELECT before either INSERT lands,
+  producing duplicate rows.  There is no DB-level backstop (no UNIQUE
+  constraint, and Db2 12.1.5 fp0 does not support partial/filtered unique
+  indexes per the Step 7 `SQL0104N` finding, so a full DB-level fix is not
+  trivially available).  This is safe for the common single-writer or
+  low-concurrency case; it is **not** a uniqueness guarantee under concurrent
+  writers to the same scope.
 
 - **Reason:** Catches the common "agent re-stores the same fact twice" case
   cheaply and deterministically at write time, before any LLM reconciliation
@@ -1323,3 +1343,69 @@ explicitly supersedes it and say why.
 - **Made during:** ENH-2 (EPIC-2 backlog, second story)
 
 ---
+
+## 2026-08-01 — ENH-2 audit fixes: WorkingMemory dedup opt-out, race-condition doc, ARCHITECTURE.md content_hash, DECISIONS.md ordering
+
+- **Decision:** Five correctness and documentation fixes applied in a single commit.
+
+  1. **WorkingMemory dedup opt-out (`_DEDUP_ON_WRITE = False`).**
+     Added a class-level `_DEDUP_ON_WRITE: bool = True` attribute to
+     `BaseRepository`.  `WorkingMemoryRepository` overrides it to `False`.
+     When `False`, `create()` skips the dedup SELECT entirely — no wasted
+     round-trip and no silent loss of duplicate-content turns in conversation
+     logs.  `EpisodicMemoryRepository`, `SemanticFactRepository`,
+     `EntityProfileRepository`, and `ProceduralMemoryRepository` keep the
+     default `True`.  EpisodicMemory is kept on because its entries are
+     Consolidator-produced summaries (not raw turn-by-turn utterances), so the
+     same summary appearing twice is far more likely to be an accidental
+     double-write than a legitimate repetition.
+     Tests updated: `test_create_dedup_returns_existing_when_hit` now asserts
+     the new correct behaviour (new row inserted, id ≠ existing); tests
+     previously using `WorkingMemoryRepository` as the dedup subject migrated
+     to `SemanticFactRepository`; two new attribute-level assertions added.
+
+  2. **Dedup race-condition note.**
+     Added a "Concurrency note (best-effort only)" paragraph to
+     `BaseRepository.create()`'s docstring and to the ENH-2 DECISIONS.md entry
+     above.  The SELECT+INSERT is not atomic; concurrent writers can both pass
+     the SELECT and each INSERT, producing duplicates.  No DB-level backstop
+     exists (no UNIQUE constraint; Db2 12.1.5 fp0 rejects partial/filtered
+     unique indexes per `SQL0104N`).  Behaviour is correct for single-writer
+     and low-concurrency cases.
+
+  3. **ARCHITECTURE.md section 3 — `content_hash` column added.**
+     The ENH-2 migration added `content_hash VARCHAR(64)` to all five tables
+     but ARCHITECTURE.md was never updated.  Added `content_hash` to the
+     column-type legend and to all five entity definitions in the Mermaid ER
+     diagram.  Updated the "Last updated" line to ENH-2.
+
+  4. **DECISIONS.md ordering fix.**
+     The ENH-2 entry had been appended after the "Entry template" block
+     instead of before it.  Moved it to its correct chronological position
+     (after ENH-1 follow-up, before the template).
+
+  5. **`.gitignore` stray edit reverted.**
+     A stray ` m` appended to `.gitignore` (no trailing newline) was reverted
+     via `git checkout -- .gitignore`.
+
+- **Reason:** Items 1–2 fix silent data-loss and misleading documentation
+  introduced by the ENH-2 implementation; item 1 also eliminates an
+  unnecessary DB round-trip on every working-memory write.  Items 3–5 are
+  documentation and housekeeping corrections that keep the repo in a
+  consistent, auditable state.
+- **Made during:** ENH-2 audit pass (post-story correctness review)
+- **Supersedes:** The original ENH-2 `create()` docstring and the original
+  ENH-2 DECISIONS.md entry (both updated in place above).
+
+---
+
+### Entry template (copy this for every new decision)
+
+```
+## YYYY-MM-DD — <short title>
+
+- **Decision:**
+- **Reason:**
+- **Made during:** Step N (<step name>)
+- **Supersedes:** (link to prior entry, if any — otherwise omit)
+```
