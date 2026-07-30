@@ -137,7 +137,7 @@ scope before ranking by vector distance. See `MemoryScope` (built in Step
 
 ## 3. Schema (entity-relationship)
 
-_Last updated: Step 2 — reflects actual DDL in `0002_memory_tables.sql`_
+_Last updated: Step 7 — `expires_at` indexes changed from partial to plain (Db2 12.1.5 fp0 does not support filtered indexes)_
 
 Column type legend:
 - `id` → `VARCHAR(36)` (UUID)
@@ -151,7 +151,11 @@ Column type legend:
 
 Each table has: a `CREATE VECTOR INDEX … WITH DISTANCE COSINE`, a composite
 scope index on `(agent_id, tenant_id, user_id, thread_id)`, an agent-only
-index, and a partial index on `expires_at WHERE expires_at IS NOT NULL`.
+index, and a plain (unfiltered) index on `expires_at`.  The `WHERE expires_at
+IS NOT NULL` predicate was removed from all five `ix_*_expires` indexes in
+migration `0002` because Db2 12.1.5 fp0 does not support partial (filtered)
+indexes (`SQL0104N`).  Rows with NULL `expires_at` incur negligible extra
+index overhead.
 
 Migration runner: `src/agent_memory_sdk/db/migrate.py` (Migrator class).
 Migration files: `src/agent_memory_sdk/db/migrations/000N_*.sql`.
@@ -289,7 +293,7 @@ Step 4 entry for details.
 
 ## 5. Flow: `recall()` / semantic search
 
-_Last updated: Step 0 (design only); Step 3 implements repos that execute these queries_
+_Last updated: Step 7 — two-step query shape documented (Db2 12.1.5 fp0 cannot combine VECTOR_SERIALIZE in SELECT with VECTOR_DISTANCE in ORDER BY)_
 
 ```mermaid
 sequenceDiagram
@@ -300,9 +304,17 @@ sequenceDiagram
 
     Agent->>MemoryStore: recall(query, scope, top_k, mode)
     MemoryStore->>Repo: search(query_embedding, scope, top_k, mode)
-    Repo->>Db2: SELECT ... WHERE scope predicates<br/>ORDER BY VECTOR_DISTANCE(...)<br/>FETCH EXACT|APPROX
-    Db2-->>Repo: ranked rows
-    Repo-->>MemoryStore: typed memory objects
+
+    note over Repo: Step 1 — rank by distance, return IDs only<br/>(no VECTOR_SERIALIZE in SELECT list)
+    Repo->>Db2: SELECT id FROM &lt;table&gt;<br/>WHERE &lt;scope&gt; AND deleted_at IS NULL<br/>ORDER BY VECTOR_DISTANCE(embedding, CAST('…' AS VECTOR), COSINE)<br/>FETCH FIRST top_k ROWS ONLY [APPROX]
+    Db2-->>Repo: ordered_ids (nearest-first)
+
+    note over Repo: Step 2 — fetch full rows by ID<br/>(uses VECTOR_SERIALIZE in SELECT)
+    Repo->>Db2: SELECT id, …, VECTOR_SERIALIZE(embedding) AS embedding, …<br/>FROM &lt;table&gt; WHERE id IN (id1, id2, …) AND deleted_at IS NULL
+    Db2-->>Repo: unordered full rows
+
+    note over Repo: Reorder rows in Python to restore<br/>nearest-first ordering from step 1
+    Repo-->>MemoryStore: typed memory objects (nearest-first)
     MemoryStore-->>Agent: ranked memories
 ```
 

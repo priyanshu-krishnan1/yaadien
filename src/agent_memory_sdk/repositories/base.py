@@ -33,8 +33,15 @@ DB-API usage notes
   ``TO_VECTOR(?)``.  The only working approach on this version is to
   **inline the vector string as a literal** directly in the SQL:
   ``CAST('{vec_str}' AS VECTOR({dim},FLOAT32))``.
-  The vector string is constructed from Python floats by ``_vec_to_str``
-  and contains no user input, so there is no SQL-injection risk.
+   The vector string is constructed by ``_vec_to_str``, which coerces every
+   element through ``float()`` before formatting.  Any non-numeric value
+   raises ``ValueError``/``TypeError`` before it reaches SQL, which closes
+   the injection path at all three call sites (create, update, search).
+   For create/update the source is a Pydantic-validated ``list[float]``
+   field, so coercion is a no-op.  For search the source is the
+   ``query_embedding`` parameter, which is an unenforced type hint and is
+   externally reachable via the MCP ``recall`` tool — coercion here is the
+   actual security boundary.
 - Timestamps: ibm_db_dbi accepts Python ``datetime`` objects for
   TIMESTAMP columns.
 """
@@ -68,8 +75,16 @@ def _require_agent_id(scope: MemoryScope) -> None:
 
 def _vec_to_str(embedding: list[float]) -> str:
     """Serialize a Python float list to the ``'[f1,f2,…]'`` string form used
-    as an inlined SQL literal: ``CAST('{vec_str}' AS VECTOR(dim,FLOAT32))``."""
-    return "[" + ",".join(str(f) for f in embedding) + "]"
+    as an inlined SQL literal: ``CAST('{vec_str}' AS VECTOR(dim,FLOAT32))``.
+
+    Every element is coerced through ``float()`` before formatting.  This
+    raises ``ValueError`` / ``TypeError`` for any non-numeric value, which
+    prevents SQL injection at all three call sites (create, update, search).
+    For create/update the source is a Pydantic-validated ``list[float]``,
+    so the coercion is a no-op.  For search the source is the caller-supplied
+    ``query_embedding`` argument, where coercion is the actual security guard.
+    """
+    return "[" + ",".join(str(float(f)) for f in embedding) + "]"
 
 
 def _scope_predicates(scope: MemoryScope) -> tuple[str, list[Any]]:

@@ -356,6 +356,21 @@ class TestWorkingMemoryRepository:
         with pytest.raises(ValueError, match="non-empty"):
             repo.search([], _SCOPE)
 
+
+    def test_search_non_numeric_element_raises(self):
+        """SQL-injection guard: a non-float element must raise before reaching SQL.
+
+        The Db2 12.1.5 fp0 fix inlines the vector as a SQL literal, so a
+        crafted string element (e.g. ``"1) UNION SELECT ... --"``) in
+        query_embedding would be interpolated verbatim unless _vec_to_str()
+        coerces every element through float().  Verify the guard fires.
+        """
+        repo = self._repo()
+        bad_embedding: list = [0.1] * 5 + ["1) UNION SELECT 1 --"] + [0.2] * 5
+        with pytest.raises((ValueError, TypeError)):
+            repo.search(bad_embedding, _SCOPE)  # type: ignore[arg-type]
+
+
     def test_search_requires_agent_id(self):
         repo = self._repo()
         with pytest.raises(ValueError, match="agent_id"):

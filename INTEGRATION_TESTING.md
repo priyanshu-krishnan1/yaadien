@@ -26,11 +26,14 @@ docker run -d \
   -e DBNAME=TESTDB \
   -p 50000:50000 \
   --privileged \
-  ibmcom/db2:latest
+  icr.io/db2_community/db2:latest
 ```
 
-> **Note:** The `ibmcom/db2` image requires `--privileged` (or at minimum
+> **Note:** The `icr.io/db2_community/db2` image requires `--privileged` (or at minimum
 > `--cap-add IPC_OWNER`) to start the DB2 instance inside the container.
+>
+> **Apple Silicon (M1/M2/M3):** add `--platform=linux/amd64` to the `docker run` command above,
+> as this image is x86-64 only and requires Rosetta/QEMU emulation on ARM hosts.
 
 The first start takes 3–5 minutes as Db2 initialises the database.
 Monitor progress with:
@@ -184,7 +187,7 @@ docker stop db2-dev && docker rm db2-dev
 |---------|-----|
 | `ModuleNotFoundError: ibm_db` | `pip install ibm_db` — the clidriver is bundled |
 | `Failed to connect to Db2` | Check `DB2_HOSTNAME`, port `50000`, and that the container is ready (`docker logs db2-dev`) |
-| `CREATE VECTOR INDEX` fails | Requires **Db2 12.1.2+** with the VECTOR feature enabled.  The `ibmcom/db2` image ships 12.1. |
+| `CREATE VECTOR INDEX` fails | Requires **Db2 12.1.2+** with the VECTOR feature enabled.  The `icr.io/db2_community/db2` image ships 12.1. |
 | Tests skip silently | `DB2_DATABASE` env var not exported in this shell session |
 | `ConnectionPoolExhausted` | Increase `DB2_POOL_SIZE` (default 5) or check for connection leaks |
 | `SQLSTATE 42613` on migration | Invalid VECTOR column DDL — confirm no `DEFAULT VECTOR_FILL` clause in `0002_memory_tables.sql` (already removed) |

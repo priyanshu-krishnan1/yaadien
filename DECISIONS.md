@@ -906,6 +906,72 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-07-31 — Security and documentation fixes (SQL injection hardening, ARCHITECTURE.md catch-up, Docker image update)
+
+- **Decision:**
+  Three fixes applied as a follow-up to the Db2 12.1.5 fp0 compatibility work.
+
+  1. **SQL injection hardening in `_vec_to_str()` (`repositories/base.py`).**
+     The prior entry claimed "no SQL-injection risk" for the inlined vector
+     literal.  That claim was true for `create()` and `update()`, where
+     `record.embedding` is a Pydantic-validated `list[float]` field and
+     Pydantic coerces or rejects non-numeric values before the record object
+     is created.  It was **not** true for `search()`: `query_embedding` is
+     an unenforced type hint, and `_tool_recall` in `adapters/mcp_server.py`
+     passes `args.get("query_embedding")` straight from client-supplied JSON
+     with zero coercion.  A crafted string element (e.g.
+     `"1) UNION SELECT ... --"`) would have been joined by `_vec_to_str()`
+     and interpolated directly into the SQL literal.
+     **Fix:** changed `_vec_to_str()` from `str(f) for f in embedding` to
+     `str(float(f)) for f in embedding`.  The `float()` coercion raises
+     `ValueError` / `TypeError` for any non-numeric element before it ever
+     reaches SQL, closing the hole at all three call sites simultaneously.
+     A unit test (`test_search_non_numeric_element_raises` in
+     `tests/test_repositories.py`) was added to pin this behaviour.
+
+  2. **ARCHITECTURE.md Section 5 (semantic search flow) updated.**
+     The mermaid sequence diagram still showed a single-step
+     `SELECT … ORDER BY VECTOR_DISTANCE(…)` query.  Updated to reflect the
+     real two-step implementation introduced in the Db2 fp0 fix: step 1
+     selects `id` only (no `VECTOR_SERIALIZE` in the SELECT list), ordered
+     by distance; step 2 fetches full rows by those IDs using
+     `_SELECT_COLS` (which includes `VECTOR_SERIALIZE`), then reorders in
+     Python to restore nearest-first order.  "Last updated" line changed
+     from "Step 0" to "Step 7".
+
+  3. **ARCHITECTURE.md Section 3 (schema / index description) updated.**
+     The column-type legend described the `expires_at` indexes as
+     `partial index on expires_at WHERE expires_at IS NOT NULL`.  That
+     predicate was removed from all five `ix_*_expires` indexes in
+     migration `0002` (Db2 12.1.5 fp0 `SQL0104N`).  Updated to say "plain
+     (unfiltered) index on `expires_at`" with an explanatory note.
+     "Last updated" line changed from "Step 2" to "Step 7".
+
+  4. **INTEGRATION_TESTING.md Docker image reference updated.**
+     The Quick-start section referenced `ibmcom/db2:latest`, which was
+     migrated off Docker Hub in February 2023.  Updated to
+     `icr.io/db2_community/db2:latest`.  The matching troubleshooting row
+     was updated to use the new image name.  Added a one-line note that
+     Apple Silicon (M1/M2/M3) users need `--platform=linux/amd64`.
+
+- **Reason:**
+  Fix 1 addresses a real, externally-reachable SQL injection path via the
+  MCP `recall` tool (see analysis above).  Fixes 2–4 are documentation
+  accuracy corrections: ARCHITECTURE.md was not updated during Step 7
+  despite two structural changes (two-step search, removal of partial
+  indexes), and INTEGRATION_TESTING.md's Docker image reference would
+  cause a `docker pull` failure for anyone following the guide today.
+
+- **Made during:** Post-Step-7 audit / security review
+
+- **Supersedes:** The claim in the "2026-07-31 — Db2 12.1.5 fp0 compatibility
+  fixes" entry (item 1) that `_vec_to_str()` "contains no user input, so
+  there is no SQL-injection risk" — that claim holds for `create()` /
+  `update()` only and does not extend to `search()`.  The code and docstring
+  in `repositories/base.py` have been updated accordingly.
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```
