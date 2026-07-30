@@ -17,7 +17,7 @@ skipped if a required framework extra is not installed (using
 ``importorskip``), just like the main adapter tests skip without the marker.
 
 Requires: DB2_DATABASE and companion DB2_* env vars, or a .env file.
-See INTEGRATION_TESTING.md.
+See project-management/INTEGRATION_TESTING.md.
 """
 
 from __future__ import annotations

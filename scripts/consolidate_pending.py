@@ -87,7 +87,7 @@ LUW has no native change-feed mechanism.  This polling worker is the
 Db2-appropriate substitute — same goal (async, off-the-hot-path
 processing), different mechanism.  It requires no new external service
 dependency, keeping the Step 0 "zero mandatory external services" principle
-intact.  See DECISIONS.md ENH-4 entry.
+intact.  See project-management/DECISIONS.md ENH-4 entry.
 
 Usage::
 

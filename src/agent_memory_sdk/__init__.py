@@ -26,7 +26,7 @@ Quick start::
     store.purge_expired(scope)
 """
 
-from agent_memory_sdk.exceptions import StaleWriteError
+from agent_memory_sdk.exceptions import InvalidMetadataFilterError, StaleWriteError
 from agent_memory_sdk.models import (
     EntityProfile,
     EpisodicMemory,
@@ -67,6 +67,7 @@ __all__ = [
     "Reconciler",
     "SupersedeDecision",
     "StaleWriteError",
+    "InvalidMetadataFilterError",
     "ContextCard",
     "Summarizer",
     "NoOpSummarizer",

@@ -4,6 +4,11 @@ Governed multi-type memory system for AI agents backed by IBM Db2 LUW.
 
 > Full documentation added in Step 8.
 
+Build prompts, the decision log, architecture doc, and local tracking board
+live under [`project-management/`](project-management/) — see
+[`project-management/README.md`](project-management/README.md) for an
+index. None of it ships with the package.
+
 ## Development setup
 
 ```bash

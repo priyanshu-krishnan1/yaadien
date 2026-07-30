@@ -16,7 +16,7 @@ tables are created once and reused.  Each assertion is read-only (SELECT
 only) so there is no teardown needed.
 
 Requires: DB2_DATABASE and companion DB2_* env vars, or a .env file.
-See INTEGRATION_TESTING.md.
+See project-management/INTEGRATION_TESTING.md.
 """
 
 from __future__ import annotations

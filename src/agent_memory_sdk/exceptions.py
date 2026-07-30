@@ -33,3 +33,23 @@ class StaleWriteError(Exception):
         else:
             raise RuntimeError("Could not update after 3 attempts")
     """
+
+
+class InvalidMetadataFilterError(ValueError):
+    """Raised when a ``metadata_filter`` dict contains an unrecognised operator key.
+
+    Only the following operator keys are recognized inside a field's value dict:
+    ``$not``, ``$array_contains``, ``$array_contains_any``.  Any other key that
+    starts with ``$`` is rejected immediately rather than silently ignored.
+
+    Example of an **invalid** filter (``$in`` is not supported)::
+
+        store.working.list_all(scope, metadata_filter={"status": {"$in": ["a", "b"]}})
+        # → raises InvalidMetadataFilterError: unrecognized operator '$in' on field 'status'
+
+    Supported operators:
+        - Exact match:           ``{"field": "value"}``
+        - ``$not``:              ``{"field": {"$not": "value"}}``
+        - ``$array_contains``:   ``{"field": {"$array_contains": "value"}}``
+        - ``$array_contains_any``: ``{"field": {"$array_contains_any": ["a", "b"]}}``
+    """

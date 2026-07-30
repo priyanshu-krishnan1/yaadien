@@ -2,7 +2,7 @@
 --
 -- Adds soft-supersede support to ``semantic_facts`` only.
 --
--- WHY semantic_facts only (see DECISIONS.md ENH-3 entry for full reasoning):
+-- WHY semantic_facts only (see project-management/DECISIONS.md ENH-3 entry for full reasoning):
 --
 --   semantic_facts are the only table whose rows are independently-addressable
 --   atomic claims that can logically contradict each other within the same
@@ -23,7 +23,7 @@
 --       the existing row is updated in place; a new competing row is not
 --       typically written alongside the old one.
 --
--- Governance distinction (see DECISIONS.md ENH-3 entry):
+-- Governance distinction (see project-management/DECISIONS.md ENH-3 entry):
 --   superseded_at IS NOT NULL  → "we learned this was contradicted by a newer
 --                                  fact" — an AI-managed lifecycle event.
 --   deleted_at IS NOT NULL     → "the user / operator asked us to forget this"

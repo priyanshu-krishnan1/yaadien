@@ -39,7 +39,7 @@
 --      (WHERE agent_id = ? AND consolidated_at IS NULL) to use an index
 --      range scan rather than a full table scan.
 --
--- See DECISIONS.md ENH-4 entry for the full rationale, known limitations,
+-- See project-management/DECISIONS.md ENH-4 entry for the full rationale, known limitations,
 -- and the comparison to Cosmos DB's change-feed tier.
 
 -- ============================================================

@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 if TYPE_CHECKING:
     from agent_memory_sdk.repositories.chunks import ChunkRepository
 
-from agent_memory_sdk.exceptions import StaleWriteError
+from agent_memory_sdk.exceptions import InvalidMetadataFilterError, StaleWriteError
 from agent_memory_sdk.models import MemoryScope, _MemoryBase
 from agent_memory_sdk.types import DistanceMetric, SearchMode
 
@@ -213,6 +213,207 @@ def _scope_predicates(scope: MemoryScope) -> tuple[str, list[Any]]:
         parts.append("thread_id = ?")
         params.append(scope.thread_id)
     return " AND ".join(parts), params
+
+
+# ---------------------------------------------------------------------------
+# Supported metadata filter operators (ORC-3)
+# ---------------------------------------------------------------------------
+
+#: The complete set of operator keys recognized inside a field's value dict.
+#: Any key starting with ``$`` that is NOT in this set raises
+#: :exc:`~agent_memory_sdk.exceptions.InvalidMetadataFilterError`.
+_KNOWN_OPERATORS: frozenset[str] = frozenset(
+    {"$not", "$array_contains", "$array_contains_any"}
+)
+
+
+def _build_metadata_filter(
+    metadata_filter: dict[str, Any] | None,
+) -> tuple[str, list[Any]]:
+    """Translate a ``metadata_filter`` dict into SQL predicates on the ``metadata`` column.
+
+    The ``metadata`` column is ``VARCHAR(4096)`` JSON text.  Db2 12.1 supports
+    ``JSON_VALUE(col, '$.field')`` to extract a scalar and ``JSON_EXISTS(col,
+    '$.field?(@ == "value")')`` for richer path-expression predicates.
+
+    **Supported operator set (ORC-3 — deliberately small):**
+
+    1. **Exact match** — scalar equality on a top-level field::
+
+           {"source": "support"}
+           → JSON_VALUE(metadata, '$.source') = ?   param: "support"
+
+    2. **$not** — scalar inequality::
+
+           {"status": {"$not": "archived"}}
+           → JSON_VALUE(metadata, '$.status') <> ?  param: "archived"
+
+    3. **$array_contains** — single value must appear in a JSON array field::
+
+           {"tags": {"$array_contains": "urgent"}}
+           → JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")')
+             (no bound param — value inlined in the path expression; see security note)
+
+    4. **$array_contains_any** — at least one of the supplied values must
+       appear in a JSON array field::
+
+           {"tags": {"$array_contains_any": ["urgent", "bug"]}}
+           → ( JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")')
+               OR JSON_EXISTS(metadata, '$.tags[*]?(@ == "bug")') )
+             (no bound params — values inlined; see security note)
+
+    **Security note — inlined values in JSON_EXISTS path expressions:**
+    ``JSON_VALUE`` predicates use bound ``?`` parameters so the driver handles
+    quoting safely.  ``JSON_EXISTS`` path expressions are SQL string literals —
+    ibm_db_dbi on Db2 12.1.5 fp0 does not support binding values into path
+    expressions via ``?``.  Values inlined in ``$array_contains`` /
+    ``$array_contains_any`` predicates are therefore escaped by this function:
+    any ``'`` (single-quote) is doubled to ``''`` and any ``\\`` is doubled to
+    ``\\\\`` before interpolation.  Non-string values (int, float, bool) are
+    formatted directly via ``repr()`` and are inherently safe.
+
+    **Field-name safety:**
+    Field names are validated against the pattern ``^[A-Za-z_][A-Za-z0-9_.]*$``
+    before interpolation.  Any field name that does not match raises
+    :exc:`~agent_memory_sdk.exceptions.InvalidMetadataFilterError`.
+
+    **Unrecognized operator keys:**
+    Any key inside a value dict that starts with ``$`` and is not in
+    :data:`_KNOWN_OPERATORS` raises
+    :exc:`~agent_memory_sdk.exceptions.InvalidMetadataFilterError` immediately.
+    Unrecognized keys that do *not* start with ``$`` are treated as nested objects
+    and will raise ``InvalidMetadataFilterError`` (nested objects beyond the top
+    level are not supported).
+
+    Args:
+        metadata_filter: A flat dict mapping field names to either a scalar
+            (exact match) or a dict with one operator key.  ``None`` is a no-op
+            and returns an empty string + empty params list.
+
+    Returns:
+        ``(sql_fragment, params)`` where *sql_fragment* is zero or more
+        ``AND <predicate>`` clauses (leading space included) ready to be
+        appended to an existing WHERE clause, and *params* is the list of
+        bound parameter values for ``?`` placeholders in that fragment.
+
+    Raises:
+        InvalidMetadataFilterError: if a field name is invalid, a value dict
+            contains an unrecognised ``$``-prefixed operator, or a non-scalar /
+            non-dict value is supplied as the field operand.
+    """
+    if not metadata_filter:
+        return "", []
+
+    _FIELD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
+
+    parts: list[str] = []
+    params: list[Any] = []
+
+    for field, operand in metadata_filter.items():
+        # Validate field name to prevent SQL injection via field names.
+        if not _FIELD_RE.match(field):
+            raise InvalidMetadataFilterError(
+                f"Invalid metadata field name {field!r}: field names must match "
+                r"^[A-Za-z_][A-Za-z0-9_.]*$"
+            )
+
+        if isinstance(operand, dict):
+            # Operator dict: {"$not": "val"}, {"$array_contains": ...}, etc.
+            for op_key in operand:
+                if op_key.startswith("$") and op_key not in _KNOWN_OPERATORS:
+                    raise InvalidMetadataFilterError(
+                        f"Unrecognized metadata filter operator {op_key!r} on field "
+                        f"{field!r}. Supported operators: "
+                        + ", ".join(sorted(_KNOWN_OPERATORS))
+                        + ". For exact match, pass a scalar value directly."
+                    )
+                if not op_key.startswith("$"):
+                    raise InvalidMetadataFilterError(
+                        f"Nested object operand on field {field!r} is not supported. "
+                        f"Use a scalar value (exact match) or a recognized operator "
+                        f"dict (e.g. {{\"$not\": \"value\"}})."
+                    )
+
+            if "$not" in operand:
+                val = operand["$not"]
+                parts.append(f"JSON_VALUE(metadata, '$.{field}') <> ?")
+                params.append(str(val))
+
+            elif "$array_contains" in operand:
+                val = operand["$array_contains"]
+                escaped = _escape_json_path_value(val)
+                parts.append(
+                    f"JSON_EXISTS(metadata, '$.{field}[*]?(@ == {escaped})')"
+                    " = 'true'"
+                )
+
+            elif "$array_contains_any" in operand:
+                vals = operand["$array_contains_any"]
+                if not isinstance(vals, (list, tuple)) or len(vals) == 0:
+                    raise InvalidMetadataFilterError(
+                        f"$array_contains_any on field {field!r} requires a "
+                        f"non-empty list of values; got {vals!r}."
+                    )
+                sub_parts = [
+                    f"JSON_EXISTS(metadata, '$.{field}[*]?(@ == {_escape_json_path_value(v)})')"
+                    " = 'true'"
+                    for v in vals
+                ]
+                parts.append("(" + " OR ".join(sub_parts) + ")")
+
+        elif isinstance(operand, (str, int, float, bool)) or operand is None:
+            # Exact match via JSON_VALUE scalar equality.
+            parts.append(f"JSON_VALUE(metadata, '$.{field}') = ?")
+            params.append(str(operand) if operand is not None else "null")
+
+        else:
+            raise InvalidMetadataFilterError(
+                f"Unsupported operand type {type(operand).__name__!r} for field "
+                f"{field!r}. Use a scalar value (exact match) or a recognized "
+                f"operator dict."
+            )
+
+    if not parts:
+        return "", []
+
+    sql = " AND " + " AND ".join(parts)
+    return sql, params
+
+
+def _escape_json_path_value(val: Any) -> str:
+    """Escape *val* for safe inline use in a Db2 JSON_EXISTS path expression.
+
+    Returns the value formatted as a SQL-safe string or numeric literal:
+
+    - **str** — wrapped in double-quotes with ``"`` escaped as ``\\"``,
+      ``\\`` escaped as ``\\\\``, and ``'`` escaped as ``''`` (SQL
+      single-quote doubling so the outer SQL literal stays valid).
+    - **int / float** — returned as a plain numeric string (no quotes).
+    - **bool** — returned as ``true`` or ``false`` (JSON boolean literals,
+      not quoted — Db2's path-expression evaluator understands JSON booleans
+      natively).
+    - **None** — returned as ``null``.
+    - Any other type — ``repr()`` as a fallback (safe because the caller
+      validates field names separately and this value is not user-provided SQL).
+
+    The caller is responsible for wrapping the result in the full path
+    expression string, e.g.::
+
+        f"'$.tags[*]?(@ == {_escape_json_path_value(\"urgent\")})'".
+    """
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, (int, float)):
+        return str(val)
+    if val is None:
+        return "null"
+    # String: escape backslash first (to avoid double-escaping), then
+    # double-quote (for JSON path), then single-quote (for SQL literal).
+    s = str(val)
+    s = s.replace("\\", "\\\\")   # \ → \\  (JSON path backslash)
+    s = s.replace('"', '\\"')      # " → \"  (JSON path string boundary)
+    s = s.replace("'", "''")       # ' → ''  (SQL literal single-quote)
+    return f'"{s}"'
 
 
 def _parse_vector(val: Any) -> list[float]:
@@ -643,6 +844,7 @@ class BaseRepository(ABC, Generic[M]):
         offset: int = 0,
         include_expired: bool = False,
         min_confidence: float = 0.0,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[M]:
         """List non-deleted, non-superseded rows within scope, ordered by created_at DESC.
 
@@ -659,12 +861,31 @@ class BaseRepository(ABC, Generic[M]):
                              regardless of their freshness or scope.
                              Defaults to 0.0 (no confidence filter, full
                              backward compatibility).
+            metadata_filter: Optional dict of metadata predicates (ORC-3).
+                             Supported operators:
+
+                             - **Exact match** — ``{"source": "support"}``
+                             - **$not** — ``{"status": {"$not": "archived"}}``
+                             - **$array_contains** —
+                               ``{"tags": {"$array_contains": "urgent"}}``
+                             - **$array_contains_any** —
+                               ``{"tags": {"$array_contains_any": ["a", "b"]}}``
+
+                             Unrecognized ``$``-prefixed operator keys raise
+                             :exc:`~agent_memory_sdk.exceptions.InvalidMetadataFilterError`.
+                             ``None`` (default) disables filtering — full backward
+                             compatibility.
 
         Returns:
             A list of model instances.  Rows where ``deleted_at IS NOT NULL``
             or ``superseded_at IS NOT NULL`` are always excluded from normal
             reads.  To access superseded rows for audit purposes, query the
             table directly.
+
+        Raises:
+            ValueError: if scope.agent_id is missing.
+            InvalidMetadataFilterError: if *metadata_filter* contains an
+                unrecognized operator key or an invalid field name.
         """
         _require_agent_id(scope)
         scope_sql, scope_params = _scope_predicates(scope)
@@ -684,6 +905,9 @@ class BaseRepository(ABC, Generic[M]):
 
         supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
 
+        # ORC-3: translate metadata_filter dict into SQL predicates.
+        meta_sql, meta_params = _build_metadata_filter(metadata_filter)
+
         sql = f"""
             SELECT {self._SELECT_COLS}
             FROM {self._TABLE}
@@ -692,6 +916,7 @@ class BaseRepository(ABC, Generic[M]):
               {supersession_sql}
               {extra}
               {conf_sql}
+              {meta_sql}
             ORDER BY created_at DESC
             FETCH FIRST ? ROWS ONLY
         """
@@ -709,11 +934,12 @@ class BaseRepository(ABC, Generic[M]):
                       {supersession_sql}
                       {extra}
                       {conf_sql}
+                      {meta_sql}
                 ) WHERE rn > ? AND rn <= ?
             """
-            params = [*scope_params, *conf_params, offset, offset + limit]
+            params = [*scope_params, *conf_params, *meta_params, offset, offset + limit]
         else:
-            params = [*scope_params, *conf_params, limit]
+            params = [*scope_params, *conf_params, *meta_params, limit]
 
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
@@ -1019,6 +1245,7 @@ class BaseRepository(ABC, Generic[M]):
         include_expired: bool = False,
         min_confidence: float = 0.0,
         search_chunks: bool | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[M]:
         """Semantic search via Db2 VECTOR_DISTANCE.
 
@@ -1102,10 +1329,31 @@ class BaseRepository(ABC, Generic[M]):
                              otherwise.  ``True`` forces the chunk path (safe
                              fallback to standard when chunk_repo is None).
                              ``False`` forces the standard parent-embedding path.
+            metadata_filter: Optional dict of metadata predicates (ORC-3).
+                             Applied in the first SQL step (ID-ranking pass) so
+                             rows excluded by the filter do not consume top_k
+                             slots.  Supported operators:
+
+                             - **Exact match** — ``{"source": "support"}``
+                             - **$not** — ``{"status": {"$not": "archived"}}``
+                             - **$array_contains** —
+                               ``{"tags": {"$array_contains": "urgent"}}``
+                             - **$array_contains_any** —
+                               ``{"tags": {"$array_contains_any": ["a", "b"]}}``
+
+                             Unrecognized ``$``-prefixed operator keys raise
+                             :exc:`~agent_memory_sdk.exceptions.InvalidMetadataFilterError`.
+                             ``None`` (default) disables filtering — full backward
+                             compatibility.
 
         Returns:
             A list of model instances ordered by ascending distance
             (nearest first).
+
+        Raises:
+            ValueError: if scope.agent_id is missing or query_embedding is empty.
+            InvalidMetadataFilterError: if *metadata_filter* contains an
+                unrecognized operator key or an invalid field name.
         """
         # ORC-2: resolve the effective search_chunks flag.
         # None → auto-detect based on whether chunk_repo is wired in.
@@ -1126,6 +1374,7 @@ class BaseRepository(ABC, Generic[M]):
                 mode=mode,
                 include_expired=include_expired,
                 min_confidence=min_confidence,
+                metadata_filter=metadata_filter,
             )
         _require_agent_id(scope)
         if not query_embedding:
@@ -1144,6 +1393,10 @@ class BaseRepository(ABC, Generic[M]):
         if min_confidence > 0.0:
             conf_sql = " AND confidence >= ?"
             conf_params = [min_confidence]
+
+        # ORC-3: translate metadata_filter dict into SQL predicates.
+        # Applied in step 1 (ID-ranking) so filtered-out rows don't consume top_k slots.
+        meta_sql, meta_params = _build_metadata_filter(metadata_filter)
 
         # Build the FETCH clause suffix.
         fetch_suffix = "APPROX" if mode == SearchMode.APPROX else ""  # EXACT/DEFAULT: plain FETCH FIRST
@@ -1166,10 +1419,11 @@ class BaseRepository(ABC, Generic[M]):
               {supersession_sql}
               {extra}
               {conf_sql}
+              {meta_sql}
             ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})
             FETCH FIRST ? ROWS ONLY{approx_clause}
         """
-        id_params = [*scope_params, *conf_params, top_k]
+        id_params = [*scope_params, *conf_params, *meta_params, top_k]
 
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
@@ -1212,6 +1466,7 @@ class BaseRepository(ABC, Generic[M]):
         mode: SearchMode = SearchMode.EXACT,
         include_expired: bool = False,
         min_confidence: float = 0.0,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[M]:
         """Search via the ``memory_chunks`` table, then resolve to parent records.
 
@@ -1220,7 +1475,8 @@ class BaseRepository(ABC, Generic[M]):
         ``search_chunks=True`` was passed to :meth:`search`.
 
         Args:
-            (same as :meth:`search`, ``search_chunks`` excluded)
+            (same as :meth:`search`, ``search_chunks`` and ``metadata_filter``
+            are forwarded here without change)
 
         Returns:
             A list of at most *top_k* parent-record model instances, ordered by
@@ -1263,7 +1519,7 @@ class BaseRepository(ABC, Generic[M]):
             return []
 
         # Step 3 — fetch full parent rows (with VECTOR_SERIALIZE) for the
-        # ranked IDs, applying scope + deleted_at + confidence filters.
+        # ranked IDs, applying scope + deleted_at + confidence + metadata filters.
         scope_sql, scope_params = _scope_predicates(scope)
         supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
 
@@ -1277,6 +1533,9 @@ class BaseRepository(ABC, Generic[M]):
             conf_sql = " AND confidence >= ?"
             conf_params = [min_confidence]
 
+        # ORC-3: translate metadata_filter into SQL predicates.
+        meta_sql, meta_params = _build_metadata_filter(metadata_filter)
+
         placeholders = ",".join("?" for _ in ranked_ids)
         sql_rows = f"""
             SELECT {self._SELECT_COLS}
@@ -1287,10 +1546,11 @@ class BaseRepository(ABC, Generic[M]):
               {supersession_sql}
               {extra}
               {conf_sql}
+              {meta_sql}
         """
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
-            cur.execute(sql_rows, [*ranked_ids, *scope_params, *conf_params])
+            cur.execute(sql_rows, [*ranked_ids, *scope_params, *conf_params, *meta_params])
             raw_rows = cur.fetchall()
 
         # Re-rank by the chunk-distance order from step 2, then apply

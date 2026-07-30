@@ -339,9 +339,14 @@
       "epic_id": "EPIC-3",
       "title": "Structured metadata filter operators for search()/list_all()",
       "summary": "A small operator DSL ($not, $array_contains, $array_contains_any, exact match) over the existing metadata JSON column, backed by Db2's JSON_VALUE/JSON_EXISTS.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Add a `metadata_filter: dict | None = None` parameter to `search()` and `list_all()` supporting a small operator set: exact match (`{\"source\": \"support\"}`), `$not` (`{\"status\": {\"$not\": \"archived\"}}`), `$array_contains` and `$array_contains_any` for list-valued metadata fields (e.g. tags). Translate the filter dict into `JSON_VALUE(metadata, '$.field')` / `JSON_EXISTS(metadata, ...)` predicates appended to the existing WHERE clause, alongside the scope and deleted_at/expires_at predicates that are already there. No schema change — `metadata` is already `VARCHAR(4096)` JSON text (a decision made in Step 2 specifically because it supports `JSON_VALUE`/`JSON_EXISTS` natively). Keep the operator set small and well-tested rather than building a general query language; document exactly which operators are supported and reject unrecognized ones with a clear error rather than silently ignoring them.\n\nInspired by: Oracle AI Agent Memory's metadata filtering (`$array_contains`, `$array_contains_any`, `$not`, exact match) on `memory.search(..., metadata_filter=...)`.\n\nDb2 feasibility: fully feasible with the existing column type — pure query-building logic, no new infrastructure, no migration needed.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-08-02",
+          "text": "Done. Added metadata_filter: dict | None = None to BaseRepository.list_all() and search() (+ _search_via_chunks). Implemented four operators via pure SQL-fragment building: (1) exact match → JSON_VALUE(metadata, '$.field') = ? with bound param; (2) $not → JSON_VALUE(metadata, '$.field') <> ? with bound param; (3) $array_contains → JSON_EXISTS(metadata, '$.field[*]?(@ == value)') = 'true' with value inlined and escaped; (4) $array_contains_any → OR-joined JSON_EXISTS predicates. Field names validated against ^[A-Za-z_][A-Za-z0-9_.]*$ before interpolation. Unrecognized $-prefixed operator keys raise InvalidMetadataFilterError (new ValueError subclass, exported from top-level __init__.py) before any SQL is executed. metadata_filter=None is zero-overhead no-op. Metadata predicate is in search() step-1 (ID-ranking) so filtered rows don't consume top_k slots. No schema change, no migration. 52 new unit tests in tests/test_orc3.py. 502 total tests pass; ruff clean; mypy strict clean. DECISIONS.md entry appended."
+        }
+      ]
     },
     {
       "id": "ORC-4",

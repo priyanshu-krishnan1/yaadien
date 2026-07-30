@@ -8,7 +8,7 @@ skipped automatically when the ``DB2_DATABASE`` environment variable is not
 set.  Set it (and the other ``DB2_*`` variables, or point to a .env file
 loaded before running pytest) to run them against a real Db2 instance.
 
-See INTEGRATION_TESTING.md for Docker setup instructions.
+See project-management/INTEGRATION_TESTING.md for Docker setup instructions.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def pytest_collection_modifyitems(
         reason=(
             "Integration tests require a live Db2 instance.  "
             "Set DB2_DATABASE (and other DB2_* vars) to enable.  "
-            "See INTEGRATION_TESTING.md."
+            "See project-management/INTEGRATION_TESTING.md."
         )
     )
     if _db2_available():

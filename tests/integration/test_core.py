@@ -19,7 +19,7 @@ Each test function uses a fresh ``unique_agent_id`` / ``scope`` so there is
 no inter-test state pollution.
 
 Requires: DB2_DATABASE and companion DB2_* env vars, or a .env file.
-See INTEGRATION_TESTING.md.
+See project-management/INTEGRATION_TESTING.md.
 """
 
 from __future__ import annotations

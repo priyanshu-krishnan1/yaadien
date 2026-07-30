@@ -1904,3 +1904,103 @@ explicitly supersedes it and say why.
   `True`/`False` overriding auto-detection in both directions.
 
 - **Made during:** audit-prompt-11 bug-fix pass.
+
+## 2026-08-02 — ORC-3: structured metadata filter operators for search()/list_all()
+
+- **Decision:** Added a `metadata_filter: dict[str, Any] | None = None` parameter
+  to [`BaseRepository.list_all()`](../src/agent_memory_sdk/repositories/base.py) and
+  [`BaseRepository.search()`](../src/agent_memory_sdk/repositories/base.py), translating
+  the filter dict into `JSON_VALUE` / `JSON_EXISTS` predicates appended to the existing
+  WHERE clause.  No schema change — the `metadata VARCHAR(4096)` JSON column already exists
+  from Step 2 and natively supports these Db2 12.1 functions.
+
+  **Implemented operator set (deliberately small — four operators total):**
+
+  | Operator | Example filter dict | Generated SQL |
+  |---|---|---|
+  | Exact match | `{"source": "support"}` | `JSON_VALUE(metadata, '$.source') = ?`  param: `"support"` |
+  | `$not` | `{"status": {"$not": "archived"}}` | `JSON_VALUE(metadata, '$.status') <> ?`  param: `"archived"` |
+  | `$array_contains` | `{"tags": {"$array_contains": "urgent"}}` | `JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")') = 'true'` (value inlined; see security note) |
+  | `$array_contains_any` | `{"tags": {"$array_contains_any": ["a","b"]}}` | `(JSON_EXISTS(metadata, '$.tags[*]?(@ == "a")') = 'true' OR JSON_EXISTS(metadata, '$.tags[*]?(@ == "b")') = 'true')` (values inlined) |
+
+  Multiple fields in a single dict are combined with AND.  All predicates are appended
+  **after** the existing scope, `deleted_at IS NULL`, TTL, confidence, and supersession
+  predicates — they are additive, never subtractive.
+
+  **WHERE clause order in `list_all()` (all filters active):**
+  ```sql
+  WHERE <scope predicates>
+    AND deleted_at IS NULL
+    AND superseded_at IS NULL          -- SemanticFactRepository only
+    AND (expires_at IS NULL OR …)      -- when include_expired=False
+    AND confidence >= ?                -- when min_confidence > 0.0
+    AND JSON_VALUE(…) = ?              -- metadata_filter predicates
+    …
+  ```
+
+  In `search()`, the metadata predicates are in the **first SQL step** (ID-ranking pass,
+  which selects only `id` and orders by `VECTOR_DISTANCE`) so rows excluded by the filter
+  do not consume `top_k` slots.  `_search_via_chunks()` (ORC-2 chunk-search path) applies
+  the predicates in the step-3 parent-row resolve query.
+
+  **Implementation files:**
+  - [`src/agent_memory_sdk/repositories/base.py`](../src/agent_memory_sdk/repositories/base.py):
+    `_build_metadata_filter(filter)` — pure function returning `(sql_fragment, params)`;
+    `_escape_json_path_value(val)` — helper for inlining values in `JSON_EXISTS` path expressions.
+  - [`src/agent_memory_sdk/exceptions.py`](../src/agent_memory_sdk/exceptions.py):
+    `InvalidMetadataFilterError(ValueError)` — raised on unrecognized operators or invalid field names.
+  - [`src/agent_memory_sdk/__init__.py`](../src/agent_memory_sdk/__init__.py):
+    `InvalidMetadataFilterError` added to exports and `__all__`.
+  - [`tests/test_orc3.py`](../tests/test_orc3.py): 52 new unit tests.
+
+  **Security design:**
+
+  * **Exact match / `$not`** use bound `?` parameters — the driver handles quoting
+    safely; no value interpolation into SQL text.
+  * **`$array_contains` / `$array_contains_any`** inline values into a Db2 JSON path
+    expression string.  Db2 12.1.5 fp0 does not support binding values into path
+    expressions via `?` (same constraint documented for vector literals in the
+    "Db2 12.1.5 fp0 compatibility fixes" entry).  Values are escaped by
+    `_escape_json_path_value()` before interpolation:
+    - Strings: backslash doubled (`\\` → `\\\\`), double-quote escaped (`"` → `\"`),
+      single-quote doubled (`'` → `''`).
+    - Integers/floats: formatted as bare numerics — inherently safe.
+    - Booleans: `true` / `false` (JSON literals, not quoted).
+    - None: `null`.
+  * **Field names** are validated against `^[A-Za-z_][A-Za-z0-9_.]*$` before
+    interpolation.  Any field name failing this pattern raises `InvalidMetadataFilterError`
+    immediately, before any SQL is built.
+
+  **Rejection of unrecognized operators:**
+  Any key inside a value dict that starts with `$` and is not in the known set
+  (`$not`, `$array_contains`, `$array_contains_any`) raises `InvalidMetadataFilterError`
+  with a message that lists the supported operators.  This fires before any SQL is
+  executed, so there is no "silent ignore" path.
+
+  **Backward compatibility:**
+  Both `list_all()` and `search()` default `metadata_filter=None`, which produces an empty
+  SQL fragment and empty params list — zero overhead for all existing callers.  The
+  `_build_metadata_filter` function returns `("", [])` for `None` and for `{}`.
+
+  **New tests:** `tests/test_orc3.py` — 52 unit tests covering:
+  - `_build_metadata_filter`: no-op on None/`{}`, exact match (str/int/bool/None), `$not`,
+    `$array_contains`, `$array_contains_any`, combined multi-field dicts.
+  - Error cases: invalid field name, unrecognized `$` operator, non-`$` key in operator dict,
+    empty list for `$array_contains_any`, unsupported operand type.
+  - `_escape_json_path_value`: strings, numbers, booleans, None, SQL-injection attempts.
+  - `list_all()` integration: predicate in SQL, param in params, combined with `min_confidence`,
+    offset-pagination path.
+  - `search()` integration: predicate in step-1 SQL, combined with `min_confidence`.
+  - `InvalidMetadataFilterError` raised before SQL execution; exported from top-level package.
+
+  **Total test suite: 502 tests.  ruff clean.  mypy strict clean.**
+
+- **Reason:** Closes the metadata-filter gap identified in the ORC-3 story.  Inspired by
+  Oracle AI Agent Memory's `metadata_filter` on `memory.search()`, adapted for Db2's
+  `JSON_VALUE`/`JSON_EXISTS` functions on the existing `metadata VARCHAR(4096)` column.
+  No schema change, no migration, no new infrastructure.  The operator set is deliberately
+  kept at four because each operator corresponds to a distinct and commonly needed query
+  pattern; additional operators can be added following the same pattern if future use cases
+  require them.
+
+- **Made during:** ORC-3 (EPIC-3 — structured metadata filters)
