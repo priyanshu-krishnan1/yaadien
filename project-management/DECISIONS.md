@@ -2196,3 +2196,18 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-2 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-3: Verified STEP-3 (Core models & repositories)
+
+- **Decision:** VER-3 verification PASS — no gaps, fixes, or open items found.
+- **Checked:**
+  - `models.py`: 5 Pydantic v2 models (`WorkingMemory`, `EpisodicMemory`, `SemanticFact`, `EntityProfile`, `ProceduralMemory`) all inherit `_MemoryBase` which maps 1-to-1 with DDL columns. `MemoryScope` is a frozen Pydantic model (`model_config = {"frozen": True}`) with `agent_id: str` (required), `tenant_id/user_id/thread_id: str | None = None`. `_new_uuid()` default factory used for `id`.
+  - `repositories/base.py`: `_require_agent_id(scope)` raises `ValueError` when `agent_id` is falsy. `_scope_predicates(scope)` always produces `agent_id = ?`; adds `tenant_id/user_id/thread_id` only when non-None. SQL scope enforcement confirmed on all 7 read/write paths (create, get_by_id, list_all, search, forget, update, purge_expired). `create()` stamps scope fields from the `scope` arg (overrides record fields).
+  - Vector SQL: uses `CAST('{vec_str}' AS VECTOR({dim},FLOAT32))` inline literal for INSERT/UPDATE/search (Db2 12.1.5 fp0 binding workaround). `VECTOR_SERIALIZE(embedding) AS embedding` in SELECT. `_vec_to_str()` coerces via `float()` — SQL injection guard.
+  - `EmbeddingProvider`: `@runtime_checkable` Protocol in `types.py`.
+  - `MemoryStore` in `store.py`: composes all 5 repos as `.working/.episodic/.facts/.profiles/.procedures`; propagates `embedding_dim` to all repos.
+  - Pagination: offset=0 uses `FETCH FIRST n ROWS ONLY`; offset>0 uses `ROW_NUMBER() OVER (ORDER BY created_at DESC)` subquery.
+  - 517 unit tests pass, ruff clean, mypy strict clean.
+- **Found:** Nothing to fix.
+- **Made during:** VER-3 (EPIC-4 beta readiness verification)
+
