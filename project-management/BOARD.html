@@ -478,8 +478,10 @@
     "epic_id": "EPIC-4",
     "title": "Verify: ENH-3: Reconciliation — contradiction detection with supersession",
     "summary": "Re-verify Reconciler protocol, supersession columns on semantic_facts only, _HAS_SUPERSESSION gate, reconcile() sanity guards against ENH-3 acceptance criteria.",
-    "status": "To Do",
-    "comments": []
+    "status": "Done",
+    "comments": [
+      "VER-10 PASS. Reconciler protocol in types.py: callable (candidates: list[SemanticFact]) -> list[SupersedeDecision]. SupersedeDecision dataclass has winner_id, loser_id, reason. NoOpReconciler matches NoOpConsolidator pattern (callable returning []). Migration 0004: superseded_by VARCHAR(36), superseded_at TIMESTAMP, supersede_reason VARCHAR(255) on semantic_facts ONLY (entity_profiles/procedural_memory intentionally excluded — justified in migration comments and DECISIONS.md). SemanticFactRepository._HAS_SUPERSESSION=True gates 'AND superseded_at IS NULL' in list_all(), search(), and dedup check. supersede() SQL: UPDATE semantic_facts SET superseded_by/at/reason/updated_at/version WHERE id=? AND scope AND deleted_at IS NULL AND superseded_at IS NULL. reason truncated to 255 chars. reconcile() guards: rejects non-facts type, guards self-supersession (winner==loser), guards winner not in candidate set, handles reconciler exception gracefully. 52 unit tests all pass."
+    ]
   },
   {
     "id": "VER-11",

@@ -2307,3 +2307,18 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-9 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-10: Verified ENH-3 (Reconciliation/supersession)
+
+- **Decision:** VER-10 verification PASS — reconciliation and supersession meet ENH-3 acceptance criteria; no gaps or fixes required.
+- **Checked:**
+  - **`Reconciler` protocol + `SupersedeDecision`** (`types.py`): `Reconciler` is a structural Protocol with `__call__(candidates: list[SemanticFact]) -> list[SupersedeDecision]`. `SupersedeDecision` is a dataclass with `winner_id`, `loser_id`, `reason`. `NoOpReconciler` matches `NoOpConsolidator` pattern exactly (callable returning `[]`). ✓
+  - **Migration 0004:** `superseded_by VARCHAR(36)`, `superseded_at TIMESTAMP`, `supersede_reason VARCHAR(255)` added to `semantic_facts` only. `entity_profiles` and `procedural_memory` excluded — entity profiles use `update()` (aggregate, not competing claims); procedural memory uses `update()` in place (no contradicting dual-writes). Justification in migration comment and DECISIONS.md ENH-3 entry. Index `ix_semantic_facts_superseded_by ON semantic_facts (agent_id, superseded_by)` for chain-of-supersession queries. ✓
+  - **`_HAS_SUPERSESSION = True` on `SemanticFactRepository`:** gates `AND superseded_at IS NULL` in `list_all()`, `search()`, and `create()` dedup SELECT — keeping non-facts repos clear of a column that doesn't exist in their table (prevents SQLCODE -206). ✓
+  - **`supersede()` method:** `UPDATE semantic_facts SET superseded_by=?, superseded_at=?, supersede_reason=?, updated_at=?, version=version+1 WHERE id=? AND <scope> AND deleted_at IS NULL AND superseded_at IS NULL`. Returns True/False based on rowcount. `reason` truncated to 255 chars. Scope guard via `_require_agent_id()` and `_scope_predicates()`. ✓
+  - **Governance distinction:** `superseded_at IS NOT NULL` = AI-decided contradiction (not delete); `deleted_at IS NOT NULL` = user/operator forget. Both exclude rows from normal reads; neither hard-deletes. Documented in migration SQL and docstrings. ✓
+  - **`MemoryStore.reconcile()`:** rejects non-facts type (`ValueError`); fetches `list_all(limit=min(limit, 1000))` candidates; invokes reconciler; sanity-guards each decision (skip self-supersession `winner==loser`, skip winner-not-in-candidates); calls `facts.supersede()` for each valid decision; handles reconciler exception gracefully (logs, returns `[]`). ✓
+  - **Tests:** `tests/test_reconciliation.py` — 52 unit tests covering all protocol/dataclass types, `NoOpReconciler`, `supersede()` SQL/params/return values, `list_all`/`search`/`create_dedup` exclusion of superseded rows, `reconcile()` end-to-end, all sanity guards. All 52 pass. ✓
+- **Found:** Nothing to fix.
+- **Made during:** VER-10 (EPIC-4 beta readiness verification)
+
