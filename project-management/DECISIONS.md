@@ -2211,3 +2211,19 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-3 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-4: Verified STEP-4 (Lifecycle — TTL, versioning, forget, consolidation)
+
+- **Decision:** VER-4 verification PASS — no gaps, fixes, or open items found.
+- **Checked:**
+  - `BaseRepository.forget(id, scope)`: issues `UPDATE SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND scope AND deleted_at IS NULL`; returns `bool(rowcount > 0)`. `soft_delete()` is a backwards-compatible alias delegating to `forget()`. ✓
+  - `BaseRepository.purge_expired(scope)`: hard-`DELETE FROM <table> WHERE deleted_at IS NOT NULL AND <scope>`. **No `expires_at` predicate** — only tombstoned rows are deleted. TTL-expired but non-tombstoned rows are left alone. This matches the DECISIONS.md Step 4 entry exactly. ✓
+  - `BaseRepository.update(record, scope)`: `UPDATE ... SET content=?, metadata=?, embedding=..., confidence=?, content_hash=?, updated_at=?, version=? WHERE id=? AND scope AND version=record.version AND deleted_at IS NULL`; if `rowcount==0` raises `StaleWriteError`. Version incremented atomically in the same SQL statement. ✓
+  - `Consolidator` and `NoOpConsolidator` in `types.py`. `MemoryStore.remember()` dispatches by `_MODEL_TO_REPO_ATTR`, calls `repo.create(record, scope)`, then runs `_run_consolidator([stored], scope)` only for `working`/`episodic` writes, guarded by `_should_consolidate(scope)`. Consolidator errors are caught and logged via `logger.exception`, never raised. ✓
+  - `_should_consolidate(scope)`: in-memory counter keyed by `(agent_id, user_id, thread_id)`; fires every Nth write per scope (default n=1, always True). ✓
+  - `MemoryStore.forget()` and `purge_expired()` facade methods delegate to the correct repo. `StaleWriteError` re-exported from `store.py` and `__init__.py`. ✓
+  - `scripts/purge_expired.py` and `scripts/consolidate_pending.py` exist. ✓
+  - 517 unit tests pass, ruff clean, mypy strict clean.
+- **Found:** Nothing to fix.
+- **Made during:** VER-4 (EPIC-4 beta readiness verification)
+
