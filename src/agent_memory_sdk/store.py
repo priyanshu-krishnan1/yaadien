@@ -404,8 +404,37 @@ class MemoryStore:
             )
             return []
 
+        # Build a set of candidate IDs once for O(1) membership checks below.
+        candidate_ids: set[str] = {c.id for c in candidates}
+
         applied: list[Any] = []
         for decision in decisions:
+            # Guard (a): self-supersession — a fact cannot supersede itself.
+            if decision.winner_id == decision.loser_id:
+                logger.warning(
+                    "reconcile: skipping self-supersession decision "
+                    "winner_id == loser_id == %s; reason=%r",
+                    decision.winner_id,
+                    decision.reason,
+                )
+                continue
+
+            # Guard (b): winner must be a known live candidate from the batch
+            # that was handed to the Reconciler.  An id not in that set means
+            # the Reconciler hallucinated a reference (or returned a stale/
+            # cross-scope id), which would corrupt the audit trail.
+            if decision.winner_id not in candidate_ids:
+                logger.warning(
+                    "reconcile: skipping decision whose winner_id=%s is not "
+                    "among the %d candidates passed to the Reconciler "
+                    "(loser_id=%s, reason=%r)",
+                    decision.winner_id,
+                    len(candidate_ids),
+                    decision.loser_id,
+                    decision.reason,
+                )
+                continue
+
             try:
                 ok = self.facts.supersede(
                     loser_id=decision.loser_id,

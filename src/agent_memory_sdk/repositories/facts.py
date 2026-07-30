@@ -49,6 +49,11 @@ class SemanticFactRepository(BaseRepository[SemanticFact]):
     _TABLE = "semantic_facts"
     _MODEL = SemanticFact
 
+    # This table has the supersession columns added by migration 0004.
+    # Setting _HAS_SUPERSESSION = True causes BaseRepository.list_all(),
+    # search(), and create()'s dedup-check to append "AND superseded_at IS NULL".
+    _HAS_SUPERSESSION = True
+
     # Override _SELECT_COLS to include the three supersession columns.
     # Index map (0-based):
     #   0  id          1  tenant_id   2  agent_id    3  user_id     4  thread_id

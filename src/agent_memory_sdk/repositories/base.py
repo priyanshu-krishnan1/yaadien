@@ -175,6 +175,15 @@ class BaseRepository(ABC, Generic[M]):
             dedup SELECT before every INSERT.  Set to False in repositories
             where the same content legitimately repeats (WorkingMemory), so
             the round-trip is skipped entirely.
+        _HAS_SUPERSESSION: bool — When True, ``list_all()``, ``search()``,
+            and the ``create()`` dedup-check all append
+            ``AND superseded_at IS NULL`` to their WHERE clauses.  Only
+            ``SemanticFactRepository`` sets this to True because only the
+            ``semantic_facts`` table has the supersession columns (added in
+            migration 0004).  All other repositories leave this as False so
+            that their SQL never references a column that doesn't exist in
+            their schema — referencing a missing column is a compile-time
+            SQL error (Db2 SQLCODE -206), not a vacuous truth.
     """
 
     _TABLE: str
@@ -189,6 +198,13 @@ class BaseRepository(ABC, Generic[M]):
     # override this to False so create() skips the dedup SELECT entirely —
     # no wasted round-trip, and the append-only ordering is preserved.
     _DEDUP_ON_WRITE: bool = True
+
+    # Supersession gate (ENH-3 fix).  Only semantic_facts has the three
+    # supersession columns (superseded_by, superseded_at, supersede_reason)
+    # added by migration 0004.  Only SemanticFactRepository overrides this
+    # to True.  When False (all other repos), the "AND superseded_at IS NULL"
+    # fragment is never added to SQL so queries never reference a missing column.
+    _HAS_SUPERSESSION: bool = False
 
     def __init__(self, pool: Any) -> None:
         """
@@ -295,13 +311,14 @@ class BaseRepository(ABC, Generic[M]):
 
         if self._DEDUP_ON_WRITE:
             scope_sql, scope_params = _scope_predicates(scope)
+            supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
             dedup_sql = f"""
                 SELECT {self._SELECT_COLS}
                 FROM {self._TABLE}
                 WHERE {scope_sql}
                   AND content_hash = ?
                   AND deleted_at IS NULL
-                  AND superseded_at IS NULL
+                  {supersession_sql}
                 FETCH FIRST 1 ROWS ONLY
             """
             with self._pool.get_connection() as conn:
@@ -440,12 +457,14 @@ class BaseRepository(ABC, Generic[M]):
             conf_sql = " AND confidence >= ?"
             conf_params = [min_confidence]
 
+        supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
+
         sql = f"""
             SELECT {self._SELECT_COLS}
             FROM {self._TABLE}
             WHERE {scope_sql}
               AND deleted_at IS NULL
-              AND superseded_at IS NULL
+              {supersession_sql}
               {extra}
               {conf_sql}
             ORDER BY created_at DESC
@@ -462,7 +481,7 @@ class BaseRepository(ABC, Generic[M]):
                     FROM {self._TABLE}
                     WHERE {scope_sql}
                       AND deleted_at IS NULL
-                      AND superseded_at IS NULL
+                      {supersession_sql}
                       {extra}
                       {conf_sql}
                 ) WHERE rn > ? AND rn <= ?
@@ -752,12 +771,14 @@ class BaseRepository(ABC, Generic[M]):
         #   Step 1: fetch IDs in nearest-first order (no VECTOR_SERIALIZE in SELECT).
         #   Step 2: fetch full rows (with VECTOR_SERIALIZE) by those IDs, then
         #           reorder to restore the original nearest-first ordering.
+        supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
+
         sql_ids = f"""
             SELECT id
             FROM {self._TABLE}
             WHERE {scope_sql}
               AND deleted_at IS NULL
-              AND superseded_at IS NULL
+              {supersession_sql}
               {extra}
               {conf_sql}
             ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})

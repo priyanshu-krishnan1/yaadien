@@ -988,3 +988,262 @@ class TestContentHash:
         repo.create(wm, _SCOPE_AGENT_ONLY)
         sql = pool.cursor.last_sql
         assert "content_hash" in sql
+
+
+# ---------------------------------------------------------------------------
+# ENH-3 regression: _HAS_SUPERSESSION gate — non-facts repos must NEVER
+# reference superseded_at; SemanticFactRepository must always include it.
+# ---------------------------------------------------------------------------
+
+class TestHasSupersessionFlag:
+    """Regression tests for the _HAS_SUPERSESSION class-level gate.
+
+    Verifies that list_all(), search(), and create()'s dedup SELECT never
+    emit "superseded_at" for the four tables that lack the column
+    (working_memory, episodic_memory, entity_profiles, procedural_memory),
+    and that SemanticFactRepository still includes it everywhere.
+
+    Background: migration 0004 added the supersession columns to
+    semantic_facts only.  Referencing a nonexistent column in SQL is a
+    compile-time error on Db2 (SQLCODE -206); it is NOT a vacuous truth.
+    """
+
+    # ------------------------------------------------------------------
+    # Helpers — build one repo of each non-supersession type
+    # ------------------------------------------------------------------
+
+    def _working(self):
+        return WorkingMemoryRepository(_FakePool([]))
+
+    def _episodic(self):
+        return EpisodicMemoryRepository(_FakePool([]))
+
+    def _profiles(self):
+        return EntityProfileRepository(_FakePool([]))
+
+    def _procedural(self):
+        return ProceduralMemoryRepository(_FakePool([]))
+
+    def _facts(self):
+        return SemanticFactRepository(_FakePool([]))
+
+    # ------------------------------------------------------------------
+    # Class-attribute checks
+    # ------------------------------------------------------------------
+
+    def test_working_has_supersession_false(self):
+        assert WorkingMemoryRepository._HAS_SUPERSESSION is False
+
+    def test_episodic_has_supersession_false(self):
+        assert EpisodicMemoryRepository._HAS_SUPERSESSION is False
+
+    def test_profiles_has_supersession_false(self):
+        assert EntityProfileRepository._HAS_SUPERSESSION is False
+
+    def test_procedural_has_supersession_false(self):
+        assert ProceduralMemoryRepository._HAS_SUPERSESSION is False
+
+    def test_facts_has_supersession_true(self):
+        assert SemanticFactRepository._HAS_SUPERSESSION is True
+
+    # ------------------------------------------------------------------
+    # list_all() — no superseded_at for non-facts repos
+    # ------------------------------------------------------------------
+
+    def test_working_list_all_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.list_all(_SCOPE)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_episodic_list_all_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = EpisodicMemoryRepository(pool)
+        repo.list_all(_SCOPE)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_profiles_list_all_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = EntityProfileRepository(pool)
+        repo.list_all(_SCOPE)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_procedural_list_all_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = ProceduralMemoryRepository(pool)
+        repo.list_all(_SCOPE)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_facts_list_all_has_superseded_at(self):
+        pool = _FakePool([])
+        repo = SemanticFactRepository(pool)
+        repo.list_all(_SCOPE)
+        assert "superseded_at IS NULL" in pool.cursor.last_sql
+
+    # ------------------------------------------------------------------
+    # list_all() with offset (ROW_NUMBER path) — same checks
+    # ------------------------------------------------------------------
+
+    def test_working_list_all_offset_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.list_all(_SCOPE, offset=5)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_facts_list_all_offset_has_superseded_at(self):
+        pool = _FakePool([])
+        repo = SemanticFactRepository(pool)
+        repo.list_all(_SCOPE, offset=5)
+        assert "superseded_at IS NULL" in pool.cursor.last_sql
+
+    # ------------------------------------------------------------------
+    # search() step-1 SQL — no superseded_at for non-facts repos
+    # ------------------------------------------------------------------
+
+    def test_working_search_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.search(_VEC, _SCOPE, top_k=5)
+        # all_sqls[0] is step-1 (ID-ranking); all_sqls is not on _FakePool cursor
+        # but last_sql after the first execute is the step-1 SQL (pool returns
+        # empty → step-2 is never reached)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_episodic_search_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = EpisodicMemoryRepository(pool)
+        repo.search(_VEC, _SCOPE, top_k=5)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_profiles_search_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = EntityProfileRepository(pool)
+        repo.search(_VEC, _SCOPE, top_k=5)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_procedural_search_no_superseded_at(self):
+        pool = _FakePool([])
+        repo = ProceduralMemoryRepository(pool)
+        repo.search(_VEC, _SCOPE, top_k=5)
+        assert "superseded_at" not in pool.cursor.last_sql
+
+    def test_facts_search_step1_has_superseded_at(self):
+        """SemanticFactRepository.search() step-1 SQL must contain superseded_at IS NULL."""
+        # Need all_sqls tracking — use the multi-cursor pattern from the dedup test
+        from contextlib import contextmanager
+
+        class _TrackingPool:
+            def __init__(self):
+                self.sqls: list[str] = []
+            @contextmanager
+            def get_connection(self):
+                yield _TrackingConn(self.sqls)
+
+        class _TrackingConn:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.committed = False
+            def cursor(self):
+                return _TrackingCur(self._sqls)
+            def commit(self):
+                self.committed = True
+
+        class _TrackingCur:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.rowcount = 0
+            def execute(self, sql, params=None):
+                self._sqls.append(sql)
+            def fetchone(self):
+                return None
+            def fetchall(self):
+                return []
+
+        pool = _TrackingPool()
+        repo = SemanticFactRepository(pool)
+        repo.search(_VEC, _SCOPE, top_k=5)
+        step1_sql = pool.sqls[0]
+        assert "superseded_at IS NULL" in step1_sql
+
+    # ------------------------------------------------------------------
+    # create() dedup SELECT — no superseded_at for non-facts repos
+    # ------------------------------------------------------------------
+
+    def test_episodic_create_dedup_no_superseded_at(self):
+        """EpisodicMemoryRepository has _DEDUP_ON_WRITE=True but _HAS_SUPERSESSION=False.
+        Its dedup SELECT must not reference superseded_at."""
+        from contextlib import contextmanager
+
+        class _TrackingPool:
+            def __init__(self):
+                self.sqls: list[str] = []
+            @contextmanager
+            def get_connection(self):
+                yield _TrackingConn(self.sqls)
+
+        class _TrackingConn:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.committed = False
+            def cursor(self):
+                return _TrackingCur(self._sqls)
+            def commit(self):
+                self.committed = True
+
+        class _TrackingCur:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.rowcount = 0
+            def execute(self, sql, params=None):
+                self._sqls.append(sql)
+            def fetchone(self):
+                return None  # no dedup hit → INSERT proceeds
+            def fetchall(self):
+                return []
+
+        pool = _TrackingPool()
+        repo = EpisodicMemoryRepository(pool)
+        ep = EpisodicMemory(agent_id="agent-001", content="some episodic content")
+        repo.create(ep, _SCOPE_AGENT_ONLY)
+        # First SQL is the dedup SELECT
+        dedup_sql = pool.sqls[0]
+        assert "content_hash = ?" in dedup_sql
+        assert "superseded_at" not in dedup_sql
+
+    def test_facts_create_dedup_has_superseded_at(self):
+        """SemanticFactRepository dedup SELECT must include superseded_at IS NULL."""
+        from contextlib import contextmanager
+
+        class _TrackingPool:
+            def __init__(self):
+                self.sqls: list[str] = []
+            @contextmanager
+            def get_connection(self):
+                yield _TrackingConn(self.sqls)
+
+        class _TrackingConn:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.committed = False
+            def cursor(self):
+                return _TrackingCur(self._sqls)
+            def commit(self):
+                self.committed = True
+
+        class _TrackingCur:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.rowcount = 0
+            def execute(self, sql, params=None):
+                self._sqls.append(sql)
+            def fetchone(self):
+                return None
+            def fetchall(self):
+                return []
+
+        pool = _TrackingPool()
+        repo = SemanticFactRepository(pool)
+        fact = SemanticFact(agent_id="agent-001", content="some semantic fact")
+        repo.create(fact, _SCOPE_AGENT_ONLY)
+        dedup_sql = pool.sqls[0]
+        assert "superseded_at IS NULL" in dedup_sql

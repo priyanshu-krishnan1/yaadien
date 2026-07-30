@@ -1457,14 +1457,15 @@ explicitly supersedes it and say why.
   type raises `ValueError` immediately.
 
   **`list_all()` / `search()` in `BaseRepository`** — both now include
-  `AND superseded_at IS NULL` alongside the existing `AND deleted_at IS NULL`.  This applies
-  to all five tables (the predicate is a no-op for the four tables that don't have the column,
-  but that is correct: `superseded_at IS NULL` is vacuously true when the column doesn't exist,
-  so normal Db2 DDL will reject queries referencing a missing column — which is exactly right:
-  the other four tables must not be queried with this predicate until/unless a future migration
-  adds the column).  In practice, only `SemanticFactRepository` overrides `_SELECT_COLS` and
-  `_model_from_row`; the base filter is written into the SQL for all tables so the exclusion
-  behaviour is consistent and can't be accidentally omitted when extending.
+  `AND superseded_at IS NULL` alongside the existing `AND deleted_at IS NULL` when
+  `_HAS_SUPERSESSION` is True (see below).  **Correction (ENH-3 audit fix, 2026-08-01):**
+  the original entry stated that `superseded_at IS NULL` is "vacuously true when the column
+  doesn't exist" — that is incorrect.  Referencing a nonexistent column is a compile-time
+  error on Db2 (SQLCODE -206), not a vacuous truth.  The original implementation
+  unconditionally added this predicate to all five repositories, which would have caused
+  every `list_all()` / `search()` / dedup-SELECT call on `working_memory`, `episodic_memory`,
+  `entity_profiles`, and `procedural_memory` to fail against a real Db2 instance.  Fixed by
+  introducing `_HAS_SUPERSESSION: bool = False` (see ENH-3 audit fix entry below).
 
   **ENH-2 dedup check updated** — `create()` dedup SELECT now also excludes superseded rows
   (`AND superseded_at IS NULL`).  This closes the case where a fact is superseded and then the
@@ -1495,6 +1496,80 @@ explicitly supersedes it and say why.
 - **Made during:** ENH-3 (EPIC-2 backlog, third story)
 - **Supersedes:** The ENH-2 DECISIONS.md note "once ENH-3 lands… the dedup check should also
   add `AND superseded_at IS NULL`" — resolved in this entry.
+
+---
+
+## 2026-08-01 — ENH-3 audit fix: _HAS_SUPERSESSION gate + reconcile() sanity guards
+
+- **Decision:** Two bugs introduced in ENH-3 are fixed here; the erroneous claim
+  in the ENH-3 DECISIONS.md entry is also corrected inline.
+
+  **Bug 1 — superseded_at referenced on tables that don't have it (CRITICAL)**
+
+  `BaseRepository.list_all()`, `search()`, and the `create()` dedup-SELECT all
+  unconditionally appended `AND superseded_at IS NULL` to their WHERE clauses after ENH-3
+  landed.  Only the `semantic_facts` table has this column (migration 0004 added it there
+  only).  Referencing a nonexistent column in a Db2 query is a compile-time SQL error
+  (SQLCODE -206), not a vacuous truth as stated in the original ENH-3 entry.  Every
+  `list_all()` / `search()` call on `working_memory`, `episodic_memory`,
+  `entity_profiles`, and `procedural_memory` — plus the `create()` dedup-SELECT on
+  `EpisodicMemory`, `EntityProfile`, and `ProceduralMemory` (which all have
+  `_DEDUP_ON_WRITE = True`) — would have failed against a real Db2 instance.
+
+  *Fix:* Added `_HAS_SUPERSESSION: bool = False` to `BaseRepository`, mirroring the
+  existing `_DEDUP_ON_WRITE` pattern exactly.  Overridden to `True` only in
+  `SemanticFactRepository`.  In `list_all()`, `search()`, and the `create()` dedup-SELECT,
+  the `AND superseded_at IS NULL` fragment is now built conditionally:
+  `supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""`.
+  This is the same conditional-fragment style already used for `min_confidence`'s
+  `conf_sql` / `conf_params`.
+
+  *Why not caught earlier:* the unit test suite uses mocked cursors that never
+  validate SQL against a real schema.  No integration test coverage was added for
+  non-facts `list_all()` / `search()` calls at the time of ENH-3.
+
+  *Regression tests added:*
+  - `TestHasSupersessionFlag` in `tests/test_repositories.py` — class-attribute checks,
+    plus `list_all()`, `search()`, and `create()` dedup-SELECT assertions for every
+    repository (both that non-facts repos emit no `superseded_at` anywhere in their SQL,
+    and that `SemanticFactRepository` still emits `superseded_at IS NULL`).
+  - `TestNonFactsReposNoSupersessionColumn` in `tests/integration/test_core.py` — live Db2
+    integration test (write a row, call `list_all()` / `search()`; a SQLCODE -206 would
+    propagate as an exception and fail the test immediately).  Skipped automatically when
+    `DB2_DATABASE` is not set; ready to run as soon as a live instance is available.
+
+  **Bug 2 — reconcile() applied SupersedeDecisions with no sanity checks**
+
+  `MemoryStore.reconcile()` passed `decision.winner_id` and `decision.loser_id` directly to
+  `supersede()` with no validation.  Because Reconcilers are explicitly LLM-backed, a
+  hallucinated or buggy response could:
+  - set a fact's `superseded_by` to its own id (self-supersession), or
+  - reference a `winner_id` that doesn't exist in the scope or wasn't part of the
+    candidate set, silently corrupting the audit trail.
+
+  *Fix:* Added two guards in `reconcile()` before the `supersede()` call:
+  (a) **Self-supersession guard** — if `decision.winner_id == decision.loser_id`, the
+  decision is skipped and a `logger.warning()` is emitted.
+  (b) **Candidate-membership guard** — a set of candidate IDs is built once from the
+  list returned by `list_all()` before the loop; if `decision.winner_id` is not in that
+  set, the decision is skipped and a `logger.warning()` is emitted.  Both cases are
+  treated like the existing "supersede returned False" path — logged, not raised, not
+  added to the `applied` list, and do not abort the rest of the batch.
+
+  *Regression tests added:* `TestReconcileSanityGuards` in
+  `tests/test_reconciliation.py` — covers self-supersession skipped, no UPDATE SQL
+  issued, warning logged, winner-not-in-candidates skipped, no UPDATE SQL issued,
+  warning logged, and a mixed-batch test where bad decisions are skipped and a valid
+  decision in the same batch is still applied.
+
+- **Reason:** Both bugs would have caused silent data corruption or hard SQL errors in
+  production.  Bug 1 is a SQLCODE -206 crash on four of five memory types; Bug 2 is a
+  silent audit-trail corruption for any LLM-backed Reconciler that produces malformed
+  output (which the shipped example reconciler already has to defend against).
+- **Made during:** ENH-3 audit (post-landing review)
+- **Supersedes:** The erroneous "vacuously true" claim in the ENH-3 list_all()/search()
+  section above (corrected inline); and the lack of reconcile() input validation in the
+  ENH-3 implementation.
 
 ---
 

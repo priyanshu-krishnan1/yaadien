@@ -538,3 +538,97 @@ class TestConsolidator:
         assert len(derived) >= 1, (
             "Consolidator should have written at least one SemanticFact"
         )
+
+
+# ---------------------------------------------------------------------------
+# ENH-3 regression: non-facts repos must not reference superseded_at
+# ---------------------------------------------------------------------------
+# These tests verify that list_all() and search() on working_memory,
+# episodic_memory, entity_profiles, and procedural_memory work correctly
+# against a real Db2 schema — the four tables do NOT have supersession
+# columns, so any accidental "superseded_at IS NULL" in their SQL would
+# produce SQLCODE -206 ("column not found").
+#
+# If no live Db2 instance is available (DB2_DATABASE not set) these tests
+# are skipped automatically by the integration conftest.  They are written
+# so they can be run immediately once the environment is available — no
+# schema or fixture changes needed beyond what the standard migrated_pool
+# already provides.
+# ---------------------------------------------------------------------------
+
+
+class TestNonFactsReposNoSupersessionColumn:
+    """Integration regression for the _HAS_SUPERSESSION fix.
+
+    These tests were added after discovering that BaseRepository's list_all(),
+    search(), and create() dedup-check unconditionally emitted
+    ``AND superseded_at IS NULL`` for ALL five repositories, while only
+    ``semantic_facts`` has that column.  The bug would have caused
+    SQLCODE -206 ("column not found") on working_memory, episodic_memory,
+    entity_profiles, and procedural_memory in a real Db2 instance.
+
+    Each test: write one row, call list_all() (and search()) and assert it
+    comes back without error.  A SQLCODE -206 would propagate as an exception
+    and fail the test immediately.
+    """
+
+    def test_working_memory_list_all_no_column_error(self, store, scope):
+        """list_all() on working_memory must not reference superseded_at."""
+        from agent_memory_sdk.models import WorkingMemory
+
+        record = WorkingMemory(agent_id=scope.agent_id, content="wm regression check")
+        store.working.create(record, scope)
+        results = store.working.list_all(scope, limit=10)
+        assert len(results) >= 1
+        assert any(r.content == "wm regression check" for r in results)
+
+    def test_working_memory_search_no_column_error(self, store, scope, zero_vec):
+        """search() on working_memory must not reference superseded_at."""
+        from agent_memory_sdk.models import WorkingMemory
+
+        record = WorkingMemory(
+            agent_id=scope.agent_id,
+            content="wm search regression",
+            embedding=zero_vec,
+        )
+        store.working.create(record, scope)
+        results = store.working.search(zero_vec, scope, top_k=5)
+        # Result list may or may not contain the row (vector proximity), but
+        # the call must succeed without raising a DB error.
+        assert isinstance(results, list)
+
+    def test_episodic_memory_list_all_no_column_error(self, store, scope):
+        """list_all() on episodic_memory must not reference superseded_at."""
+        from agent_memory_sdk.models import EpisodicMemory
+
+        record = EpisodicMemory(
+            agent_id=scope.agent_id, content="episodic regression check"
+        )
+        store.episodic.create(record, scope)
+        results = store.episodic.list_all(scope, limit=10)
+        assert len(results) >= 1
+        assert any(r.content == "episodic regression check" for r in results)
+
+    def test_entity_profiles_list_all_no_column_error(self, store, scope):
+        """list_all() on entity_profiles must not reference superseded_at."""
+        from agent_memory_sdk.models import EntityProfile
+
+        record = EntityProfile(
+            agent_id=scope.agent_id, content="profile regression check"
+        )
+        store.profiles.create(record, scope)
+        results = store.profiles.list_all(scope, limit=10)
+        assert len(results) >= 1
+        assert any(r.content == "profile regression check" for r in results)
+
+    def test_procedural_memory_list_all_no_column_error(self, store, scope):
+        """list_all() on procedural_memory must not reference superseded_at."""
+        from agent_memory_sdk.models import ProceduralMemory
+
+        record = ProceduralMemory(
+            agent_id=scope.agent_id, content="procedural regression check"
+        )
+        store.procedures.create(record, scope)
+        results = store.procedures.list_all(scope, limit=10)
+        assert len(results) >= 1
+        assert any(r.content == "procedural regression check" for r in results)
