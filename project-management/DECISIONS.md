@@ -2261,3 +2261,17 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-6 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-7: Verified STEP-7 (Integration tests)
+
+- **Decision:** VER-7 verification PASS — integration test suite meets STEP-7 acceptance criteria; no gaps or fixes required.
+- **Checked:**
+  - **Skip mechanism:** `pytestmark = pytest.mark.integration` in each test module; `pytest_collection_modifyitems` hook in `tests/integration/conftest.py` adds `skip` marker to all items in `tests/integration/` when `DB2_DATABASE` env var is absent. Confirmed: `pytest tests/integration/` → 77 skipped, 0 failed. `integration` marker is registered in `pyproject.toml` `[tool.pytest.ini_options].markers`. ✓
+  - **Fixture isolation:** `unique_agent_id()` fixture returns a fresh `uuid.uuid4()`-based string for each test function; all `scope`/`thread_scope` fixtures are built on top. This prevents inter-test pollution with no teardown needed. ✓
+  - **test_migration.py:** Migrator idempotency (second run → `[]`), `schema_migrations` tracking for all 5 version strings, `Migrator.status()` reports all as `applied`, all 5 tables exist and accept `SELECT COUNT(*)`, all expected columns present (including `CONFIDENCE`, `CONTENT_HASH` from migration 0003), `EMBEDDING` is `NOT NULL VECTOR`, vector index `IX_<TABLE>_EMBEDDING` present in SYSCAT for each table. ✓
+  - **test_core.py:** CRUD round-trips for all 5 memory types, vector search nearest-neighbour correctness using unit vectors (deterministic cosine similarity), scope isolation (list_all/get_by_id/search/thread_id), `forget()`/tombstone visibility, `purge_expired()` hard-delete plus scope-safe isolation, TTL (`expires_at` in past excluded, future included, `NULL` always included), optimistic concurrency (`StaleWriteError` on stale version), custom consolidator derives `SemanticFact`, `_HAS_SUPERSESSION` regression tests verifying working/episodic/profiles/procedural repos don't emit `superseded_at IS NULL`. ✓
+  - **test_adapters_integration.py:** `Db2ChatMessageHistory` (add/retrieve/clear/batch/type preservation round-trip), `Db2MemoryStore` (mset/mget/mdelete/yield_keys/prefix), `Db2Session` (add_items/get_items/limit/clear_session/pop_item/recall_episodes), MCP tool functions (remember/recall with embedding/forget/list/fallback-to-list). ✓
+  - **INTEGRATION_TESTING.md:** Exists at `project-management/INTEGRATION_TESTING.md`. Documents Docker setup, IBM Cloud Db2 alternative, env vars, install with extras, run commands, skip behaviour table, cleanup SQL. ✓
+- **Found:** Nothing to fix.
+- **Made during:** VER-7 (EPIC-4 beta readiness verification)
+

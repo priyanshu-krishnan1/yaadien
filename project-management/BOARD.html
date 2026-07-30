@@ -448,8 +448,10 @@
     "epic_id": "EPIC-4",
     "title": "Verify: Step 7: Integration tests",
     "summary": "Re-verify integration suite coverage, skip mechanism, fixture isolation, and adapter round-trip tests against STEP-7 acceptance criteria.",
-    "status": "To Do",
-    "comments": []
+    "status": "Done",
+    "comments": [
+      "VER-7 PASS. Integration test suite (tests/integration/) has 77 tests across 3 files. Skip mechanism: pytestmark=pytest.mark.integration in each module + pytest_collection_modifyitems hook in conftest that auto-skips when DB2_DATABASE is unset — all 77 skip correctly without error. Coverage matches STEP-7 spec: test_migration.py (idempotency, schema_migrations tracking, 5 tables, column check, VECTOR NOT NULL, vector index), test_core.py (CRUD×5 types, vector search nearest-neighbour, scope isolation list/get_by_id/search/thread, forget/tombstone, purge_expired, TTL, optimistic concurrency, consolidator, _HAS_SUPERSESSION regression), test_adapters_integration.py (LangChain history+store, Db2Session, MCP tools). Each test uses fresh UUID agent_id fixture — no inter-test pollution. INTEGRATION_TESTING.md documents Docker setup, IBM Cloud alternative, skip behaviour, and cleanup. Marker registered in pyproject.toml."
+    ]
   },
   {
     "id": "VER-8",
