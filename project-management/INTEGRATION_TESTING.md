@@ -26,8 +26,10 @@ docker run -d \
   -e DBNAME=TESTDB \
   -p 50000:50000 \
   --privileged \
-  icr.io/db2_community/db2:latest
+  icr.io/db2_community/db2:12.1.2.0
 ```
+
+> **Image tag:** `12.1.2.0` is pinned here (and in `.github/workflows/ci.yml`) because `CREATE VECTOR INDEX` requires **Db2 12.1.2+** and untagged `:latest` is not reproducible in unattended CI.  Update both places together when upgrading.
 
 > **Note:** The `icr.io/db2_community/db2` image requires `--privileged` (or at minimum
 > `--cap-add IPC_OWNER`) to start the DB2 instance inside the container.
@@ -46,6 +48,20 @@ Wait until you see:
 
 ```
 (*) Setup has completed.
+```
+
+For **CI / unattended use**, poll with the connectivity check below instead of
+tailing logs (the CI job retries every 15 s for up to 10 minutes):
+
+```bash
+for i in $(seq 1 40); do
+  if docker exec db2-dev bash -c \
+      "su - db2inst1 -c 'db2 connect to TESTDB'" \
+      > /dev/null 2>&1; then
+    echo "Db2 is ready (attempt $i)"; break
+  fi
+  echo "  attempt $i/40 — not ready yet, sleeping 15s…"; sleep 15
+done
 ```
 
 ### 2 — Verify connectivity
