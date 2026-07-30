@@ -2227,3 +2227,23 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-4 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-5: Verified STEP-5 (Governance / scoping enforcement) — extra scrutiny
+
+- **Decision:** VER-5 verification PASS — extra scrutiny applied (this story never had a dedicated post-hoc audit pass in the BOARD/audit history). No gaps or vulnerabilities found.
+- **Checked (re-derived from source code, not from prior audit notes):**
+  - `_scope_predicates(scope)` in `repositories/base.py`: always produces `agent_id = ?` with bound param `scope.agent_id`; adds `tenant_id = ?`, `user_id = ?`, `thread_id = ?` only when the corresponding field is non-None. All values are bound `?` parameters — never string-interpolated into SQL. ✓
+  - `_require_agent_id(scope)`: raises `ValueError` if `not scope.agent_id` (catches empty string). Guards all 7 SQL paths. ✓
+  - **create()** (base.py lines 709–815): calls `_require_agent_id(scope)` then overwrites `record.agent_id = scope.agent_id`, `record.tenant_id = scope.tenant_id`, etc. (lines 712-715) before INSERT — the scope arg wins regardless of what fields the record was constructed with. All scope values are bound `?` params in the INSERT. ✓
+  - **get_by_id()**: `WHERE id = ? AND {scope_sql} AND deleted_at IS NULL` — both the ID and the scope are bound params; a row in a different scope returns `None` even if the caller knows its UUID. ✓
+  - **list_all()**: `WHERE {scope_sql} AND deleted_at IS NULL [AND ...]` — scope always present. ✓
+  - **search()** (both standard and chunk path): step-1 ID-ranking SQL includes scope predicates; step-2 full-row fetch by ID still includes `AND deleted_at IS NULL` (no scope re-check needed because step 1 already filtered by scope, and `deleted_at IS NULL` is also rechecked). ✓
+  - **forget()**: `WHERE id = ? AND {scope_sql} AND deleted_at IS NULL`. ✓
+  - **update()**: `WHERE id = ? AND {scope_sql} AND version = ? AND deleted_at IS NULL`. Cross-scope update produces rowcount=0 → `StaleWriteError` — information leakage analysis: the caller cannot distinguish "row not found", "wrong scope", or "stale version" from this error, which is intentional (see DECISIONS.md Step 5 entry). ✓
+  - **purge_expired()**: `DELETE WHERE deleted_at IS NOT NULL AND {scope_sql}`. Cross-scope purge affects 0 rows silently. ✓
+  - **Vector SQL injection surface**: `_vec_to_str(embedding)` coerces every element via `str(float(f))` before interpolating into `CAST('{vec_str}' AS VECTOR({dim},FLOAT32))`. Any non-numeric element raises `ValueError/TypeError` before reaching SQL. The `query_embedding` parameter to `search()` is an unenforced type hint — this coercion is the actual security guard on that path. ✓
+  - **Field name validation** (ORC-3 additions to this file): `_build_metadata_filter()` validates field names against `^[A-Za-z_][A-Za-z0-9_.]*$` before interpolation. ✓
+  - `test_scoping.py`: 91 unit tests covering `MemoryScope` value object (frozen, hashable, equality), `_scope_predicates()` helper, 5 repo types × 6 operations = 30 parametrized cross-scope isolation tests (returning `None`/`[]` with the correct scope binding), `MemoryStore` facade scope propagation, and empty `agent_id` rejection. All use mocked cursors that verify SQL structure and bound params. ✓
+- **Found:** Nothing to fix. The isolation boundary is correctly enforced by bound SQL parameters on all 7 SQL paths. No path allows scope bypass.
+- **Made during:** VER-5 (EPIC-4 beta readiness verification — extra scrutiny pass)
+
