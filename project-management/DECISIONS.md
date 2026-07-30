@@ -2337,3 +2337,16 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-11 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-12: Verified ORC-1 (Context cards)
+
+- **Decision:** VER-12 verification PASS — context card meets ORC-1 acceptance criteria; no gaps or fixes required.
+- **Checked:**
+  - **`ContextCard` dataclass** (`types.py`): `turns: list[WorkingMemory]` (chronological oldest-first), `turn_count: int`, `latest_at: datetime | None` (timestamp of newest turn), `summary: str | None`. All four fields match spec. Exported from package root. ✓
+  - **`Summarizer` protocol** (`types.py`): `__call__(turns: list[WorkingMemory]) -> str`. Parallel shape to `Consolidator`/`Reconciler`. `NoOpSummarizer` is a concrete class returning `""` (empty string). ✓
+  - **`MemoryStore.get_context_card(scope, max_turns=20)`:** calls `self.working.list_all(scope, limit=max_turns)` (returns newest-first), reverses to chronological order, sets `latest_at` from `recent[0].created_at`. No new schema required. `max_turns < 1` raises `ValueError`. ✓
+  - **Summarizer integration:** only called when `not isinstance(self._summarizer, NoOpSummarizer)` — no overhead for the no-summarizer default. Summarizer exceptions are caught, logged, and `summary` set to `None` — card always returned, never crashes. ✓
+  - **Tests:** `TestContextCard` in `tests/test_lifecycle.py` — 7 tests covering chronological order, `max_turns` as the `list_all` limit, empty scope → empty card, `max_turns < 1` rejection, summarizer called with chronological turns, summarizer exception → `summary=None`, `NoOpSummarizer` returns empty string. All 7 pass. ✓
+- **Found:** Nothing to fix.
+- **Made during:** VER-12 (EPIC-4 beta readiness verification)
+

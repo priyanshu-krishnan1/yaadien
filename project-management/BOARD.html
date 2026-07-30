@@ -498,8 +498,10 @@
     "epic_id": "EPIC-4",
     "title": "Verify: ORC-1: Context card over working memory",
     "summary": "Re-verify get_context_card(), ContextCard shape, Summarizer protocol, ordering and failure semantics against ORC-1 acceptance criteria.",
-    "status": "To Do",
-    "comments": []
+    "status": "Done",
+    "comments": [
+      "VER-12 PASS. ContextCard dataclass: turns (list[WorkingMemory], chronological), turn_count (int), latest_at (datetime|None), summary (str|None). get_context_card(scope, max_turns=20): calls working.list_all(limit=max_turns), reverses to chronological order, sets latest_at from newest turn. No new schema. Summarizer protocol: __call__(turns: list[WorkingMemory]) -> str. NoOpSummarizer returns '' (no-op). Summarizer only called when not NoOpSummarizer instance. Summarizer exceptions are logged and caught — card returned with summary=None (graceful degradation). max_turns < 1 raises ValueError. ContextCard and NoOpSummarizer exported from package root. 7 unit tests in TestContextCard — all pass."
+    ]
   },
   {
     "id": "VER-13",
