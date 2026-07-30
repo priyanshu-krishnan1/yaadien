@@ -2291,3 +2291,19 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-8 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-9: Verified ENH-2 (Content hash dedup)
+
+- **Decision:** VER-9 verification PASS — write-time dedup meets ENH-2 acceptance criteria; no gaps or fixes required.
+- **Checked:**
+  - **`_content_hash()` normalization** (in `repositories/base.py`): step 1 lowercase (`content.lower()`), step 2 whitespace-collapse (`re.sub(r"\s+", " ", ...).strip()`), step 3 SHA-256 hex (`hashlib.sha256(...).hexdigest()`). Applied in this exact order, consistently at all sites: `create()` and `update()`. ✓
+  - **`content_hash` column:** `VARCHAR(64)` nullable in migration 0003 (NULL for pre-migration rows; always populated on rows written after the migration). Supporting index `ix_<table>_content_hash ON <table> (agent_id, content_hash)` created for all 5 tables. ✓
+  - **`_DEDUP_ON_WRITE` gate:** `False` for `WorkingMemoryRepository` (append-only conversation log — repeated short utterances like "ok" must produce distinct rows; also removes the wasted SELECT round-trip). `True` for the remaining 4 repositories (SemanticFact, EntityProfile, ProceduralMemory, EpisodicMemory). ✓
+  - **Dedup SELECT:** `WHERE <scope predicates> AND content_hash = ? AND deleted_at IS NULL [AND superseded_at IS NULL]` — `superseded_at IS NULL` added only when `_HAS_SUPERSESSION=True` (semantic_facts). Matching row returned immediately — no new INSERT. ✓
+  - **ENH-3 revisit note:** dedup check correctly gates on `_HAS_SUPERSESSION` so superseded facts don't block fresh writes of the same content. The ENH-3-era "revisit" comment in the spec is already addressed in the implementation. ✓
+  - **`update()` path:** `_content_hash(record.content)` recomputed and stored as `new_hash`; SET in the UPDATE SQL as a bound `?` param; also updated on the in-memory model via `record.content_hash = new_hash`. ✓
+  - **Concurrency caveat:** documented in `create()` docstring: dedup check is not atomic (SELECT + INSERT not in a transaction; no UNIQUE constraint — DECISIONS.md ENH-2 entry explains the reasoning). Acceptable for single-writer / low-concurrency case. ✓
+  - **Tests:** `TestContentHash` (14 tests) + `TestHasSupersessionFlag` (2 tests) in `tests/test_repositories.py`. Covers: normalization equivalence, dedup hit returns existing row, WorkingMemory skips dedup SELECT, SemanticFact issues dedup SELECT, content_hash in INSERT/UPDATE params, content_hash read-back from row, NULL for pre-migration rows, update recomputes hash. All 17 pass. ✓
+- **Found:** Nothing to fix.
+- **Made during:** VER-9 (EPIC-4 beta readiness verification)
+
