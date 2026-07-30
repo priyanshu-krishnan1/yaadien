@@ -582,17 +582,24 @@ class TestNonFactsReposNoSupersessionColumn:
         assert len(results) >= 1
         assert any(r.content == "wm regression check" for r in results)
 
-    def test_working_memory_search_no_column_error(self, store, scope, zero_vec):
-        """search() on working_memory must not reference superseded_at."""
+    def test_working_memory_search_no_column_error(self, store, scope, vec_dim):
+        """search() on working_memory must not reference superseded_at.
+
+        Uses a unit vector (not a zero-vector) because Db2 COSINE distance
+        raises SQL0801N (division by zero) when the query vector has zero
+        magnitude — the zero-vector is a valid sentinel for INSERT (stored as
+        all-zeros) but must not be used as a query embedding.
+        """
         from agent_memory_sdk.models import WorkingMemory
 
+        vec = make_unit_vec(vec_dim, 50)  # deterministic non-zero unit vector
         record = WorkingMemory(
             agent_id=scope.agent_id,
             content="wm search regression",
-            embedding=zero_vec,
+            embedding=vec,
         )
         store.working.create(record, scope)
-        results = store.working.search(zero_vec, scope, top_k=5)
+        results = store.working.search(vec, scope, top_k=5)
         # Result list may or may not contain the row (vector proximity), but
         # the call must succeed without raising a DB error.
         assert isinstance(results, list)

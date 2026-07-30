@@ -52,11 +52,17 @@ _EXPECTED_COLUMNS = [
     "EXPIRES_AT",
     "VERSION",
     "DELETED_AT",
+    # Added by migration 0003 (ENH-1/ENH-2)
+    "CONFIDENCE",
+    "CONTENT_HASH",
 ]
 
 _EXPECTED_VERSIONS = [
     "0001_schema_migrations",
     "0002_memory_tables",
+    "0003_confidence_and_content_hash",
+    "0004_supersession",
+    "0005_consolidated_at",
 ]
 
 
