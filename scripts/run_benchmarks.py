@@ -49,7 +49,7 @@ from benchmarks.common.report import RunMetadata, render_markdown  # noqa: E402
 from benchmarks.common.scope_gen import new_run_id  # noqa: E402
 from benchmarks.isolation_load.run import run_isolation_load  # noqa: E402
 from benchmarks.latency_cost.run import MockConsolidator, run_latency_cost  # noqa: E402
-from benchmarks.retrieval_quality.run import run_retrieval_quality  # noqa: E402
+from benchmarks.retrieval_quality.run import run_baseline, run_retrieval_quality  # noqa: E402
 
 from agent_memory_sdk.db.connection import ConnectionError as Db2ConnectionError  # noqa: E402
 from agent_memory_sdk.db.connection import ConnectionPool  # noqa: E402
@@ -91,6 +91,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "'ollama' (local Ollama daemon, pip install ollama, default model "
             "llama3.1:8b) or 'ollama:<model>' (any pulled model, e.g. "
             "'ollama:deepseek-r1:8b') for a LongMemEval-style judge verdict."
+        ),
+    )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the no-SDK flat-context baseline alongside the retrieval suite "
+            "and include a with-vs-without comparison table in the report. "
+            "Only meaningful with --suite retrieval (or all). "
+            "Uses the same judge and dataset as the SDK run."
         ),
     )
     parser.add_argument(
@@ -165,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     retrieval_result = None
+    baseline_result = None
     latency_result = None
     isolation_result = None
     isolation_failed = False
@@ -187,8 +199,21 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 top_k=args.top_k,
             )
-            print(f"      overall accuracy: {retrieval_result.overall_accuracy:.1%} "
+            print(f"      with-SDK accuracy:    {retrieval_result.overall_accuracy:.1%} "
                   f"({retrieval_result.overall_correct}/{retrieval_result.overall_total})")
+
+            if args.baseline:
+                print("      running baseline (no SDK, flat context)...")
+                baseline_result = run_baseline(
+                    judge,
+                    args.judge,
+                    n_per_category=args.dataset_size,
+                    seed=args.seed,
+                )
+                delta = retrieval_result.overall_accuracy - baseline_result.overall_accuracy
+                print(f"      without-SDK accuracy: {baseline_result.overall_accuracy:.1%} "
+                      f"({baseline_result.overall_correct}/{baseline_result.overall_total})  "
+                      f"delta: {delta:+.1%}")
 
         if args.suite in ("all", "latency"):
             print(f"\n[2/3] Latency/cost (n_ops={args.latency_ops}, consolidator={args.consolidator})...")
@@ -214,7 +239,13 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         pool.close()
 
-    report_md = render_markdown(metadata, retrieval=retrieval_result, latency=latency_result, isolation=isolation_result)
+    report_md = render_markdown(
+        metadata,
+        retrieval=retrieval_result,
+        baseline=baseline_result,
+        latency=latency_result,
+        isolation=isolation_result,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(report_md, encoding="utf-8")
     print(f"\nReport written to {args.output}")

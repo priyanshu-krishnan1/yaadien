@@ -62,6 +62,33 @@ class RetrievalQualityResult:
 
 
 @dataclass
+class BaselineResult:
+    """Flat-context (no SDK) baseline result from ``run_baseline()``.
+
+    The judge receives all session turns concatenated directly — no
+    ``remember()``, no ``search()``.  Compared side-by-side with
+    :class:`RetrievalQualityResult` to measure the value the SDK's
+    structured memory store + vector retrieval adds over a plain
+    long-context prompt.
+    """
+
+    judge_name: str
+    category_scores: list[CategoryScore]
+
+    @property
+    def overall_correct(self) -> int:
+        return sum(c.correct for c in self.category_scores)
+
+    @property
+    def overall_total(self) -> int:
+        return sum(c.total for c in self.category_scores)
+
+    @property
+    def overall_accuracy(self) -> float:
+        return (self.overall_correct / self.overall_total) if self.overall_total else 0.0
+
+
+@dataclass
 class LatencyCostResult:
     remember_summary: dict[str, Any]
     search_summary: dict[str, Any]
@@ -88,6 +115,7 @@ class IsolationLoadResult:
 def render_markdown(
     metadata: RunMetadata,
     retrieval: RetrievalQualityResult | None = None,
+    baseline: BaselineResult | None = None,
     latency: LatencyCostResult | None = None,
     isolation: IsolationLoadResult | None = None,
 ) -> str:
@@ -135,8 +163,8 @@ def render_markdown(
                 "reflects lexical overlap, not a real correctness judgment. Do **not** cite this "
                 "number next to Oracle's 93.8%, Zep's DMR/LongMemEval figures, or any other "
                 "vendor-reported LongMemEval score in ai-agent-platform-competitive-analysis.md. "
-                "Re-run with `--embedding-provider sentence-transformers` (or `gemini`) and "
-                "`--judge gemini` for a number that means anything."
+                "Re-run with `--embedding-provider sentence-transformers` (or `ollama`) and "
+                "`--judge ollama` (or `--judge ollama:<model>`) for a number that means anything."
             )
         for note in retrieval.deviation_notes:
             lines.append(f"> - {note}")
@@ -151,6 +179,53 @@ def render_markdown(
             f"| **Overall** | **{retrieval.overall_correct}** | **{retrieval.overall_total}** "
             f"| **{retrieval.overall_accuracy:.1%}** |"
         )
+        lines.append("")
+
+    if baseline is not None:
+        lines.append("### With-SDK vs. without-SDK comparison")
+        lines.append("")
+        lines.append(
+            f"Judge: `{baseline.judge_name}`. "
+            "**With SDK**: session turns stored via `remember()`, answer retrieved via "
+            "`search()`. **Without SDK (baseline)**: all session turns concatenated "
+            "into a flat context window, no storage or retrieval."
+        )
+        lines.append("")
+        # Build per-category comparison if SDK result is also present.
+        if retrieval is not None:
+            sdk_by_cat = {s.category: s for s in retrieval.category_scores}
+            base_by_cat = {s.category: s for s in baseline.category_scores}
+            lines.append("| Category | With SDK | Without SDK | Delta |")
+            lines.append("|---|---|---|---|")
+            for cat in sdk_by_cat:
+                s = sdk_by_cat[cat]
+                b = base_by_cat.get(cat)
+                sdk_acc = s.accuracy
+                base_acc = b.accuracy if b else 0.0
+                delta = sdk_acc - base_acc
+                lines.append(
+                    f"| {cat} | {sdk_acc:.1%} ({s.correct}/{s.total}) "
+                    f"| {base_acc:.1%} ({b.correct if b else 0}/{b.total if b else 0}) "
+                    f"| **{delta:+.1%}** |"
+                )
+            sdk_oa = retrieval.overall_accuracy
+            base_oa = baseline.overall_accuracy
+            delta_oa = sdk_oa - base_oa
+            lines.append(
+                f"| **Overall** | **{sdk_oa:.1%}** ({retrieval.overall_correct}/{retrieval.overall_total}) "
+                f"| **{base_oa:.1%}** ({baseline.overall_correct}/{baseline.overall_total}) "
+                f"| **{delta_oa:+.1%}** |"
+            )
+        else:
+            # Baseline-only run (no SDK result in this report).
+            lines.append("| Category | Without SDK | Total |")
+            lines.append("|---|---|---|")
+            for cat in baseline.category_scores:
+                lines.append(f"| {cat.category} | {cat.accuracy:.1%} | {cat.total} |")
+            lines.append(
+                f"| **Overall** | **{baseline.overall_accuracy:.1%}** "
+                f"| **{baseline.overall_total}** |"
+            )
         lines.append("")
 
     if latency is not None:
