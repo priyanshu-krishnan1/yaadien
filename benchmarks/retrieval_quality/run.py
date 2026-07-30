@@ -20,7 +20,6 @@ import logging
 
 from agent_memory_sdk.models import WorkingMemory
 from agent_memory_sdk.store import MemoryStore
-
 from benchmarks.common.report import CategoryScore, RetrievalQualityResult
 from benchmarks.common.scope_gen import new_run_id
 from benchmarks.retrieval_quality.dataset import ABILITY_CATEGORIES, generate_dataset

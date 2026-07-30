@@ -31,15 +31,16 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 #: Stopwords excluded from the keyword-overlap heuristic so overlap isn't
 #: dominated by function words that carry no factual content.
-_STOPWORDS = frozenset(
-    """
-    a an the is are was were be been being of in on at to for with and or
-    not no do does did have has had this that these those it its as by
-    from about into over under again further then once here there when
-    where why how all any both each few more most other some such only
-    own same so than too very can will just should now
-    """.split()
-)
+_STOPWORDS = frozenset([
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "of", "in", "on", "at", "to", "for", "with", "and", "or", "not", "no",
+    "do", "does", "did", "have", "has", "had", "this", "that", "these",
+    "those", "it", "its", "as", "by", "from", "about", "into", "over",
+    "under", "again", "further", "then", "once", "here", "there", "when",
+    "where", "why", "how", "all", "any", "both", "each", "few", "more",
+    "most", "other", "some", "such", "only", "own", "same", "so", "than",
+    "too", "very", "can", "will", "just", "should", "now",
+])
 
 
 def _content_tokens(text: str) -> set[str]:

@@ -36,7 +36,6 @@ import random
 from dataclasses import dataclass, field
 
 from agent_memory_sdk.models import MemoryScope
-
 from benchmarks.common.scope_gen import make_scope
 
 ABILITY_CATEGORIES = (

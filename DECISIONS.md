@@ -332,3 +332,51 @@ per-site `# nosec B608` / `# nosec B110` comments placed in the source.
 This keeps the full test suite active for the entire scope and means any
 new finding in a future code change will surface immediately rather than
 being hidden by a global skip list.
+
+---
+
+## 2025-08-02 — Agent-memory benchmarking harness (PH-6)
+
+**Files added / changed:**
+- `benchmarks/` package (excluded from wheel — same treatment as `project-management/`)
+  - `benchmarks/__init__.py` — package docstring explaining CI exclusion
+  - `benchmarks/README.md` — quick-start, free-tier provider guide, suite descriptions
+  - `benchmarks/common/scope_gen.py` — run-unique UUID-prefixed scope/marker generation
+  - `benchmarks/common/timing.py` — `timed()` context manager + `LatencySamples` percentiles
+  - `benchmarks/common/cost_tracking.py` — `CostTrackingHook` wrapping any Consolidator/Reconciler/Summarizer hook with call-count + estimated-token accounting
+  - `benchmarks/common/embedding_providers.py` — three-tier provider: `HashingEmbeddingProvider` (no deps, default), `SentenceTransformersEmbeddingProvider` (local, free), `GeminiEmbeddingProvider` (hosted, free-tier)
+  - `benchmarks/common/llm_judge.py` — `KeywordMatchJudge` (fallback heuristic) + `GeminiJudge` (real LLM judge, same CORRECT/INCORRECT shape as LongMemEval's GPT-4o judge)
+  - `benchmarks/common/report.py` — result dataclasses + `render_markdown()` producing the BENCHMARKS.md report
+  - `benchmarks/retrieval_quality/dataset.py` — synthetic LongMemEval-shaped dataset (5 categories × n_per_category questions, seeded for reproducibility)
+  - `benchmarks/retrieval_quality/run.py` — writes sessions via `remember()`, searches via `search()`, scores via judge
+  - `benchmarks/latency_cost/run.py` — `LatencySamples` per-call timing + `MockConsolidator` for the `--consolidator mock` cost-tracking demo
+  - `benchmarks/isolation_load/run.py` — concurrent `ThreadPoolExecutor` workers across synthetic tenant/agent scopes, zero-leakage assertion via scope-field check + marker-content check
+- `scripts/run_benchmarks.py` — CLI entry point; exits 0 on success, 1 on config/Db2 error, 2 on isolation leakage
+- `project-management/BENCHMARKS.md` — placeholder (populated by `make benchmark`; checked in with harness code)
+- `Makefile` — `benchmark` target (`python scripts/run_benchmarks.py $(ARGS)`)
+- `pyproject.toml` — `[project.optional-dependencies] benchmark` extras group (`sentence-transformers`, `google-generativeai`) for real-number runs
+
+**Wheel exclusion:** The hatchling wheel target lists only `src/agent_memory_sdk` — `benchmarks/` is excluded by omission, identical treatment to `project-management/`. Confirmed in `[tool.hatch.build.targets.wheel] packages = ["src/agent_memory_sdk"]`.
+
+**Suite 1 — Retrieval quality (LongMemEval-shaped):**
+
+The dataset follows LongMemEval (Wu et al., arXiv 2410.10813, ICLR 2025) five ability categories: `extraction`, `multi_session`, `temporal_reasoning`, `knowledge_update`, `abstention`. Each question gets its own `MemoryScope` (no cross-question interference). Questions are template-generated, not the real LongMemEval 500-question dataset (which is not redistributed). The harness is designed to produce a number that is *honestly comparable in kind* to vendor-reported LongMemEval figures when run with a real embedding model and an LLM judge — the report stamps every run with the exact judge/embedding/dataset-size configuration and explicitly labels any deviation from the published methodology. Specifically:
+
+- `--judge keyword` (default, dependency-free): a keyword/token-overlap heuristic. The report calls this out in bold as **NOT an LLM judge** and instructs not to cite it next to Oracle's 93.8%, Zep's 94.8% DMR, or any other vendor-reported figure.
+- `--judge gemini` (real LLM judge, free-tier): Google Gemini `gemini-1.5-flash`, same CORRECT/INCORRECT verdict shape as LongMemEval's GPT-4o judge. Results with this judge + a real embedding model are *comparable in kind* to vendor figures, subject to the caveats in BENCHMARKS.md (synthetic dataset, configurable sample size, no graph retrieval).
+
+Three documented deviations: (1) synthetic dataset not the real LongMemEval 500 questions; (2) configurable/small default sample size; (3) no graph retrieval (Db2 VECTOR cosine search only, not bi-temporal knowledge graph). All three are stamped in every run's report.
+
+**Suite 2 — Latency/cost:**
+
+Per-call wall-clock latency percentiles (mean, p50, p95, p99, max) for `remember()` and `search()` over `--latency-ops` calls. LLM cost is reported **only** when a `Consolidator`/`Reconciler`/`Summarizer` hook is configured. With the default `--consolidator none` (the SDK's default path), estimated LLM cost is $0.00 / 0 hook calls — this is the comparison point against extraction-pipeline competitors (Mem0, Bedrock, LangMem) that always run an LLM on every write. The `--consolidator mock` mode wires in a `MockConsolidator` wrapped in `CostTrackingHook` using a ~4 chars/token estimate (documented approximation, not a live API token count).
+
+**Suite 3 — Isolation under load:**
+
+`tenants × agents_per_tenant` synthetic scopes each write `ops_per_worker` rows then read back via `search()` and `list_all()`, all in a `ThreadPoolExecutor` with `--workers` concurrent threads. Each returned row is checked: (1) `agent_id`/`tenant_id` fields must match the querying scope; (2) content must not contain another scope's `[[MARKER:tenant:agent]]` string. Zero leakage is the assertion. This extends VER-5's static SQL audit (mocked cursors, single-threaded) to real concurrent load against a live `ConnectionPool` — measuring the "governed substrate" SWOT claim from `ai-agent-platform-competitive-analysis.md` under actual concurrency rather than only asserting it.
+
+**Why not CI (PH-1/PH-2):** Requires live Db2 and optionally a paid/free-tier LLM API. Wiring into CI would either always fail (no credentials) or burn real cost on every push. The harness is run on demand, results checked into `project-management/BENCHMARKS.md`.
+
+**Results at time of commit:** No live Db2/LLM run recorded yet — `project-management/BENCHMARKS.md` is a methodology-documenting placeholder. Run `make benchmark` (or `make benchmark ARGS="--embedding-provider sentence-transformers --judge gemini --dataset-size 10"` for a real number) against a Db2 instance to populate it.
+
+**Ruff / tests:** All benchmark Python files pass `ruff check`. The benchmarks package is not imported by the `src/` package and is not covered by the unit suite (no Db2 mock available at unit-test time). The 542 existing unit tests continue to pass at 87% coverage (no regression).

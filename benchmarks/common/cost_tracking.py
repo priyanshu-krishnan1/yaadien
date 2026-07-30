@@ -26,8 +26,9 @@ token-usage accounting from an actual API response.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 #: Rule-of-thumb character-to-token ratio for English text (documented
 #: estimate, not a real tokenizer — see module docstring).

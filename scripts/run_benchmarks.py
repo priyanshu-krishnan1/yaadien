@@ -42,19 +42,19 @@ try:
 except ImportError:
     pass  # python-dotenv is a dev dep; not fatal if missing here
 
-from agent_memory_sdk.db.connection import ConnectionError as Db2ConnectionError
-from agent_memory_sdk.db.connection import ConnectionPool
-from agent_memory_sdk.db.migrate import Migrator
-from agent_memory_sdk.store import MemoryStore
+from benchmarks.common.cost_tracking import CostTrackingHook  # noqa: E402
+from benchmarks.common.embedding_providers import build_embedding_provider  # noqa: E402
+from benchmarks.common.llm_judge import build_judge  # noqa: E402
+from benchmarks.common.report import RunMetadata, render_markdown  # noqa: E402
+from benchmarks.common.scope_gen import new_run_id  # noqa: E402
+from benchmarks.isolation_load.run import run_isolation_load  # noqa: E402
+from benchmarks.latency_cost.run import MockConsolidator, run_latency_cost  # noqa: E402
+from benchmarks.retrieval_quality.run import run_retrieval_quality  # noqa: E402
 
-from benchmarks.common.cost_tracking import CostTrackingHook
-from benchmarks.common.embedding_providers import build_embedding_provider
-from benchmarks.common.llm_judge import build_judge
-from benchmarks.common.report import RunMetadata, render_markdown
-from benchmarks.common.scope_gen import new_run_id
-from benchmarks.isolation_load.run import run_isolation_load
-from benchmarks.latency_cost.run import MockConsolidator, run_latency_cost
-from benchmarks.retrieval_quality.run import run_retrieval_quality
+from agent_memory_sdk.db.connection import ConnectionError as Db2ConnectionError  # noqa: E402
+from agent_memory_sdk.db.connection import ConnectionPool  # noqa: E402
+from agent_memory_sdk.db.migrate import Migrator  # noqa: E402
+from agent_memory_sdk.store import MemoryStore  # noqa: E402
 
 _DEFAULT_OUTPUT = _REPO_ROOT / "project-management" / "BENCHMARKS.md"
 

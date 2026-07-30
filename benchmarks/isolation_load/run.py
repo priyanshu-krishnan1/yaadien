@@ -23,7 +23,6 @@ from dataclasses import dataclass
 
 from agent_memory_sdk.models import WorkingMemory
 from agent_memory_sdk.store import MemoryStore
-
 from benchmarks.common.report import IsolationLoadResult
 from benchmarks.common.scope_gen import make_scope, marker_for, new_run_id
 from benchmarks.common.timing import timed
@@ -121,19 +120,21 @@ def run_isolation_load(
     total_read_assertions = 0
     total_leakage = 0
 
-    with timed() as elapsed:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_workers) as executor:
-            futures = [
-                executor.submit(
-                    _worker, store, embedding_provider, scope, marker, markers, ops_per_worker
-                )
-                for scope, marker in zip(scopes, markers)
-            ]
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                total_write_ops += result.write_ops
-                total_read_assertions += result.read_assertions
-                total_leakage += result.leakage_incidents
+    with (
+        timed() as elapsed,
+        concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_workers) as executor,
+    ):
+        futures = [
+            executor.submit(
+                _worker, store, embedding_provider, scope, marker, markers, ops_per_worker
+            )
+            for scope, marker in zip(scopes, markers, strict=True)
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            total_write_ops += result.write_ops
+            total_read_assertions += result.read_assertions
+            total_leakage += result.leakage_incidents
 
     return IsolationLoadResult(
         tenants=tenants,

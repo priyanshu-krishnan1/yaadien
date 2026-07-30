@@ -19,10 +19,9 @@ from typing import Any
 
 from agent_memory_sdk.models import SemanticFact, WorkingMemory
 from agent_memory_sdk.store import MemoryStore
-
 from benchmarks.common.cost_tracking import CostTrackingHook
 from benchmarks.common.report import LatencyCostResult
-from benchmarks.common.scope_gen import new_run_id, make_scope
+from benchmarks.common.scope_gen import make_scope, new_run_id
 from benchmarks.common.timing import LatencySamples, timed
 
 
