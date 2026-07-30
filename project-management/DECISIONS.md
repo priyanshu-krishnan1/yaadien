@@ -2393,3 +2393,66 @@ The SDK covers the *table-stakes* for an enterprise agent-memory platform (4-typ
 
 - **Made during:** VER-13 (EPIC-4 beta readiness verification)
 
+
+---
+
+## Beta Readiness Report
+
+*Generated 2026-08-02 as part of EPIC-4 worldwide public beta verification.*
+
+### VER-N pass/fail summary
+
+| Story | Title | Result |
+|---|---|---|
+| VER-1 | Verify: STEP-1 Scaffold | **PASS** |
+| VER-2 | Verify: STEP-2 Schema & migrations | **PASS** |
+| VER-3 | Verify: STEP-3 Core models & repositories | **PASS** |
+| VER-4 | Verify: STEP-4 Lifecycle (TTL / versioning / forget) | **PASS** |
+| VER-5 | Verify: STEP-5 Governance / scoping (extra scrutiny) | **PASS** |
+| VER-6 | Verify: STEP-6 Framework adapters | **PASS** |
+| VER-7 | Verify: STEP-7 Integration tests | **PASS** |
+| VER-8 | Verify: ENH-1 Confidence scoring | **PASS** |
+| VER-9 | Verify: ENH-2 Content hash dedup | **PASS** |
+| VER-10 | Verify: ENH-3 Reconciliation / supersession | **PASS** |
+| VER-11 | Verify: ENH-4 Async consolidation worker + EVERY_N | **PASS** |
+| VER-12 | Verify: ORC-1 Context cards | **PASS** |
+| VER-13 | Market-fit gap check vs ai-agent-platform-competitive-analysis.md | **COMPLETE** |
+
+All 12 functional VER stories (VER-1 through VER-12) passed with no bugs fixed and no scope-creep patches needed. The code as written matches its specs, tests, and documentation at verification time.
+
+### Market-fit gap table (from VER-13)
+
+| Capability | Status | Beta decision | Reasoning |
+|---|---|---|---|
+| Multi-tenant isolation | **HAVE** | ✅ Not a blocker | All 7 SQL paths use bound `?` parameters; VER-5 extra scrutiny confirmed no bypass path. |
+| Audit / erasure (GDPR-style scoping) | **PARTIAL** | ⚠️ Documented limitation | `forget()` / `deleted_at` primitive exists; no user-scoped erase-all API or erasure report. Ship with documented limitation: callers must call `forget()` per-record per-type; a convenience `purge_user(user_id, scope)` wrapper and erasure-report API are post-beta items. |
+| Temporal / bi-temporal fact handling | **PARTIAL** | ⚠️ Documented limitation | TTL (`expires_at`) + soft-supersession (`superseded_at`) are present. Full bi-temporal model (valid-time + ingestion-time, provenance chains) and temporal-reasoning queries ("what did the agent believe at time T?") are out of scope; document explicitly. |
+| Hybrid retrieval quality (vector + BM25) | **PARTIAL** | ⚠️ Documented limitation | Db2 `VECTOR_DISTANCE` + metadata filters are present; BM25 full-text and RRF/MMR reranking are not wired in. This is a meaningful retrieval quality gap vs Oracle/Zep/Redis Iris but not a correctness blocker — vector + metadata handles the majority of use cases. Document as known limitation. |
+| Cost / token control | **PARTIAL** | ⚠️ Documented limitation | `consolidate_every_n`, `max_turns`, `top_k`, `min_confidence` provide bounded retrieval. Full automatic context compaction (token-budget sliding window) is out of scope; callers own that logic above the SDK. |
+| Contradiction resolution + supersession | **HAVE** | ✅ Not a blocker | Full `Reconciler` protocol + `supersede()` + `reconcile()` with sanity guards. |
+| Deduplication | **HAVE** | ✅ Not a blocker | Content-hash dedup for all non-working repos. Best-effort caveat documented. |
+
+### Outstanding non-Done stories and explicit go/no-go call for each
+
+As of this verification pass, only **STEP-8** remains in "To Do" on BOARD.html. ORC-2, ORC-3, and ORC-4 are Done.
+
+| Story | Status | Beta call | Reasoning |
+|---|---|---|---|
+| **STEP-8 (Docs & examples)** | **To Do** | 🔴 **HARD BLOCKER for worldwide public beta** | `README.md` is a stub ("Full documentation added in Step 8"). There are no runnable examples under `examples/`. A worldwide *public* beta with external unrelated tenants requires at minimum: install instructions, a working quickstart (Docker Db2, basic store setup, `remember()` + `recall()`), the four memory types explained, the scoping model, and the lifecycle/governance features documented. Releasing without this makes the SDK unusable for any new user. STEP-8 must be completed before worldwide beta goes live. |
+
+Note: **ORC-2** (content chunking), **ORC-3** (metadata filtering), and **ORC-4** (SchemaPolicy) are **Done** and were verified as part of the VER-1/VER-2/VER-3 passes that covered the repository, migration, and schema policy layers they built on. They do not block beta release.
+
+### Go/No-Go recommendation for worldwide public beta release
+
+**RECOMMENDATION: NO-GO for worldwide public beta at this time.**
+
+**The single blocking item is STEP-8 (Docs & examples), currently "To Do."**
+
+Every line of code in EPIC-1 through EPIC-3 passed independent re-verification — the implementation is correct, the isolation boundary is production-grade, the tests pass (517 unit + 77 integration), ruff is clean, and mypy is clean. The code is ready to ship.
+
+The problem is that without a README and runnable examples, no external user can onboard without reading the source code. A worldwide *public* beta implies unrelated tenants who do not have context, time, or incentive to reverse-engineer the library from `src/`. Shipping to them without documentation would guarantee a poor first impression and likely confusion about the correct way to construct `MemoryScope`, configure scoping, run migrations, and call the adapters — all of which are non-obvious from the package surface alone.
+
+**To release worldwide public beta:** complete STEP-8 (README + one runnable example per adapter). Based on the scope described in PROMPTS.md (under 50 lines per example, README covering install/quickstart/memory types/scoping/lifecycle), STEP-8 is a focused single-session pass of perhaps half a day. All documented limitations listed in VER-13 should be written into the README as a known-limitations section before beta launch.
+
+Once STEP-8 is done, the code + docs package is go-ready.
+
