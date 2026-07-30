@@ -2004,3 +2004,83 @@ explicitly supersedes it and say why.
   require them.
 
 - **Made during:** ORC-3 (EPIC-3 — structured metadata filters)
+
+## 2026-08-02 — ORC-3 audit: bool case-mismatch fix, ARCHITECTURE.md metadata-filter gap, .DS_Store cleanup
+
+- **Decision:**
+
+  Three fixes applied in a single audit pass:
+
+  **1. Bool exact-match / $not case mismatch (`repositories/base.py`)**
+
+  `_build_metadata_filter()` used `str(operand)` for bool values in the
+  exact-match and `$not` branches, producing `"True"` / `"False"` (Python's
+  capitalized form).  Db2's `JSON_VALUE` extracting a JSON boolean returns
+  lowercase `"true"` / `"false"` per standard JSON/SQL convention, so the
+  bound parameter never matched the extracted value — a silent zero-row bug.
+
+  The `$array_contains` / `$array_contains_any` path already handled this
+  correctly via `_escape_json_path_value()`, which special-cases `bool` to
+  return lowercase `"true"` / `"false"`.  The fix applies the same logic to
+  the exact-match and `$not` branches:
+
+  - Added a `bool`-before-`int/float` type-dispatch guard in the exact-match
+    branch (Python's `bool` is a subclass of `int`; checking `isinstance(x,
+    bool)` after `isinstance(x, int)` would fall into the int branch silently).
+  - The `$not` branch now also applies the same bool→lowercase mapping.
+
+  Test `test_bool_field` in `tests/test_orc3.py` previously asserted
+  `params == ["True"]` — enshrining the bug.  Fixed to assert `["true"]`.
+  Added:
+  - `test_bool_false_field` — exact-match `False → "false"`.
+  - `test_not_bool_true` / `test_not_bool_false` — `$not` bool correctness.
+  - `test_bool_exact_and_array_contains_consistent` /
+    `test_bool_false_exact_and_array_contains_consistent` — cross-path
+    consistency: both the exact-match bound param and the `$array_contains`
+    inlined value produce the same lowercase JSON boolean format for the same
+    input.
+
+  **2. ARCHITECTURE.md — metadata_filter entirely missing (ORC-3)**
+
+  `ARCHITECTURE.md` had no mention of `metadata_filter` despite ORC-3 adding
+  it to `search()` and `list_all()`.  This is the fourth instance of this
+  gap across the story series (Step 7, ENH-2, ENH-4, now ORC-3) — the
+  standing working agreement is to treat updating ARCHITECTURE.md as a
+  checklist item, verified explicitly before marking a story Done.
+
+  Updated:
+  - Section 1 "Last updated" line: now reflects ORC-3.
+  - Module paths header: now "as of ORC-3".
+  - `exceptions.py` entry: now lists `InvalidMetadataFilterError` alongside
+    `StaleWriteError`.
+  - `repositories/base.py` entry: now lists `_build_metadata_filter()` and
+    `_escape_json_path_value()`.
+  - Section 5 (`recall()`) "Last updated" line and step-1 mermaid note: now
+    documents that `metadata_filter` predicates are applied in step 1
+    (before distance ranking), so filtered-out rows do not consume `top_k`
+    slots.
+  - **New section 6** ("Metadata filter — `search()` / `list_all()` (ORC-3)"):
+    documents the parameter signature, all four supported operators with
+    example filter dicts and generated SQL, implementation details
+    (`_build_metadata_filter`, `_escape_json_path_value`,
+    `InvalidMetadataFilterError`), and WHERE clause position.
+
+  **3. `.DS_Store` cleanup**
+
+  A macOS Finder metadata file (`.DS_Store`) was committed in the ORC-3
+  commit.  Fixed by:
+  - Adding `.DS_Store` to `.gitignore` (with a comment).
+  - Running `git rm --cached .DS_Store` to stop tracking the file while
+    leaving it on disk.
+
+- **Reason:** Three regressions/gaps identified in an audit of ORC-3.  The
+  bool case mismatch would have caused silent zero-result queries against real
+  Db2 whenever a metadata field held a JSON boolean.  The ARCHITECTURE.md gap
+  is a recurring pattern now explicitly addressed as a pre-Done checklist item.
+  The `.DS_Store` commit is hygiene.
+
+- **Validation:** `pytest` — **507 passed, 77 skipped** (6 new tests added
+  over the previous 501-test baseline).  `ruff check .` — clean.
+  `mypy src` — **clean (no issues found in 20 source files)**.
+
+- **Made during:** ORC-3 audit pass

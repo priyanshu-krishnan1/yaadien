@@ -20,3 +20,6 @@ venv/
 
 # Editor/tooling local config (not part of the shipped project)
 .claude
+
+# macOS Finder metadata — never belongs in version control
+.DS_Store

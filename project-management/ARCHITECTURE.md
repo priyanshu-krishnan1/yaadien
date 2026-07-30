@@ -16,7 +16,7 @@ lands (see the "Last updated" line per section).
 
 ## 1. System overview
 
-_Last updated: ORC-1 — context-card read path + summarizer hook added_
+_Last updated: ORC-3 — `metadata_filter` parameter added to `search()`/`list_all()`_
 
 ```mermaid
 flowchart TB
@@ -94,16 +94,17 @@ Key points this diagram encodes (see DECISIONS.md for the reasoning):
 - Embeddings are supplied by the caller via `EmbeddingProvider`; the SDK
   doesn't ship a specific embedding model.
 
-Actual module paths (as of Step 6):
+Actual module paths (as of ORC-3):
 - `src/agent_memory_sdk/types.py` — `EmbeddingProvider` (Protocol),
   `Consolidator` (Protocol), `NoOpConsolidator` (default no-op),
   `Summarizer` (Protocol), `NoOpSummarizer` (default no-op),
   `ContextCard` (dataclass), `DistanceMetric` (enum), `SearchMode` (enum)
-- `src/agent_memory_sdk/exceptions.py` — `StaleWriteError`
+- `src/agent_memory_sdk/exceptions.py` — `StaleWriteError`, `InvalidMetadataFilterError`
 - `src/agent_memory_sdk/models.py` — `MemoryScope`, `WorkingMemory`,
   `EpisodicMemory`, `SemanticFact`, `EntityProfile`, `ProceduralMemory`
 - `src/agent_memory_sdk/repositories/base.py` — `BaseRepository` ABC
-  (includes `forget`, `update`, `purge_expired` since Step 4)
+  (includes `forget`, `update`, `purge_expired` since Step 4; `_build_metadata_filter()`,
+  `_escape_json_path_value()` since ORC-3)
 - `src/agent_memory_sdk/repositories/working.py` — `WorkingMemoryRepository`
 - `src/agent_memory_sdk/repositories/episodic.py` — `EpisodicMemoryRepository`
 - `src/agent_memory_sdk/repositories/facts.py` — `SemanticFactRepository`
@@ -350,7 +351,7 @@ DECISIONS.md ENH-4 entry for the full design rationale and known limitations.
 
 ## 5. Flow: `recall()` / semantic search
 
-_Last updated: Step 7 — two-step query shape documented (Db2 12.1.5 fp0 cannot combine VECTOR_SERIALIZE in SELECT with VECTOR_DISTANCE in ORDER BY)_
+_Last updated: ORC-3 — `metadata_filter` predicate injection documented (applied in step 1, before distance ranking)_
 
 ```mermaid
 sequenceDiagram
@@ -362,8 +363,8 @@ sequenceDiagram
     Agent->>MemoryStore: recall(query, scope, top_k, mode)
     MemoryStore->>Repo: search(query_embedding, scope, top_k, mode)
 
-    note over Repo: Step 1 — rank by distance, return IDs only<br/>(no VECTOR_SERIALIZE in SELECT list)
-    Repo->>Db2: SELECT id FROM &lt;table&gt;<br/>WHERE &lt;scope&gt; AND deleted_at IS NULL<br/>ORDER BY VECTOR_DISTANCE(embedding, CAST('…' AS VECTOR), COSINE)<br/>FETCH FIRST top_k ROWS ONLY [APPROX]
+    note over Repo: Step 1 — rank by distance, return IDs only<br/>(no VECTOR_SERIALIZE in SELECT list;<br/>metadata_filter predicates appended here — rows excluded by filter do not consume top_k slots)
+    Repo->>Db2: SELECT id FROM &lt;table&gt;<br/>WHERE &lt;scope&gt; AND deleted_at IS NULL<br/>  [AND JSON_VALUE(metadata, '$.field') = ? ...]<br/>ORDER BY VECTOR_DISTANCE(embedding, CAST('…' AS VECTOR), COSINE)<br/>FETCH FIRST top_k ROWS ONLY [APPROX]
     Db2-->>Repo: ordered_ids (nearest-first)
 
     note over Repo: Step 2 — fetch full rows by ID<br/>(uses VECTOR_SERIALIZE in SELECT)
@@ -376,6 +377,64 @@ sequenceDiagram
 ```
 
 ---
+
+
+---
+
+## 6. Metadata filter — `search()` / `list_all()` (ORC-3)
+
+_Last updated: ORC-3_
+
+Both `BaseRepository.search()` and `BaseRepository.list_all()` accept an
+optional `metadata_filter: dict[str, Any] | None = None` parameter (default
+`None` — backward-compatible no-op).  When set, the filter dict is translated
+by `_build_metadata_filter()` (pure function in `repositories/base.py`) into
+SQL predicates on the `metadata VARCHAR(4096)` JSON column.  **No schema
+change** — the column has existed since migration `0002`.
+
+### Supported operator set (four operators, deliberately small)
+
+| Pattern | Filter dict | Generated SQL |
+|---|---|---|
+| Exact match | `{"source": "support"}` | `JSON_VALUE(metadata, '$.source') = ?`  (bound param: `"support"`) |
+| `$not` | `{"status": {"$not": "archived"}}` | `JSON_VALUE(metadata, '$.status') <> ?` |
+| `$array_contains` | `{"tags": {"$array_contains": "urgent"}}` | `JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")') = 'true'` |
+| `$array_contains_any` | `{"tags": {"$array_contains_any": ["a","b"]}}` | `(JSON_EXISTS(…"a"…) = 'true' OR JSON_EXISTS(…"b"…) = 'true')` |
+
+Multiple fields are combined with AND.  All predicates are appended after
+existing scope, `deleted_at IS NULL`, TTL, confidence, and supersession
+predicates.
+
+### Implementation details
+
+- **`_build_metadata_filter(filter)`** — pure function returning
+  `(sql_fragment, params)`.  The fragment is a space-prefixed `AND …` string
+  ready to embed in any WHERE clause.  Returns `("", [])` for `None`/`{}`.
+- **`_escape_json_path_value(val)`** — helper for inlining values safely in
+  `JSON_EXISTS` path expressions (Db2 12.1.5 fp0 does not support binding
+  values into path expressions via `?`, the same constraint documented for
+  vector literals).
+- **`InvalidMetadataFilterError(ValueError)`** in `exceptions.py` — raised
+  immediately (before any SQL) for unrecognized `$`-prefixed operators, invalid
+  field names, or non-scalar/non-dict operands.  Exported from
+  `agent_memory_sdk.__init__`.
+
+### WHERE clause position in `list_all()`
+
+```sql
+WHERE <scope predicates>
+  AND deleted_at IS NULL
+  AND superseded_at IS NULL          -- SemanticFactRepository only
+  AND (expires_at IS NULL OR …)      -- when include_expired=False
+  AND confidence >= ?                -- when min_confidence > 0.0
+  AND JSON_VALUE(…) = ?              -- metadata_filter exact-match predicates
+  …                                  -- additional metadata predicates
+ORDER BY created_at DESC
+FETCH FIRST ? ROWS ONLY
+```
+
+In `search()`, the metadata predicates are in the **step-1 SQL** (the
+ID-ranking pass) so filtered-out rows do not consume `top_k` slots.
 
 ## Where design docs live vs. Bob's MCP tools
 

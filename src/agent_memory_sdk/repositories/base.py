@@ -337,7 +337,12 @@ def _build_metadata_filter(
             if "$not" in operand:
                 val = operand["$not"]
                 parts.append(f"JSON_VALUE(metadata, '$.{field}') <> ?")
-                params.append(str(val))
+                if isinstance(val, bool):
+                    params.append("true" if val else "false")
+                elif val is None:
+                    params.append("null")
+                else:
+                    params.append(str(val))
 
             elif "$array_contains" in operand:
                 val = operand["$array_contains"]
@@ -361,7 +366,11 @@ def _build_metadata_filter(
                 ]
                 parts.append("(" + " OR ".join(sub_parts) + ")")
 
-        elif isinstance(operand, (str, int, float, bool)) or operand is None:
+        elif isinstance(operand, bool):
+            # bool must be checked before int/float because bool is an int subclass.
+            parts.append(f"JSON_VALUE(metadata, '$.{field}') = ?")
+            params.append("true" if operand else "false")
+        elif isinstance(operand, (str, int, float)) or operand is None:
             # Exact match via JSON_VALUE scalar equality.
             parts.append(f"JSON_VALUE(metadata, '$.{field}') = ?")
             params.append(str(operand) if operand is not None else "null")

@@ -148,7 +148,12 @@ class TestBuildMetadataFilterExactMatch:
     def test_bool_field(self) -> None:
         sql, params = _build_metadata_filter({"active": True})
         assert "JSON_VALUE(metadata, '$.active') = ?" in sql
-        assert params == ["True"]
+        assert params == ["true"]
+
+    def test_bool_false_field(self) -> None:
+        sql, params = _build_metadata_filter({"active": False})
+        assert "JSON_VALUE(metadata, '$.active') = ?" in sql
+        assert params == ["false"]
 
     def test_none_field(self) -> None:
         # A None operand is treated as exact match with "null" as the string.
@@ -175,6 +180,16 @@ class TestBuildMetadataFilterNot:
         sql, params = _build_metadata_filter({"priority": {"$not": 5}})
         assert "JSON_VALUE(metadata, '$.priority') <> ?" in sql
         assert params == ["5"]
+
+    def test_not_bool_true(self) -> None:
+        sql, params = _build_metadata_filter({"active": {"$not": True}})
+        assert "JSON_VALUE(metadata, '$.active') <> ?" in sql
+        assert params == ["true"]
+
+    def test_not_bool_false(self) -> None:
+        sql, params = _build_metadata_filter({"active": {"$not": False}})
+        assert "JSON_VALUE(metadata, '$.active') <> ?" in sql
+        assert params == ["false"]
 
 
 class TestBuildMetadataFilterArrayContains:
@@ -237,6 +252,26 @@ class TestBuildMetadataFilterMultipleOperators:
         assert "JSON_VALUE(metadata, '$.source') = ?" in sql
         assert "JSON_EXISTS(metadata, '$.tags[*]?(@ == \"urgent\")')" in sql
         assert params == ["kb"]
+
+    def test_bool_exact_and_array_contains_consistent(self) -> None:
+        """Exact-match bool param must use the same lowercase 'true'/'false' format
+        as _escape_json_path_value produces for $array_contains — consistent
+        representation for the same input value across both operator paths."""
+        # exact-match path → bound param
+        _, exact_params = _build_metadata_filter({"active": True})
+        # $array_contains path → value inlined in SQL path expression
+        array_sql, _ = _build_metadata_filter({"flags": {"$array_contains": True}})
+        # The bound param for exact-match must be lowercase "true" (matching JSON)
+        assert exact_params == ["true"]
+        # The inlined value in $array_contains must also be the bare literal "true"
+        assert "?(@ == true)" in array_sql
+
+    def test_bool_false_exact_and_array_contains_consistent(self) -> None:
+        """Same consistency check for False."""
+        _, exact_params = _build_metadata_filter({"active": False})
+        array_sql, _ = _build_metadata_filter({"flags": {"$array_contains": False}})
+        assert exact_params == ["false"]
+        assert "?(@ == false)" in array_sql
 
 
 # ---------------------------------------------------------------------------
