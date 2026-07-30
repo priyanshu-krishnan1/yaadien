@@ -2167,3 +2167,18 @@ explicitly supersedes it and say why.
 
 }
 
+
+## 2026-08-02 — VER-1: Verified STEP-1 (Scaffold)
+
+- **Decision:** VER-1 verification PASS — no gaps, fixes, or open items found.
+- **Checked:**
+  - `pyproject.toml`: hatchling build backend (zero-config src-layout, PEP 517/660); `ibm_db>=3.2.3` listed once (ibm_db_dbi is bundled inside ibm_db — no separate dep needed, matching DECISIONS.md Step 1 entry); `pydantic>=2.0`; dev extras include pytest, ruff, mypy; `[tool.hatch.build.targets.wheel] packages = ["src/agent_memory_sdk"]` correct; mypy strict mode set; ruff target-version py310.
+  - `db/connection.py`: `_build_conn_str()` reads DB2_DATABASE/HOSTNAME/UID/PWD (required, raises OSError on missing) and DB2_PORT/DB2_SECURITY (optional with defaults); builds ODBC keyword-pair string only (no JDBC URL); `ConnectionPool` uses `queue.Queue[ibm_db.IBM_DBConnection]` bounded by pool size; `get_connection()` is a `@contextlib.contextmanager` that checks out a raw ibm_db handle, wraps it in `ibm_db_dbi.Connection`, yields, then calls `rollback()` and `put_nowait()` on exit; Windows DLL guard calls `os.add_dll_directory(IBM_DB_WIN_DLL_DIR)` before `import ibm_db` when set.
+  - `scripts/check_connection.py`: opens pool with `pool_size=1`, runs `SELECT 1 FROM SYSIBM.SYSDUMMY1`, returns exit code 0 on success.
+  - `.env.example`: documents all DB2_* variables with examples.
+  - Security: `_build_conn_str()` reads credentials from env vars only; the ODBC string is not user-controllable; no injection surface.
+  - Tests: 10 unit tests in `tests/test_connection.py` using ibm_db mock; all pass.
+  - 517 unit tests pass, ruff clean, mypy strict clean.
+- **Found:** Nothing to fix.
+- **Made during:** VER-1 (EPIC-4 beta readiness verification)
+
