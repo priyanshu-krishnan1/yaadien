@@ -32,7 +32,7 @@ from agent_memory_sdk.models import (
 )
 from agent_memory_sdk.repositories.working import WorkingMemoryRepository
 from agent_memory_sdk.store import MemoryStore
-from agent_memory_sdk.types import NoOpConsolidator
+from agent_memory_sdk.types import ContextCard, NoOpConsolidator, NoOpSummarizer
 
 # ---------------------------------------------------------------------------
 # Fake connection pool (same pattern as test_repositories.py)
@@ -546,3 +546,90 @@ class TestMemoryStorePurgeExpired:
         store = MemoryStore(pool)
         results = store.purge_expired(_SCOPE)
         assert sum(results.values()) == 15   # 5 tables × 3
+
+
+# ---------------------------------------------------------------------------
+# get_context_card() — structured recent-turns view + optional summarizer
+# ---------------------------------------------------------------------------
+
+class TestContextCard:
+    def test_get_context_card_returns_chronological_turns(self):
+        pool = _FakePool(rows=[
+            _row(id_="turn-3", content="third"),
+            _row(id_="turn-2", content="second"),
+            _row(id_="turn-1", content="first"),
+        ])
+        store = MemoryStore(pool)
+
+        card = store.get_context_card(_SCOPE, max_turns=3)
+
+        assert isinstance(card, ContextCard)
+        assert [turn.id for turn in card.turns] == ["turn-1", "turn-2", "turn-3"]
+        assert card.turn_count == 3
+        assert card.latest_at == _NOW
+        assert card.summary is None
+
+    def test_get_context_card_uses_max_turns_as_list_limit(self):
+        pool = _FakePool(rows=[_row(id_="turn-2"), _row(id_="turn-1")])
+        store = MemoryStore(pool)
+
+        store.get_context_card(_SCOPE, max_turns=2)
+
+        assert "FETCH FIRST ? ROWS ONLY" in pool.cursor.last_sql
+        assert pool.cursor.last_params[-1] == 2
+
+    def test_get_context_card_empty_scope_returns_empty_card(self):
+        pool = _FakePool(rows=[])
+        store = MemoryStore(pool)
+
+        card = store.get_context_card(_SCOPE)
+
+        assert card.turns == []
+        assert card.turn_count == 0
+        assert card.latest_at is None
+        assert card.summary is None
+
+    def test_get_context_card_rejects_max_turns_less_than_one(self):
+        store = MemoryStore(_FakePool())
+
+        with pytest.raises(ValueError, match="max_turns"):
+            store.get_context_card(_SCOPE, max_turns=0)
+
+    def test_get_context_card_calls_summarizer_with_chronological_turns(self):
+        pool = _FakePool(rows=[
+            _row(id_="turn-2", content="second"),
+            _row(id_="turn-1", content="first"),
+        ])
+        calls: list[list[str]] = []
+
+        class _Summarizer:
+            def __call__(self, turns: list[WorkingMemory]) -> str:
+                calls.append([turn.id for turn in turns])
+                return "summary text"
+
+        store = MemoryStore(pool, summarizer=_Summarizer())
+
+        card = store.get_context_card(_SCOPE, max_turns=2)
+
+        assert calls == [["turn-1", "turn-2"]]
+        assert card.summary == "summary text"
+
+    def test_get_context_card_summarizer_exception_falls_back_to_none(self, caplog):
+        pool = _FakePool(rows=[_row(id_="turn-1", content="first")])
+
+        class _Boom:
+            def __call__(self, turns: list[WorkingMemory]) -> str:
+                raise RuntimeError("boom")
+
+        store = MemoryStore(pool, summarizer=_Boom())
+
+        with caplog.at_level("ERROR"):
+            card = store.get_context_card(_SCOPE)
+
+        assert card.summary is None
+        assert "Summarizer raised an exception" in caplog.text
+
+    def test_noop_summarizer_returns_empty_string(self):
+        noop = NoOpSummarizer()
+        result = noop([WorkingMemory(agent_id="agent-001", content="hello")])
+        assert result == ""

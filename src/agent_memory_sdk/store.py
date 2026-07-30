@@ -99,7 +99,7 @@ from agent_memory_sdk.repositories.facts import SemanticFactRepository
 from agent_memory_sdk.repositories.procedural import ProceduralMemoryRepository
 from agent_memory_sdk.repositories.profiles import EntityProfileRepository
 from agent_memory_sdk.repositories.working import WorkingMemoryRepository
-from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
+from agent_memory_sdk.types import ContextCard, NoOpConsolidator, NoOpReconciler, NoOpSummarizer
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +153,13 @@ class MemoryStore:
               :meth:`reconcile` to detect contradictions among live semantic
               facts.  Defaults to
               :class:`~agent_memory_sdk.types.NoOpReconciler` (does nothing).
+        summarizer: A :class:`~agent_memory_sdk.types.Summarizer`
+              implementation (any callable matching the protocol).  Called by
+              :meth:`get_context_card` to produce an optional condensed
+              narrative from the assembled turns.  Defaults to
+              :class:`~agent_memory_sdk.types.NoOpSummarizer` — when the
+              default is in use, :meth:`get_context_card` sets
+              ``ContextCard.summary`` to ``None`` (no LLM call, no overhead).
         consolidate_every_n: Throttle the inline synchronous consolidator
               so it only fires every *N*-th ``remember()`` call for
               working/episodic writes **per scope** (keyed by
@@ -184,6 +191,7 @@ class MemoryStore:
         embedding_dim: int = 1536,
         consolidator: Any | None = None,
         reconciler: Any | None = None,
+        summarizer: Any | None = None,
         consolidate_every_n: int = 1,
     ) -> None:
         self.working = WorkingMemoryRepository(pool)
@@ -205,6 +213,7 @@ class MemoryStore:
 
         self._consolidator = consolidator if consolidator is not None else NoOpConsolidator()
         self._reconciler = reconciler if reconciler is not None else NoOpReconciler()
+        self._summarizer = summarizer if summarizer is not None else NoOpSummarizer()
 
         if consolidate_every_n < 1:
             raise ValueError(
@@ -520,6 +529,86 @@ class MemoryStore:
                     decision.winner_id,
                 )
         return applied
+
+    # ------------------------------------------------------------------
+    # get_context_card() — structured recent-turns view (ORC-1)
+    # ------------------------------------------------------------------
+
+    def get_context_card(
+        self,
+        scope: MemoryScope,
+        max_turns: int = 20,
+    ) -> ContextCard:
+        """Return a structured view of recent working-memory turns for the active thread.
+
+        Fetches up to *max_turns* working-memory records for *scope* in
+        reverse-chronological order (newest first, per the default
+        ``list_all()`` ordering), then reverses the list to produce the
+        chronological (oldest-first) view expected by a context window.
+
+        No new schema is required — this is a convenience layer over
+        :meth:`~agent_memory_sdk.repositories.WorkingMemoryRepository.list_all`.
+
+        If a :class:`~agent_memory_sdk.types.Summarizer` was supplied at
+        construction time, it is called on the turns list (chronological order)
+        and its output is placed in :attr:`~agent_memory_sdk.types.ContextCard.summary`.
+        With the default :class:`~agent_memory_sdk.types.NoOpSummarizer`, the
+        summary is ``None``.
+
+        Summarizer errors are logged and do not propagate — the card is
+        returned with ``summary=None`` on failure, so the caller always
+        receives a valid card even if the LLM is unavailable.
+
+        Args:
+            scope:     Must include at minimum ``agent_id``.  If
+                       ``thread_id`` is set on the scope, only turns for
+                       that thread are returned — this is the typical usage
+                       for a single active conversation.  Passing a scope
+                       without ``thread_id`` returns all working-memory turns
+                       for the agent (useful for cross-thread summaries).
+            max_turns: Maximum number of turns to include (default 20).
+                       Must be >= 1.
+
+        Returns:
+            A :class:`~agent_memory_sdk.types.ContextCard` with:
+
+            * ``turns`` — list of :class:`~agent_memory_sdk.models.WorkingMemory`
+              records in chronological order.
+            * ``turn_count`` — ``len(turns)``.
+            * ``latest_at`` — ``created_at`` of the newest turn, or ``None``
+              if there are no turns.
+            * ``summary`` — narrative string from the :class:`~agent_memory_sdk.types.Summarizer`,
+              or ``None`` if no summarizer is configured.
+
+        Raises:
+            ValueError: if ``max_turns < 1`` or ``scope.agent_id`` is missing.
+        """
+        if max_turns < 1:
+            raise ValueError(f"max_turns must be >= 1; got {max_turns!r}.")
+
+        # list_all() returns newest-first by default; cap at max_turns and
+        # reverse to get chronological order for context window consumption.
+        recent = self.working.list_all(scope, limit=max_turns)
+        turns = list(reversed(recent))
+
+        latest_at = recent[0].created_at if recent else None
+
+        summary: str | None = None
+        if not isinstance(self._summarizer, NoOpSummarizer):
+            try:
+                result = self._summarizer(turns)
+                summary = result if result else None
+            except Exception:
+                logger.exception(
+                    "Summarizer raised an exception; ContextCard.summary set to None."
+                )
+
+        return ContextCard(
+            turns=turns,
+            turn_count=len(turns),
+            latest_at=latest_at,
+            summary=summary,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -1753,3 +1753,24 @@ explicitly supersedes it and say why.
   real implementation).
 
 ---
+
+## 2026-08-01 — ORC-1: context cards over working memory + optional summarizer
+
+- **Decision (context-card object shape):** `MemoryStore.get_context_card(scope, max_turns=20)` returns a `ContextCard` dataclass from [`src/agent_memory_sdk/types.py`](src/agent_memory_sdk/types.py) with the exact fields:
+  - `turns: list[WorkingMemory]` — recent working-memory rows in **chronological order** (oldest first)
+  - `turn_count: int` — `len(turns)`
+  - `latest_at: datetime | None` — timestamp of the most recent turn, or `None` when empty
+  - `summary: str | None` — optional condensed narrative, `None` by default
+  This is deliberately a formatting/convenience layer over [`WorkingMemoryRepository.list_all()`](src/agent_memory_sdk/repositories/base.py) rather than a new persistence model: no schema change, no new table, no background worker requirement.
+
+- **Decision (summarizer protocol signature):** Added `Summarizer` as a single-callable protocol parallel to `Consolidator` and `Reconciler` with the exact signature:
+
+      def __call__(self, turns: list[WorkingMemory]) -> str: ...
+
+  `MemoryStore.__init__(..., summarizer=None)` accepts any callable matching that shape. The shipped default is `NoOpSummarizer`, which returns `""`; [`MemoryStore.get_context_card()`](src/agent_memory_sdk/store.py) interprets that default/no-op result as `summary=None`, so callers who do nothing get the raw-turns view with zero mandatory LLM cost.
+
+- **Decision (ordering + failure semantics):** `get_context_card()` fetches via `store.working.list_all(scope, limit=max_turns)` (which is newest-first), reverses the returned slice to chronological order, computes `latest_at` from the newest fetched row, and then optionally calls the summarizer on the chronological list. Summarizer exceptions are logged and swallowed; the method still returns the raw card with `summary=None`.
+
+- **ARCHITECTURE.md section 1:** Updated to include a `ContextCard / get_context_card()` box and `Summarizer` box in the core flowchart because ORC-1 adds a new first-class read-path capability on `MemoryStore`; this was substantial enough to warrant explicit representation rather than only a note here.
+
+- **Made during:** ORC-1 (EPIC-3)

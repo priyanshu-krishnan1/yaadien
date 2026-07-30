@@ -11,11 +11,12 @@ their own module to avoid circular imports.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from agent_memory_sdk.models import SemanticFact, _MemoryBase
+    from agent_memory_sdk.models import SemanticFact, WorkingMemory, _MemoryBase
 
 # ---------------------------------------------------------------------------
 # EmbeddingProvider
@@ -379,6 +380,121 @@ class NoOpReconciler:
 
     def __call__(self, candidates: list[SemanticFact]) -> list[SupersedeDecision]:
         return []
+
+
+# ---------------------------------------------------------------------------
+# ContextCard, Summarizer, NoOpSummarizer
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ContextCard:
+    """A condensed view of recent working-memory turns for the active thread.
+
+    Returned by :meth:`~agent_memory_sdk.store.MemoryStore.get_context_card`.
+
+    Attributes:
+        turns:          Recent working-memory records in **chronological order**
+                        (oldest first), up to ``max_turns``.  Each element is a
+                        fully-populated :class:`~agent_memory_sdk.models.WorkingMemory`
+                        instance.
+        turn_count:     Total number of turns returned (``len(turns)``).
+        latest_at:      Timestamp of the most-recently created turn, or ``None``
+                        if there are no turns at all.
+        summary:        Optional narrative produced by a configured
+                        :class:`Summarizer`.  ``None`` when no summarizer is
+                        configured (the default).
+
+    The ``summary`` field is intentionally separate from ``turns`` so callers
+    who need structured access to individual messages can still use ``turns``
+    even when a summarizer is configured.
+    """
+
+    turns: list[WorkingMemory] = field(default_factory=list)
+    turn_count: int = 0
+    latest_at: datetime | None = None
+    summary: str | None = None
+
+
+class Summarizer(Protocol):
+    """Protocol for pluggable context-card summarization callbacks.
+
+    A ``Summarizer`` is called by
+    :meth:`~agent_memory_sdk.store.MemoryStore.get_context_card` after
+    the raw ``turns`` list is assembled.  It receives the turns in
+    chronological order and returns a human-readable summary string.
+
+    Shape::
+
+        (turns: list[WorkingMemory]) -> str
+
+    This protocol is parallel in shape to :class:`Consolidator` and
+    :class:`Reconciler` — a single-callable protocol injected at
+    :class:`~agent_memory_sdk.store.MemoryStore` construction time.
+
+    **When to use a Summarizer:**
+
+    * The default behavior (no summarizer) returns the raw ``turns`` list —
+      no LLM call, no overhead.
+    * Supply a :class:`Summarizer` when you want
+      :meth:`~agent_memory_sdk.store.MemoryStore.get_context_card` to also
+      produce a condensed narrative in addition to the raw turns.
+
+    **LLM-based summarizer example**::
+
+        import openai
+        from agent_memory_sdk.models import WorkingMemory
+        from agent_memory_sdk.types import Summarizer
+
+        class LLMSummarizer:
+            def __init__(self, client: openai.OpenAI) -> None:
+                self._client = client
+
+            def __call__(self, turns: list[WorkingMemory]) -> str:
+                if not turns:
+                    return ""
+                combined = "\\n".join(t.content for t in turns)
+                resp = self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Summarise the following conversation turns in "
+                                "2-3 sentences, preserving key facts and context."
+                            ),
+                        },
+                        {"role": "user", "content": combined},
+                    ],
+                )
+                return resp.choices[0].message.content or ""
+
+        store = MemoryStore(pool, summarizer=LLMSummarizer(openai.OpenAI()))
+    """
+
+    def __call__(self, turns: list[WorkingMemory]) -> str:
+        """Summarise a list of working-memory turns into a narrative string.
+
+        Args:
+            turns: Working-memory records in chronological order (oldest
+                   first).  May be empty — implementations should handle
+                   the empty-list case gracefully.
+
+        Returns:
+            A human-readable summary string.  Return ``""`` for empty input.
+        """
+        ...
+
+
+class NoOpSummarizer:
+    """Default summarizer that does nothing.
+
+    Returns ``""`` for any input.  This is the default used by
+    :class:`~agent_memory_sdk.store.MemoryStore` when no ``summarizer``
+    argument is supplied — callers opt in to summarization explicitly.
+    """
+
+    def __call__(self, turns: list[WorkingMemory]) -> str:
+        return ""
 
 
 # ---------------------------------------------------------------------------

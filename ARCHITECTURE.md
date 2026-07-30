@@ -16,7 +16,7 @@ lands (see the "Last updated" line per section).
 
 ## 1. System overview
 
-_Last updated: Step 6 — adapters implemented; module paths updated_
+_Last updated: ORC-1 — context-card read path + summarizer hook added_
 
 ```mermaid
 flowchart TB
@@ -34,12 +34,14 @@ flowchart TB
 
     subgraph Core["agent_memory_sdk core (framework-agnostic)"]
         MS[MemoryStore facade]
+        CC[ContextCard / get_context_card]
         WR[WorkingMemoryRepository]
         ER[EpisodicMemoryRepository]
         SR[SemanticFactRepository]
         PR[EntityProfileRepository]
         PC[ProceduralMemoryRepository]
         CO[Consolidator<br/>pluggable, sync by default]
+        SU[Summarizer<br/>pluggable, default no-op]
         EP[EmbeddingProvider<br/>pluggable, caller-supplied]
     end
 
@@ -60,6 +62,9 @@ flowchart TB
     MS --> SR --> T3
     MS --> PR --> T4
     MS --> PC --> T5
+    MS --> CC
+    WR -. recent turns .-> CC
+    SU -. optional condensed narrative .-> CC
 
     WR -. raw memories .-> CO
     ER -. raw memories .-> CO
@@ -82,13 +87,18 @@ Key points this diagram encodes (see DECISIONS.md for the reasoning):
   polymorphic table).
 - Consolidation is a pluggable callback the core *can* invoke inline; it's
   not a separate always-on service.
+- Context-card assembly is also in the core: `MemoryStore.get_context_card()`
+  is a read-only convenience layer over recent `working_memory` rows, with an
+  optional pluggable `Summarizer` callback for callers who want a condensed
+  narrative in addition to the raw turns.
 - Embeddings are supplied by the caller via `EmbeddingProvider`; the SDK
   doesn't ship a specific embedding model.
 
 Actual module paths (as of Step 6):
 - `src/agent_memory_sdk/types.py` — `EmbeddingProvider` (Protocol),
   `Consolidator` (Protocol), `NoOpConsolidator` (default no-op),
-  `DistanceMetric` (enum), `SearchMode` (enum)
+  `Summarizer` (Protocol), `NoOpSummarizer` (default no-op),
+  `ContextCard` (dataclass), `DistanceMetric` (enum), `SearchMode` (enum)
 - `src/agent_memory_sdk/exceptions.py` — `StaleWriteError`
 - `src/agent_memory_sdk/models.py` — `MemoryScope`, `WorkingMemory`,
   `EpisodicMemory`, `SemanticFact`, `EntityProfile`, `ProceduralMemory`
@@ -100,7 +110,8 @@ Actual module paths (as of Step 6):
 - `src/agent_memory_sdk/repositories/profiles.py` — `EntityProfileRepository`
 - `src/agent_memory_sdk/repositories/procedural.py` — `ProceduralMemoryRepository`
 - `src/agent_memory_sdk/store.py` — `MemoryStore` facade
-  (includes `remember`, `forget`, `purge_expired` since Step 4)
+  (includes `remember`, `forget`, `purge_expired` since Step 4, plus
+  `get_context_card` since ORC-1)
 - `src/agent_memory_sdk/adapters/__init__.py` — adapter package (docstring only)
 - `src/agent_memory_sdk/adapters/langchain.py` — `Db2ChatMessageHistory`
   (LangChain `BaseChatMessageHistory` backed by `store.working`) +
