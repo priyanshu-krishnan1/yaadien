@@ -2322,3 +2322,18 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-10 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-11: Verified ENH-4 (Async consolidation worker + EVERY_N)
+
+- **Decision:** VER-11 verification PASS — consolidation worker hardening and EVERY_N cadence meet ENH-4 acceptance criteria; no gaps or fixes required.
+- **Checked:**
+  - **Migration 0005:** `consolidated_at TIMESTAMP` (nullable) added to `working_memory` and `episodic_memory` only (these are consolidation *inputs*; `semantic_facts`, `entity_profiles`, `procedural_memory` are outputs). Composite index `ix_<table>_consolidated_at ON (agent_id, consolidated_at)` for eligibility scan efficiency. ✓
+  - **`_HAS_CONSOLIDATED_AT` gate:** `True` on `WorkingMemoryRepository` and `EpisodicMemoryRepository`; `False` on all others. Repos with `False` raise `NotImplementedError` if `_claim_consolidated()` is called — prevents silent SQL errors on tables without the column. SELECT_COLS on the two enabled repos include `consolidated_at` at position 15. ✓
+  - **`_claim_consolidated()` in BaseRepository:** `UPDATE <table> SET consolidated_at = ? WHERE id = ? AND <scope> AND consolidated_at IS NULL`. Returns `True` if rowcount == 1 (claim succeeded), `False` if rowcount == 0 (another worker beat us). Uses Db2 row-level locking to serialize competing UPDATEs. ✓
+  - **`scripts/consolidate_pending.py`:** `_fetch_pending()` uses `AND consolidated_at IS NULL` (replacing the old `JSON_VALUE(metadata, '$.consolidated') = 'false'` stand-in). `_process_record()` calls `_claim_consolidated()` → skip on False; run consolidator and persist derived memories on True. ✓
+  - **`consolidate_every_n` on `MemoryStore`:** default=1 (always fire). N>1 increments a per-scope in-memory dict counter; fires consolidator only when counter reaches N, then resets. `consolidate_every_n=1` bypasses the dict entirely (no overhead for the common case). Counter resets on process restart; not shared across multiple app instances — documented limitation in DECISIONS.md and store.py docstring. ✓
+  - **`--dedup-every-n` guard:** script rejects N > 2 at argparse time with a clear error message (each invocation processes at most 2 batches; N >= 3 can never satisfy `batches_completed % N == 0` in one run — would silently do nothing). ✓
+  - **Tests:** `tests/test_enh4.py` — 37 unit tests covering `_HAS_CONSOLIDATED_AT` flags, `_SELECT_COLS` presence/absence, `_claim_consolidated()` SQL/params/rowcount/scope, `consolidate_every_n` throttle logic, worker script `_fetch_pending` and `_process_record`, `--dedup-every-n` triggering at N=1/N=2, rejection at N=3. All 37 pass. ✓
+- **Found:** Nothing to fix.
+- **Made during:** VER-11 (EPIC-4 beta readiness verification)
+

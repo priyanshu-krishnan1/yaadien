@@ -488,8 +488,10 @@
     "epic_id": "EPIC-4",
     "title": "Verify: ENH-4: Async consolidation worker + EVERY_N cadence",
     "summary": "Re-verify consolidated_at column, claim-based locking, consolidate_every_n throttle, --dedup-every-n 1-or-2 constraint against ENH-4 acceptance criteria.",
-    "status": "To Do",
-    "comments": []
+    "status": "Done",
+    "comments": [
+      "VER-11 PASS. Migration 0005: consolidated_at TIMESTAMP nullable on working_memory + episodic_memory only (outputs of consolidation, not inputs — facts/profiles/procedures excluded). Composite index ix_<table>_consolidated_at ON (agent_id, consolidated_at) for eligibility scan. _claim_consolidated() in BaseRepository: UPDATE SET consolidated_at=? WHERE id=? AND scope AND consolidated_at IS NULL; rowcount=1 means claim; rowcount=0 means skip. _HAS_CONSOLIDATED_AT=True gates this on WorkingMemoryRepository/EpisodicMemoryRepository only — calling on other repos raises NotImplementedError. consolidate_every_n on MemoryStore: default=1 (always fire), N>1 fires only every Nth write per scope (per-scope in-memory dict counter, resets on process restart — documented limitation). _fetch_pending() uses consolidated_at IS NULL. --dedup-every-n must be 1 or 2 (hard limit at argparse — N>=3 rejected with clear error). 37 unit tests all pass."
+    ]
   },
   {
     "id": "VER-12",
