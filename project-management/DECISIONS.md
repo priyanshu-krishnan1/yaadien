@@ -2275,3 +2275,19 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-7 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-8: Verified ENH-1 (Confidence scoring)
+
+- **Decision:** VER-8 verification PASS — confidence scoring meets ENH-1 acceptance criteria; no gaps or fixes required.
+- **Checked:**
+  - **Model field:** `_MemoryBase.confidence: float = Field(default=1.0, ge=0.0, le=1.0)` in `models.py`. Pydantic v2 enforces range `[0.0, 1.0]` at construction time; invalid values (< 0, > 1.0) raise `ValidationError` immediately. All five memory type subclasses inherit this. ✓
+  - **Migration 0003:** `confidence DOUBLE NOT NULL DEFAULT 1.0` added to all 5 tables (`working_memory`, `episodic_memory`, `semantic_facts`, `entity_profiles`, `procedural_memory`). DOUBLE chosen over DECIMAL to match Python float (IEEE 754 double) for exact round-trip. NOT NULL with DEFAULT 1.0 avoids backfill — pre-migration rows automatically have the full-certainty default. ✓
+  - **`create()` persistence:** confidence is at position 8 in `_SELECT_COLS` and appears in the INSERT VALUES list as a bound `?` parameter (`record.confidence`). ✓
+  - **`update()` persistence:** `SET confidence = ?` in the UPDATE SQL, bound to `record.confidence`. ✓
+  - **`_model_from_row()`:** `float(row[8]) if row[8] is not None else 1.0` — pre-migration rows returning SQL NULL for confidence map to 1.0 (verified in `WorkingMemoryRepository._model_from_row()` line 90; same pattern in all 5 repo `_model_from_row()` implementations). ✓
+  - **`list_all(min_confidence=...)`:** when `> 0.0` appends `AND confidence >= ?` with bound param to WHERE clause; when `0.0` (default) no predicate is added (backward compatible). Predicate also present in the ROW_NUMBER pagination branch. ✓
+  - **`search(min_confidence=...)`:** same guard — predicate applied in the first-pass ID-ranking SQL so low-confidence rows don't consume top_k slots. ✓
+  - **Tests:** `TestConfidenceScoring` in `tests/test_repositories.py` — 17 tests covering default value, custom value, persistence in INSERT/UPDATE params, read-back from row, NULL handling, `min_confidence` predicate presence/absence in `list_all`/`search`, ROW_NUMBER path, Pydantic range enforcement (values `> 1.0`, `< 0`, `== 1.0`, `== 0.0`) for all 5 model subtypes. All 17 pass. ✓
+- **Found:** Nothing to fix.
+- **Made during:** VER-8 (EPIC-4 beta readiness verification)
+

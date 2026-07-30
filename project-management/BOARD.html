@@ -458,8 +458,10 @@
     "epic_id": "EPIC-4",
     "title": "Verify: ENH-1: Confidence scoring on memory records",
     "summary": "Re-verify confidence field, Pydantic range enforcement, min_confidence filtering in list_all/search against ENH-1 acceptance criteria.",
-    "status": "To Do",
-    "comments": []
+    "status": "Done",
+    "comments": [
+      "VER-8 PASS. confidence field (float, ge=0.0, le=1.0, default=1.0) on _MemoryBase via Pydantic v2 Field. Migration 0003: DOUBLE NOT NULL DEFAULT 1.0 on all 5 tables. create() INSERTs confidence at col-8 position; update() SETs confidence = ? including record.confidence value. _model_from_row() reads confidence as float(row[8]) if not None else 1.0 (pre-migration rows default to 1.0). min_confidence in list_all() and search(): when > 0.0 appends 'AND confidence >= ?' as bound param; when 0.0 (default) NO predicate added (backward compat). Predicate appears in ROW_NUMBER pagination path too. 17 unit tests in TestConfidenceScoring — all pass. Consolidator docstring updated to show confidence usage examples."
+    ]
   },
   {
     "id": "VER-9",
