@@ -1,6 +1,7 @@
 # agent-memory-sdk
 
 [![CI](https://github.com/oss-ai-connector/agent-memory-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/oss-ai-connector/agent-memory-sdk/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/oss-ai-connector/agent-memory-sdk/graph/badge.svg)](https://codecov.io/gh/oss-ai-connector/agent-memory-sdk)
 
 Governed multi-type memory system for AI agents backed by IBM Db2 LUW.
 

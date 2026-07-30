@@ -94,7 +94,29 @@ ignore_missing_imports = true   # ibm_db has no stubs
 # ── Pytest ────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--cov=agent_memory_sdk",
+    "--cov-report=xml",
+    "--cov-report=term-missing",
+    "--cov-fail-under=85",
+]
 markers = [
     "integration: requires a live Db2 instance (skip with -m 'not integration')",
+]
+
+[tool.coverage.run]
+source = ["src/agent_memory_sdk"]
+omit = ["tests/*", "scripts/*"]
+
+[tool.coverage.report]
+# Don't count lines that can never be hit in a mocked test environment
+# (e.g. the ibm_db import guard that only triggers when the C extension
+# is absent).  Lines explicitly excluded with `# pragma: no cover` are
+# already omitted by default.
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
 ]

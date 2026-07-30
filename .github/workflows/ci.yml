@@ -40,8 +40,24 @@ jobs:
       - name: Type-check — mypy
         run: mypy src
 
-      - name: Unit tests — pytest
+      - name: Unit tests — pytest (with coverage)
+        # --cov / --cov-report / --cov-fail-under=85 are in pyproject.toml
+        # addopts so the threshold is enforced here *and* on local runs.
+        # The XML report is written to coverage.xml in the workspace root.
         run: pytest
+
+      - name: Upload coverage report to Codecov
+        # Upload once (on the 3.11 leg) to avoid triple-posting the same
+        # data.  Requires CODECOV_TOKEN repo secret for private repos —
+        # see https://docs.codecov.com/docs/adding-the-codecov-token.
+        # On public repos the token is optional; the upload will succeed
+        # without it but the report will be marked unverified.
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   integration-test:
     name: "Integration tests (Db2 LUW)"

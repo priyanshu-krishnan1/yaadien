@@ -562,9 +562,14 @@
     "epic_id": "EPIC-5",
     "title": "Coverage reporting and threshold gate",
     "summary": "Wire the already-declared pytest-cov dev dependency into CI, publish a coverage report, and fail the build below an agreed minimum.",
-    "status": "To Do",
+    "status": "Done",
     "description": "`pytest-cov` is listed in pyproject.toml's `dev` extras but nothing invokes it today — no `--cov` in `addopts`, no report generated anywhere. Add a `--cov=agent_memory_sdk --cov-report=xml --cov-report=term-missing` run to the PH-1 unit-test CI job, upload the XML report to Codecov (or Coveralls — pick whichever needs the less invasive setup for a repo that isn't public yet), add the resulting badge to README.md, and set a minimum coverage threshold (propose 85%, given how thorough the existing unit suite already is per the VER-1..VER-10 audit notes) as a merge-blocking check via `--cov-fail-under`. Scope coverage measurement to `src/agent_memory_sdk` only — don't count `tests/` or `scripts/` toward the number.",
-    "comments": []
+    "comments": [
+      {
+        "date": "2025-07-31",
+        "text": "Done. Wired pytest-cov (already in dev extras) into pyproject.toml addopts: ['--cov=agent_memory_sdk', '--cov-report=xml', '--cov-report=term-missing', '--cov-fail-under=85']. Threshold enforced locally and in CI identically. Added [tool.coverage.run] source/omit and [tool.coverage.report] exclude_lines to pyproject.toml. CI: pytest step renamed to 'Unit tests — pytest (with coverage)'; new 'Upload coverage report to Codecov' step using codecov/codecov-action@v4 gated to python-version==3.11 leg (avoids triple upload); fail_ci_if_error:false so Codecov outage never blocks a build; CODECOV_TOKEN secret documented in step comment. README.md: Codecov badge added below CI badge. Measured coverage on current suite: 87% (threshold 85% — 2pp buffer). All 517 unit tests pass. DECISIONS.md entry appended."
+      }
+    ]
   },
   {
     "id": "PH-4",

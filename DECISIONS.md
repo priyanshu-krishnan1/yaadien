@@ -112,3 +112,45 @@ already covers Python compatibility.
 - Added CI polling loop to section 1 so the wait strategy is documented in one
   place and the workflow file references it rather than reimplementing it
   independently.
+
+---
+
+## 2025-07-31 — Coverage reporting and threshold gate (PH-3)
+
+**Coverage tool:** `pytest-cov>=5.0` — already declared in `pyproject.toml`'s
+`dev` extras; this change wires it in for the first time.
+
+**Coverage scope:** `src/agent_memory_sdk` only.  `tests/` and `scripts/` are
+explicitly excluded via `[tool.coverage.run] omit` in `pyproject.toml`.  The
+`--cov=agent_memory_sdk` flag names the importable package (not the `src/`
+path); `pytest-cov` resolves it correctly from the installed editable package.
+
+**Threshold:** 85 % (`--cov-fail-under=85`).
+Rationale: the VER-1..VER-10 audit confirmed the unit suite is comprehensive.
+A first run against the current suite measured **87 %**, so 85 % gives a
+~2 percentage-point buffer against minor fluctuation while still being a
+meaningful gate.  The threshold is in `[tool.pytest.ini_options] addopts` in
+`pyproject.toml` (not only in the CI command) so it is enforced identically
+on local developer runs.
+
+**Report formats:** `--cov-report=xml` (produces `coverage.xml` for upload)
+and `--cov-report=term-missing` (prints uncovered lines to the CI log for
+immediate diagnosis without opening a dashboard).
+
+**Coverage reporting service:** Codecov.
+- Upload via `codecov/codecov-action@v4`, gated to the `python-version ==
+  '3.11'` matrix leg to avoid triple-uploading identical data.
+- `fail_ci_if_error: false` — a Codecov outage does not block the build;
+  the local `--cov-fail-under` threshold is the enforcement mechanism.
+- Requires a `CODECOV_TOKEN` repo secret for private repos (set at
+  Settings → Secrets and variables → Actions).  On a public repo the
+  token is optional; the upload succeeds but is marked unverified without it.
+- Badge URL pattern: `https://codecov.io/gh/<org>/<repo>/graph/badge.svg`
+  Added to `README.md` on line 4, directly below the CI badge.
+
+**`[tool.coverage.report] exclude_lines`:** Three patterns excluded:
+- `pragma: no cover` — explicit opt-out, already the default.
+- `if TYPE_CHECKING:` — import-time guard blocks that never execute at
+  runtime; excluding them avoids penalising well-typed code.
+- `raise NotImplementedError` — abstract method stubs; covered by the
+  concrete subclass tests, not the stub itself.
