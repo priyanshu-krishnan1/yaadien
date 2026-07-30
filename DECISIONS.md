@@ -970,6 +970,80 @@ explicitly supersedes it and say why.
   `update()` only and does not extend to `search()`.  The code and docstring
   in `repositories/base.py` have been updated accordingly.
 
+## 2026-07-31 — EPIC-2 backlog: Cosmos DB Agent Memory Toolkit features adapted for Db2
+
+- **Decision:** Researched the implementation details of Azure Cosmos DB's
+  Agent Memory Toolkit (github.com/AzureCosmosDB/AgentMemoryToolkit) and
+  added a second Epic, "Cosmos-inspired memory enhancements (Db2-adapted)"
+  (`EPIC-2`), to `BOARD.html` with four Stories (`ENH-1` through `ENH-4`),
+  all in To Do. **No source code was changed** — this is a backlog-only
+  addition to the board, per explicit instruction. `BOARD.html`'s data
+  schema changed from a single `epic` object to an `epics` array plus an
+  `epic_id` field on every story, so the board can render and track
+  multiple epics; the rendering script was updated to match (per-epic
+  progress bars, an epic badge on each card, dynamic epic name in the
+  detail modal).
+
+  **What the toolkit actually does** (verified via direct research, not
+  assumed): three Cosmos DB containers (`memories_turns`,
+  `memories`, `memories_summaries`) partitioned by `(user_id, thread_id)`;
+  a four-stage extraction pipeline (ingest → LLM-classify into
+  fact/procedural/episodic/unclassified → LLM-driven reconciliation of
+  contradicting facts → thread/user summarization) with configurable
+  `EVERY_N` cadences per stage; every memory carries a confidence score
+  (0.0–1.0); exact-duplicate rejection via a SHA-256 `content_hash` at
+  write time, separate from LLM-driven semantic contradiction resolution;
+  and a dual processing model — synchronous in-process for prototypes, or
+  Cosmos's native change-feed triggering an async Azure Durable Functions
+  orchestrator for scale.
+
+  **The four Stories chosen** (small, high-value set per explicit
+  instruction — not exhaustive):
+  - `ENH-1` — confidence scoring (0.0–1.0 field + `min_confidence` filter
+    on `search()`/`list_all()`).
+  - `ENH-2` — write-time exact-dedup via `content_hash` (SHA-256).
+  - `ENH-3` — reconciliation: a new `Reconciler` protocol (parallel to the
+    existing `Consolidator`) that soft-supersedes contradicted facts via
+    new `superseded_by`/`superseded_at`/`supersede_reason` columns,
+    deliberately kept distinct from `deleted_at` so an audit trail can
+    tell "user asked us to forget this" apart from "a newer fact
+    contradicted this."
+  - `ENH-4` — formalizes the existing `scripts/consolidate_pending.py`
+    reference pattern (replaces its `metadata.consolidated` flag hack with
+    a real `consolidated_at` column + claim-based locking) and adds
+    `EVERY_N`-style cadence throttling to inline consolidation.
+
+  **Deliberately excluded / adapted rather than ported directly:**
+  - The Cosmos change-feed + Durable Functions async processing tier has
+    no Db2 LUW equivalent (Db2 has no native change-feed mechanism). Per
+    explicit instruction, this was *adapted* rather than dropped: `ENH-4`
+    positions the existing polling-script pattern, hardened, as the
+    Db2-appropriate substitute — same goal (offload processing off the
+    write path), different mechanism (poll + claim column instead of a
+    native change feed). This preserves the Step 0 "zero mandatory
+    external services" principle.
+  - Hybrid full-text + vector search (Cosmos's `search_cosmos()` combines
+    both) was **not** turned into a story. Db2 LUW does have a native text
+    search feature (`CONTAINS`/`SCORE`/`CONTAINS_ANY`/`CONTAINS_ALL`
+    functions, historically via "DB2 Text Search"), confirmed via web
+    research, but the documentation found was old (Db2 9.7/10.5-era) and
+    current-version (12.1) status/setup requirements were not confidently
+    verified. Flagged here as a candidate for a future story once that's
+    actually confirmed, rather than committing to it now.
+  - A dual sync/async client API (Cosmos ships both `CosmosMemoryClient`
+    and `AsyncCosmosMemoryClient`) was excluded as out of scope for a
+    small set — this SDK is synchronous throughout except the OpenAI
+    Agents SDK adapter (which must be async to satisfy that protocol);
+    adding a fully async `MemoryStore` variant is a larger architectural
+    undertaking than the "small, high-value" scope asked for here.
+
+- **Reason:** Bring in genuinely differentiated capabilities (confidence
+  grading, dedup, contradiction handling, throttled consolidation cost)
+  that this SDK's own Consolidator design already anticipated but didn't
+  fully build out, filtered through what's actually Db2-native-feasible
+  rather than a blind port of Cosmos-specific mechanics.
+- **Made during:** Backlog planning (not tied to a PROMPTS.md step)
+
 ---
 
 ### Entry template (copy this for every new decision)
