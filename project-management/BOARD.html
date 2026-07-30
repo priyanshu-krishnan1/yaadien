@@ -13,42 +13,51 @@
   .header-title { font-size: 16px; font-weight: 600; }
   .header-sub { font-size: 12px; color: #8b949e; margin-left: auto; }
 
-  .epic-banner { background: #fff; border-left: 4px solid #7c5cd8; margin: 20px 24px 0; padding: 14px 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.07); display: flex; align-items: flex-start; gap: 12px; }
-  .epic-banner + .epic-banner { margin-top: 10px; }
-  .epic-banner.epic-2 { border-left-color: #0d9488; }
-  .epic-banner.epic-3 { border-left-color: #c2410c; }
-  .epic-tag { background: #7c5cd8; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px; letter-spacing: .04em; flex-shrink: 0; margin-top: 3px; }
-  .epic-tag.epic-2 { background: #0d9488; }
-  .epic-tag.epic-3 { background: #c2410c; }
   .story-tag { background: #3b82d4; }
-  .card-epic-badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; letter-spacing: .03em; color: #fff; }
-  .card-epic-badge.epic-1 { background: #7c5cd8; }
-  .card-epic-badge.epic-2 { background: #0d9488; }
-  .card-epic-badge.epic-3 { background: #c2410c; }
-  .epic-info h2 { font-size: 15px; font-weight: 600; }
-  .epic-info p { font-size: 12px; color: #57606a; margin-top: 2px; }
-  .epic-meta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
-  .progress-bar-wrap { width: 160px; background: #e5e7eb; border-radius: 4px; height: 6px; overflow: hidden; }
-  .progress-bar-fill { height: 100%; background: #3b82d4; border-radius: 4px; transition: width .4s; }
-  .progress-label { font-size: 11px; color: #57606a; }
 
-  .stats-row { display: flex; gap: 10px; margin: 14px 24px 0; flex-wrap: wrap; }
+  .stats-row { display: flex; align-items: center; gap: 10px; margin: 14px 24px 0; flex-wrap: wrap; }
   .stat-pill { background: #fff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 4px 12px; font-size: 12px; color: #57606a; display: flex; align-items: center; gap: 6px; }
   .stat-dot { width: 8px; height: 8px; border-radius: 50%; }
   .dot-todo { background: #9ca3af; } .dot-wip { background: #f59e0b; } .dot-done { background: #22c55e; }
+  .search-wrap { margin-left: auto; position: relative; }
+  .search-input { font-family: inherit; font-size: 12px; padding: 6px 12px 6px 28px; border: 1px solid #e5e7eb; border-radius: 20px; width: 220px; outline: none; background: #fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="%2357606a" stroke-width="2"><circle cx="5" cy="5" r="4"/><line x1="8" y1="8" x2="11" y2="11"/></svg>') no-repeat 10px center; }
+  .search-input:focus { border-color: #3b82d4; }
+  .lane-toolbar { display: flex; gap: 6px; }
+  .lane-toolbar button { font-size: 11px; padding: 4px 10px; border-radius: 20px; border: 1px solid #e5e7eb; background: #fff; color: #57606a; cursor: pointer; font-family: inherit; }
+  .lane-toolbar button:hover { border-color: #3b82d4; color: #3b82d4; }
 
-  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 16px 24px 32px; }
-  .column { background: #fff; border-radius: 8px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,.06); display: flex; flex-direction: column; min-height: 420px; }
-  .column-header { padding: 12px 16px 10px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 8px 8px 0 0; }
-  .column-header h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #57606a; }
-  .col-count { background: #f0f2f5; color: #57606a; border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
-  .col-indicator { width: 10px; height: 10px; border-radius: 50%; margin-left: auto; }
+  .lanes { display: flex; flex-direction: column; gap: 14px; padding: 16px 24px 32px; }
+  .lane { background: #fff; border-radius: 8px; border: 1px solid #e5e7eb; border-left: 4px solid var(--epic-color, #7c5cd8); box-shadow: 0 1px 3px rgba(0,0,0,.06); overflow: hidden; }
+  .lane-header { padding: 12px 16px; display: flex; align-items: flex-start; gap: 12px; cursor: pointer; user-select: none; }
+  .lane-header:hover { background: #fafbfc; }
+  .lane-toggle { flex-shrink: 0; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; color: #57606a; font-size: 10px; margin-top: 4px; transition: transform .15s; }
+  .lane.collapsed .lane-toggle { transform: rotate(-90deg); }
+  .lane-tag { background: var(--epic-color, #7c5cd8); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px; letter-spacing: .04em; flex-shrink: 0; margin-top: 3px; }
+  .lane-info { flex: 1; min-width: 0; }
+  .lane-info h2 { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .lane-info h2 .lane-id { font-size: 11px; font-weight: 700; color: var(--epic-color, #7c5cd8); }
+  .lane-info p { font-size: 12px; color: #57606a; margin-top: 3px; line-height: 1.5; }
+  .lane.collapsed .lane-info p { display: none; }
+  .lane-meta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+  .progress-bar-wrap { width: 140px; background: #e5e7eb; border-radius: 4px; height: 6px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: var(--epic-color, #3b82d4); border-radius: 4px; transition: width .4s; }
+  .progress-label { font-size: 11px; color: #57606a; white-space: nowrap; }
+
+  .lane-body { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 16px 16px; border-top: 1px solid #f0f2f5; padding-top: 12px; }
+  .lane.collapsed .lane-body { display: none; }
+  .lane.hidden { display: none; }
+  .mini-col { background: #fafbfc; border-radius: 6px; border: 1px solid #f0f2f5; display: flex; flex-direction: column; min-height: 60px; }
+  .mini-col-header { padding: 8px 10px 6px; display: flex; align-items: center; gap: 6px; }
+  .mini-col-header h4 { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #57606a; }
+  .mini-count { background: #eef0f3; color: #57606a; border-radius: 10px; padding: 0 6px; font-size: 10px; font-weight: 600; }
+  .mini-col-indicator { width: 8px; height: 8px; border-radius: 50%; margin-left: auto; }
   .ind-todo { background: #e5e7eb; border: 2px solid #9ca3af; }
   .ind-wip  { background: #fef3c7; border: 2px solid #f59e0b; }
   .ind-done { background: #dcfce7; border: 2px solid #22c55e; }
-  .column-body { padding: 10px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+  .mini-col-body { padding: 0 8px 8px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .mini-col-empty { font-size: 11px; color: #9ca3af; font-style: italic; padding: 4px 4px 8px; }
 
-  .card { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow .15s, transform .1s; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow .15s, transform .1s; }
   .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); transform: translateY(-1px); border-color: #3b82d4; }
   .card-id { font-size: 10px; font-weight: 700; color: #3b82d4; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
   .card-title { font-size: 13px; font-weight: 600; color: #1f2328; line-height: 1.4; }
@@ -60,6 +69,7 @@
   .move-btn:hover { background: #3b82d4; color: #fff; border-color: #3b82d4; }
   .move-btn.back:hover { background: #f59e0b; border-color: #f59e0b; color: #fff; }
   .move-btn.reset:hover { background: #ef4444; border-color: #ef4444; color: #fff; }
+  .no-results { text-align: center; color: #9ca3af; font-size: 13px; padding: 40px 20px; }
 
   /* Modal */
   .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; }
@@ -145,6 +155,12 @@
       "id": "EPIC-4",
       "title": "Beta release readiness — worldwide public beta verification",
       "description": "Independent re-verification of every Done story against the actual source code (not DECISIONS.md intent), plus a market-fit gap check against the competitive-analysis study, gating the worldwide public beta go/no-go decision.",
+      "comments": []
+    },
+    {
+      "id": "EPIC-5",
+      "title": "Production hardening — CI, security, packaging, and benchmarking",
+      "description": "Everything needed beyond feature completeness for a public release: automated CI enforcement of what today only runs locally (lint, type-check, unit + integration tests), dependency/static security scanning, package-build verification, and an agent-memory-specific benchmarking harness so retrieval quality, latency/cost, and isolation claims are measured and comparable to the platforms surveyed in ai-agent-platform-competitive-analysis.md instead of only asserted. Distinct from EPIC-4 (which verifies already-built features are correct) — this epic builds the missing hardening and measurement infrastructure itself. VER-13's market-fit gap check flagged the absence of CI as part of the overall beta-readiness picture; this epic is the fix.",
       "comments": []
     }
   ],
@@ -512,6 +528,65 @@
     "comments": [
       "VER-13 COMPLETE. 7 competitive differentiators assessed: multi-tenant isolation (HAVE — not a blocker), audit/erasure GDPR-style (PARTIAL — forget() primitive exists, no user-scoped erase-all API or erasure report — documented limitation), temporal/bi-temporal facts (PARTIAL — TTL+supersession, no bi-temporal timestamp pair or temporal queries — documented limitation, out of scope for this SDK positioning), hybrid retrieval (PARTIAL — vector+metadata, no BM25/hybrid or reranking — documented limitation), cost/token control (PARTIAL — consolidate_every_n, max_turns, top_k — documented limitation, compaction out of scope), contradiction resolution+supersession (HAVE — not a blocker), deduplication (HAVE — not a blocker). Additional: knowledge graph (MISSING — out of scope), keyword/BM25 search (MISSING — documented limitation), cross-agent memory (MISSING — out of scope beta), RBAC/encryption (MISSING — delegated to Db2 infra), PII detection (MISSING — out of scope), README/docs STEP-8 (MISSING — HARD BLOCKER for worldwide public beta)."
     ]
+  },
+  {
+    "id": "PH-1",
+    "epic_id": "EPIC-5",
+    "title": "CI pipeline: lint, type-check, and unit tests on every PR",
+    "summary": "GitHub Actions workflow running ruff check, mypy src, and the mocked pytest unit suite across Python 3.10/3.11/3.12 on every push and pull request.",
+    "status": "Done",
+    "description": "Add `.github/workflows/ci.yml` with a job matrix over Python 3.10, 3.11, and 3.12 (matching `requires-python` and the classifiers in pyproject.toml) that: installs the package with `pip install -e \".[dev]\"`, runs `ruff check .`, runs `mypy src`, and runs `pytest` (unit suite only — the `tests/integration/` suite self-skips without `DB2_DATABASE` set, per the existing `pytest_collection_modifyitems` hook in `tests/integration/conftest.py`, so no extra exclusion flag is needed here). Cache pip dependencies keyed on `pyproject.toml` hash to keep runs fast. Trigger on `push` to main and on `pull_request`. Add a status badge to README.md once green.\n\nThis job intentionally does not install the `[langchain]`/`[openai-agents]`/`[mcp]` extras or run `tests/test_adapters.py` against them beyond what's already covered by the default dev install — adapter-specific dependency-version drift is out of scope here (call it out as a follow-up if it becomes a real problem, don't build it speculatively now).",
+    "comments": [
+      {
+        "date": "2025-07-31",
+        "text": "Done. Created .github/workflows/ci.yml: single job 'lint-typecheck-test' with a 3×1 matrix over Python 3.10/3.11/3.12 (fail-fast:false), triggered on push to main and pull_request. Steps per matrix entry: (1) pip install -e \".[dev]\" — core deps + pytest/ruff/mypy/pytest-cov only, no adapter extras; (2) ruff check . — full lint; (3) mypy src — strict type-check; (4) pytest — unit suite runs, integration suite self-skips via the existing pytest_collection_modifyitems hook in tests/integration/conftest.py (DB2_DATABASE unset). Pip cache keyed on pip-<python>-<sha256(pyproject.toml)> via actions/cache@v4. CI status badge added to README.md. DECISIONS.md created with full dated entry documenting workflow path, Python matrix, and exact commands per step."
+      }
+    ]
+  },
+  {
+    "id": "PH-2",
+    "epic_id": "EPIC-5",
+    "title": "CI integration job: live Db2 service container running the marked integration suite",
+    "summary": "Second CI job that boots a Db2 LUW container, sets the DB2_* env vars documented in .env.example, and runs pytest -m integration so the ~77 integration tests execute somewhere instead of always skipping.",
+    "status": "To Do",
+    "description": "Add a second job to `.github/workflows/ci.yml` (or a separate workflow file, whichever keeps the fast unit job from being blocked by the slower Db2 boot) using a Db2 community container as a GitHub Actions service (or a `docker run` + wait-for-healthy step, if the service-container health-check model doesn't fit Db2's slow startup). Reuse the exact setup already documented in `project-management/INTEGRATION_TESTING.md` — do not invent a new setup path; if CI needs something the doc doesn't cover (e.g. a different image tag that works unattended in Actions, or a longer startup timeout), update INTEGRATION_TESTING.md to match rather than letting the two drift. Set `DB2_DATABASE`/`DB2_HOSTNAME`/`DB2_UID`/`DB2_PWD`/etc. as job env vars, run migrations via the existing `Migrator`, then `pytest -m integration`. Treat flaky/slow Db2 startup as a real risk — add a retry/wait loop, not a fixed sleep.\n\nThis is the fix for the gap where 77 integration tests exist and pass locally but nothing outside a developer's machine has ever proven `pytest tests/integration/` runs green — the current CI-less state means that suite is untested by anything but honor system.",
+    "comments": []
+  },
+  {
+    "id": "PH-3",
+    "epic_id": "EPIC-5",
+    "title": "Coverage reporting and threshold gate",
+    "summary": "Wire the already-declared pytest-cov dev dependency into CI, publish a coverage report, and fail the build below an agreed minimum.",
+    "status": "To Do",
+    "description": "`pytest-cov` is listed in pyproject.toml's `dev` extras but nothing invokes it today — no `--cov` in `addopts`, no report generated anywhere. Add a `--cov=agent_memory_sdk --cov-report=xml --cov-report=term-missing` run to the PH-1 unit-test CI job, upload the XML report to Codecov (or Coveralls — pick whichever needs the less invasive setup for a repo that isn't public yet), add the resulting badge to README.md, and set a minimum coverage threshold (propose 85%, given how thorough the existing unit suite already is per the VER-1..VER-10 audit notes) as a merge-blocking check via `--cov-fail-under`. Scope coverage measurement to `src/agent_memory_sdk` only — don't count `tests/` or `scripts/` toward the number.",
+    "comments": []
+  },
+  {
+    "id": "PH-4",
+    "epic_id": "EPIC-5",
+    "title": "Dependency and static security scanning",
+    "summary": "Add pip-audit for dependency CVEs and bandit for the hand-audited SQL-construction code paths, both enforced in CI, so the injection/scope guarantees VER-5 verified by hand stay checked automatically going forward.",
+    "status": "To Do",
+    "description": "Add a CI job running `pip-audit` against the resolved dependency set (fail on any known-exploitable CVE with no available fix; document any accepted/ignored advisories with a reason, same spirit as DECISIONS.md's audit-trail convention). Add `bandit` scoped at minimum to `db/`, `repositories/`, and `store.py` — the modules VER-5 hand-verified for SQL injection safety (`_scope_predicates`, `_vec_to_str`, `_build_metadata_filter`, and the catalog queries in `db/migrate.py`'s `REQUIRE_EXISTING` path). Where bandit flags a pattern VER-5 already established as safe (e.g. the `float()` coercion guard before string interpolation in `_vec_to_str`), add a scoped `# nosec` with a comment pointing at the DECISIONS.md VER-5 entry rather than silencing the whole file — the goal is to keep the manual audit's conclusions enforced mechanically, not to bulk-suppress the tool.\n\nBefore finishing: append a dated DECISIONS.md entry listing every suppression added and why, so a future reader isn't left guessing whether a `# nosec` is a real risk acceptance or someone silencing noise.",
+    "comments": []
+  },
+  {
+    "id": "PH-5",
+    "epic_id": "EPIC-5",
+    "title": "Packaging build verification",
+    "summary": "CI job that builds the sdist/wheel with python -m build, validates with twine check, installs the wheel into a clean venv, and smoke-imports the package — catching packaging breakage before it reaches PyPI.",
+    "status": "To Do",
+    "description": "Add a CI job (triggered at minimum on tags/releases, and ideally on every PR since it's cheap) that: runs `python -m build` to produce both sdist and wheel, runs `twine check dist/*`, creates a fresh throwaway venv, `pip install`s the built wheel (not the editable source tree — this is the point, to catch `[tool.hatch.build.targets.wheel] packages = [...]` misconfiguration or missing-file bugs that `pip install -e .` would never surface), and runs a minimal smoke test that imports `agent_memory_sdk` and touches one symbol from each of models/store/db to confirm the package layout is intact. Also verify the three optional extras (`[langchain]`, `[openai-agents]`, `[mcp]`, and `[all]`) each install cleanly from the built wheel.",
+    "comments": []
+  },
+  {
+    "id": "PH-6",
+    "epic_id": "EPIC-5",
+    "title": "Agent-memory benchmarking harness: retrieval quality, latency/cost, and isolation-under-load",
+    "summary": "Repeatable benchmark producing numbers directly comparable to the figures cited in ai-agent-platform-competitive-analysis.md (Oracle 93.8% LongMemEval, Mem0 91.6 LOCOMO, Zep 94.8% DMR), plus a custom multi-tenant isolation-under-load measurement this SDK's governed-substrate positioning depends on.",
+    "status": "To Do",
+    "description": "Build a `benchmarks/` harness (not shipped in the wheel — same treatment as `project-management/`, exclude via the hatchling wheel target) with three parts:\n\n1. **Retrieval quality** — a LongMemEval-shaped synthetic dataset (multi-session conversations with planted facts, later contradictions, and questions requiring extraction/multi-session reasoning/temporal reasoning/knowledge updates/abstention, per the five LongMemEval ability categories) run through `MemoryStore.remember()`/`search()`, scored by an LLM-judge for correctness against the LongMemEval methodology (arXiv 2410.10813) closely enough that the resulting number is honestly comparable to the vendor figures already cited in ai-agent-platform-competitive-analysis.md — document any methodology deviation explicitly rather than reporting a number as \"LongMemEval\" if it isn't.\n2. **Latency/cost** — per-`remember()`/per-`search()` call latency and, since this SDK's write path is developer-controlled rather than passive-LLM-extraction, per-turn token cost only where a `Consolidator`/`Reconciler`/`Summarizer` hook is actually configured (the no-op default path should report near-zero LLM cost, which is itself a comparison point against the extraction-pipeline competitors in the market study).\n3. **Isolation-under-load** — concurrent writers across many synthetic tenants/agents hammering `search()`/`list_all()`, asserting zero cross-scope result leakage under load, not just under the single-threaded conditions VER-5's manual audit checked. This is the differentiator the SWOT in ai-agent-platform-competitive-analysis.md claims (governed substrate); it should be measured, not just asserted.\n\nRequires a live Db2 instance and an `EmbeddingProvider`/LLM configured — this only runs on demand (a `make benchmark` / `scripts/run_benchmarks.py` entry point), not in the PH-1/PH-2 CI jobs. Publish results as a markdown report checked into `project-management/` (e.g. `BENCHMARKS.md`) with the exact dataset size, model, and embedding provider used, so numbers are reproducible and honestly caveated the same way ai-agent-platform-competitive-analysis.md caveats the vendor-reported figures it cites.",
+    "comments": []
   }
 ]
 }
@@ -525,37 +600,20 @@
   <div class="header-sub">Local Project Board &nbsp;·&nbsp; IBM Db2 LUW + Python</div>
 </div>
 
-<div id="epicBanners"></div>
-
 <div class="stats-row">
   <div class="stat-pill"><span class="stat-dot dot-todo"></span><span id="cntTodo">0</span>&nbsp;To Do</div>
   <div class="stat-pill"><span class="stat-dot dot-wip"></span><span id="cntWip">0</span>&nbsp;In Progress</div>
   <div class="stat-pill"><span class="stat-dot dot-done"></span><span id="cntDone">0</span>&nbsp;Done</div>
+  <div class="lane-toolbar">
+    <button id="btnExpandAll" type="button">Expand all</button>
+    <button id="btnCollapseAll" type="button">Collapse all</button>
+  </div>
+  <div class="search-wrap">
+    <input class="search-input" id="searchInput" type="text" placeholder="Filter by id or title…">
+  </div>
 </div>
 
-<div class="board">
-  <div class="column">
-    <div class="column-header">
-      <h3>To Do</h3><span class="col-count" id="hTodo">0</span>
-      <span class="col-indicator ind-todo"></span>
-    </div>
-    <div class="column-body" id="col-todo"></div>
-  </div>
-  <div class="column">
-    <div class="column-header">
-      <h3>In Progress</h3><span class="col-count" id="hWip">0</span>
-      <span class="col-indicator ind-wip"></span>
-    </div>
-    <div class="column-body" id="col-wip"></div>
-  </div>
-  <div class="column">
-    <div class="column-header">
-      <h3>Done</h3><span class="col-count" id="hDone">0</span>
-      <span class="col-indicator ind-done"></span>
-    </div>
-    <div class="column-body" id="col-done"></div>
-  </div>
-</div>
+<div class="lanes" id="lanes"></div>
 
 <!-- Detail modal -->
 <div class="overlay" id="overlay">
@@ -609,12 +667,16 @@ const COL_KEY = { 'To Do': 'todo', 'In Progress': 'wip', 'Done': 'done' };
 const LABEL   = { todo: 'To Do', wip: 'In Progress', done: 'Done' };
 const SC      = { 'To Do': 's-todo', 'In Progress': 's-wip', 'Done': 's-done' };
 
+// Cycles indefinitely so any number of epics gets a distinct, readable color —
+// the old scheme hardcoded CSS classes for epic-1/2/3 only, so EPIC-4 and
+// EPIC-5 badges silently rendered colorless. This scales without edits.
+const EPIC_PALETTE = ['#7c5cd8', '#0d9488', '#c2410c', '#be123c', '#0369a1', '#4d7c0f', '#a16207', '#7c2d92'];
+
 function getStory(id) { return data.stories.find(s => s.id === id); }
 function getEpic(id) { return data.epics.find(e => e.id === id); }
-function epicCssIndex(epicId) {
-  // "EPIC-1" -> 1, "EPIC-2" -> 2, ... used for epic-N CSS class suffixes.
+function epicColor(epicId) {
   const idx = data.epics.findIndex(e => e.id === epicId);
-  return idx >= 0 ? idx + 1 : 1;
+  return EPIC_PALETTE[(idx >= 0 ? idx : 0) % EPIC_PALETTE.length];
 }
 function toast(msg) {
   const t = document.getElementById('toast');
@@ -622,73 +684,126 @@ function toast(msg) {
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
 }
+// Older story comments were appended as plain strings instead of
+// {date, text} objects (a pre-existing data bug from an earlier session) —
+// render either shape rather than showing "undefined".
+function normalizeComment(c) {
+  return typeof c === 'string' ? { date: '', text: c } : c;
+}
+
+// ── Collapse state — persisted in localStorage, keyed per epic ───────────────
+// A lane with no stored preference defaults to collapsed once every story in
+// it is Done, and expanded otherwise, so finished epics stop crowding out
+// active work as the board grows.
+const COLLAPSE_KEY = 'agent-memory-sdk-board-collapsed';
+let collapseOverrides = {};
+try { collapseOverrides = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}'); } catch (e) { collapseOverrides = {}; }
+
+function isCollapsed(epicId, pct) {
+  return Object.prototype.hasOwnProperty.call(collapseOverrides, epicId)
+    ? collapseOverrides[epicId]
+    : pct === 100;
+}
+function setCollapsed(epicId, val) {
+  collapseOverrides[epicId] = val;
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapseOverrides));
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+let searchTerm = '';
+function matchesSearch(s) {
+  if (!searchTerm) return true;
+  return (s.id + ' ' + s.title + ' ' + s.summary).toLowerCase().includes(searchTerm);
+}
 
 // ── Render ───────────────────────────────────────────────────────────────────
+// One swimlane per epic (title, description, progress bar, collapse toggle),
+// each containing its own mini To Do / In Progress / Done columns scoped to
+// just that epic's stories — replaces the old single flat 3-column board
+// that mixed every epic's cards together with no grouping.
 function render() {
-  // Epics — one banner per epic, each with its own progress computed from
-  // only the stories whose epic_id matches.
-  const banners = document.getElementById('epicBanners');
-  banners.innerHTML = '';
-  data.epics.forEach((epic, i) => {
-    const n = i + 1;
+  const cnt = { todo: 0, wip: 0, done: 0 };
+  data.stories.forEach(s => cnt[COL_KEY[s.status]]++);
+  ['todo', 'wip', 'done'].forEach(k => {
+    document.getElementById('cnt' + k.charAt(0).toUpperCase() + k.slice(1)).textContent = cnt[k];
+  });
+
+  const lanesEl = document.getElementById('lanes');
+  lanesEl.innerHTML = '';
+  let anyLaneVisible = false;
+
+  data.epics.forEach(epic => {
     const epicStories = data.stories.filter(s => s.epic_id === epic.id);
     const doneCount = epicStories.filter(s => s.status === 'Done').length;
     const pct = epicStories.length ? Math.round((doneCount / epicStories.length) * 100) : 0;
+    const color = epicColor(epic.id);
 
-    const el = document.createElement('div');
-    el.className = 'epic-banner' + (n > 1 ? ' epic-' + n : '');
-    el.innerHTML = `
-      <span class="epic-tag${n > 1 ? ' epic-' + n : ''}">EPIC</span>
-      <div class="epic-info">
-        <h2>${epic.title}</h2>
-        <p>${epic.description}</p>
-      </div>
-      <div class="epic-meta">
-        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-        <div class="progress-label">${doneCount} / ${epicStories.length} done</div>
-      </div>`;
-    banners.appendChild(el);
-  });
+    const visibleStories = epicStories.filter(matchesSearch);
+    const laneHidden = !!searchTerm && visibleStories.length === 0;
+    if (!laneHidden) anyLaneVisible = true;
+    const collapsed = searchTerm ? false : isCollapsed(epic.id, pct);
 
-  // Counts
-  const cnt = { todo: 0, wip: 0, done: 0 };
-  data.stories.forEach(s => cnt[COL_KEY[s.status]]++);
-  ['todo','wip','done'].forEach(k => {
-    document.getElementById('cnt' + k.charAt(0).toUpperCase() + k.slice(1)).textContent = cnt[k];
-    document.getElementById('h'   + k.charAt(0).toUpperCase() + k.slice(1)).textContent = cnt[k];
-  });
+    const lane = document.createElement('div');
+    lane.className = 'lane' + (collapsed ? ' collapsed' : '') + (laneHidden ? ' hidden' : '');
+    lane.style.setProperty('--epic-color', color);
+    lane.dataset.epicId = epic.id;
 
-
-  // Cards
-  ['todo','wip','done'].forEach(col => {
-    const el = document.getElementById('col-' + col);
-    el.innerHTML = '';
-    data.stories.filter(s => COL_KEY[s.status] === col).forEach(s => {
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.dataset.id = s.id;
-
-      let btn = '';
-      if (col === 'todo') btn = `<button class="move-btn" data-action="start" data-id="${s.id}">Start</button>`;
-      if (col === 'wip')  btn = `<button class="move-btn back" data-action="back" data-id="${s.id}">Back</button>`;
-      if (col === 'done') btn = `<button class="move-btn reset" data-action="reset" data-id="${s.id}">Reset</button>`;
-
-      const nc = s.comments.length;
-      const epicIdx = epicCssIndex(s.epic_id);
-      const epicShort = (getEpic(s.epic_id) || {}).title || s.epic_id;
-      card.innerHTML = `
-        <div class="card-id">${s.id}</div>
-        <div class="card-title">${s.title}</div>
-        <div class="card-summary">${s.summary}</div>
-        <div class="card-footer">
-          <span class="badge-type">Story</span>
-          <span class="card-epic-badge epic-${epicIdx}" title="${epicShort}">v${epicIdx}</span>
-          ${nc ? `<span class="badge-comments">&#128172; ${nc}</span>` : ''}
-          ${btn}
+    const miniCols = ['todo', 'wip', 'done'].map(col => {
+      const storiesInCol = visibleStories.filter(s => COL_KEY[s.status] === col);
+      const cardsHtml = storiesInCol.length
+        ? storiesInCol.map(s => cardHtml(s, col)).join('')
+        : '<div class="mini-col-empty">No stories</div>';
+      return `
+        <div class="mini-col">
+          <div class="mini-col-header">
+            <h4>${LABEL[col]}</h4>
+            <span class="mini-count">${storiesInCol.length}</span>
+            <span class="mini-col-indicator ind-${col}"></span>
+          </div>
+          <div class="mini-col-body">${cardsHtml}</div>
         </div>`;
-      el.appendChild(card);
-    });
+    }).join('');
+
+    lane.innerHTML = `
+      <div class="lane-header" data-action="toggle-lane" data-epic="${epic.id}">
+        <span class="lane-toggle">&#9660;</span>
+        <span class="lane-tag">EPIC</span>
+        <div class="lane-info">
+          <h2><span class="lane-id">${epic.id}</span> ${epic.title}</h2>
+          <p>${epic.description}</p>
+        </div>
+        <div class="lane-meta">
+          <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+          <div class="progress-label">${doneCount} / ${epicStories.length} done</div>
+        </div>
+      </div>
+      <div class="lane-body">${miniCols}</div>`;
+
+    lanesEl.appendChild(lane);
   });
+
+  if (searchTerm && !anyLaneVisible) {
+    lanesEl.innerHTML = `<div class="no-results">No stories match "${searchTerm}".</div>`;
+  }
+}
+
+function cardHtml(s, col) {
+  let btn = '';
+  if (col === 'todo') btn = `<button class="move-btn" data-action="start" data-id="${s.id}">Start</button>`;
+  if (col === 'wip')  btn = `<button class="move-btn back" data-action="back" data-id="${s.id}">Back</button>`;
+  if (col === 'done') btn = `<button class="move-btn reset" data-action="reset" data-id="${s.id}">Reset</button>`;
+  const nc = s.comments.length;
+  return `
+    <div class="card" data-id="${s.id}">
+      <div class="card-id">${s.id}</div>
+      <div class="card-title">${s.title}</div>
+      <div class="card-summary">${s.summary}</div>
+      <div class="card-footer">
+        <span class="badge-type">Story</span>
+        ${nc ? `<span class="badge-comments">&#128172; ${nc}</span>` : ''}
+        ${btn}
+      </div>
+    </div>`;
 }
 
 // ── Modal ────────────────────────────────────────────────────────────────────
@@ -711,9 +826,10 @@ function openModal(id) {
   if (s.comments.length === 0) {
     cl.innerHTML = '<div class="no-comments">No comments yet.</div>';
   } else {
-    cl.innerHTML = s.comments.map(c =>
-      `<div class="comment-item"><div class="comment-date">${c.date}</div><div class="comment-text">${c.text}</div></div>`
-    ).join('');
+    cl.innerHTML = s.comments.map(raw => {
+      const c = normalizeComment(raw);
+      return `<div class="comment-item">${c.date ? `<div class="comment-date">${c.date}</div>` : ''}<div class="comment-text">${c.text}</div></div>`;
+    }).join('');
   }
 
   const col = COL_KEY[s.status];
@@ -760,6 +876,13 @@ document.addEventListener('click', e => {
   const actionBtn = e.target.closest('[data-action]');
   if (actionBtn) {
     e.stopPropagation();
+    const action = actionBtn.dataset.action;
+    if (action === 'toggle-lane') {
+      const laneEl = actionBtn.closest('.lane');
+      setCollapsed(actionBtn.dataset.epic, !laneEl.classList.contains('collapsed'));
+      render();
+      return;
+    }
     moveStory(actionBtn.dataset.id, actionBtn.dataset.action);
     return;
   }
@@ -771,6 +894,19 @@ document.addEventListener('click', e => {
   if (e.target.id === 'btnBack')   moveStory(activeId, 'back');
   if (e.target.id === 'btnReset')  moveStory(activeId, 'reset');
   if (e.target.id === 'btnAddComment') addComment(activeId);
+  if (e.target.id === 'btnExpandAll') {
+    data.epics.forEach(epic => setCollapsed(epic.id, false));
+    render();
+  }
+  if (e.target.id === 'btnCollapseAll') {
+    data.epics.forEach(epic => setCollapsed(epic.id, true));
+    render();
+  }
+});
+
+document.getElementById('searchInput').addEventListener('input', e => {
+  searchTerm = e.target.value.trim().toLowerCase();
+  render();
 });
 
 render();

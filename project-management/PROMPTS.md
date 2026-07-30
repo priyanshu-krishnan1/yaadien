@@ -716,3 +716,217 @@ the error-message format. In BOARD.html, set ORC-4's status to "Done" and
 add a comment summarizing what you built. Then
 `git add -A && git commit -m "orc-4: schema attach mode"`.
 ```
+
+---
+
+# Epic 5 — Production hardening: CI, security, packaging, and benchmarking
+
+Everything below is tracked as `EPIC-5` in [`BOARD.html`](BOARD.html)
+(Stories `PH-1` through `PH-6`), separate from both the `EPIC-1` build
+sequence and the `EPIC-4` beta-readiness verification pass. EPIC-4 checks
+that already-built features are correct; this epic builds infrastructure
+that doesn't exist yet — there is no CI today (no `.github/` directory),
+`pytest-cov` is a declared dependency nobody invokes, and there is no
+repeatable way to measure retrieval quality, cost, or isolation-under-load
+against the numbers this project's own
+`ai-agent-platform-competitive-analysis.md` cites for competing platforms.
+VER-13's market-fit gap check (EPIC-4) flagged the missing README/docs
+(`STEP-8`) as a hard blocker for a worldwide beta; this epic is the
+companion fix for everything else a public release needs that isn't a
+product feature.
+
+Same working agreement as the other epics (read `DECISIONS.md` first,
+update it + `BOARD.html` before finishing, commit each story separately).
+Suggested order: `PH-1` before `PH-2` (the integration CI job builds on the
+same workflow file as the base CI job); `PH-3` and `PH-4` can go in either
+order or in parallel with each other; `PH-5` is independent; `PH-6` is the
+largest and most optional of the six — it needs a live Db2 instance and an
+LLM/embedding provider configured, and depends on nothing else here, so
+it's reasonable to defer it behind the other five if time is short.
+
+`STEP-8` (docs & examples) is not part of this epic and should not be
+folded into it — it's already its own story on the board (`EPIC-1`,
+currently "To Do") and remains the harder blocker of the two for a public
+release.
+
+---
+
+## PH-1 — CI pipeline: lint, type-check, and unit tests on every PR
+
+```
+Before starting: in BOARD.html, set PH-1's status to "In Progress".
+
+Add `.github/workflows/ci.yml` with a job matrix over Python 3.10, 3.11,
+and 3.12 (matching `requires-python` and the classifiers in
+pyproject.toml). For each matrix entry: install with
+`pip install -e ".[dev]"`, run `ruff check .`, run `mypy src`, and run
+`pytest` (unit suite only — `tests/integration/` self-skips without
+`DB2_DATABASE` set via the existing `pytest_collection_modifyitems` hook
+in `tests/integration/conftest.py`, so no extra exclusion flag is needed).
+Cache pip dependencies keyed on the pyproject.toml hash. Trigger on push
+to main and on pull_request. Once green, add a status badge to README.md.
+
+Do not install the `[langchain]`/`[openai-agents]`/`[mcp]` extras or run
+adapter tests against them beyond the default dev install in this job —
+that's out of scope here.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the workflow file path, the Python version matrix,
+and exactly which commands each CI step runs. In BOARD.html, set PH-1's
+status to "Done" and add a comment summarizing what you built. Then
+`git add -A && git commit -m "ph-1: CI lint/type-check/unit-test pipeline"`.
+```
+
+---
+
+## PH-2 — CI integration job: live Db2 service container running the marked integration suite
+
+```
+Before starting: in BOARD.html, set PH-2's status to "In Progress".
+
+Add a second job (same workflow file as PH-1, or a separate one if the
+Db2 boot time would slow down the fast unit job) that boots a Db2 LUW
+container, sets the DB2_* env vars documented in .env.example, applies
+migrations via the existing Migrator, and runs `pytest -m integration`.
+Reuse the exact setup already documented in
+project-management/INTEGRATION_TESTING.md rather than inventing a new
+one; if CI needs something that doc doesn't cover (an image tag that
+works unattended, a longer startup timeout), update
+INTEGRATION_TESTING.md to match instead of letting the two drift. Db2
+startup is slow — use a real wait/health-check loop, not a fixed sleep.
+
+This closes the gap where ~77 integration tests exist and pass locally
+but nothing outside a developer's machine has ever proven
+`pytest tests/integration/` runs green.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the container image/version used, the wait
+strategy, and confirm INTEGRATION_TESTING.md still matches. In
+BOARD.html, set PH-2's status to "Done" and add a comment summarizing
+what you built. Then
+`git add -A && git commit -m "ph-2: CI integration job against live Db2"`.
+```
+
+---
+
+## PH-3 — Coverage reporting and threshold gate
+
+```
+Before starting: in BOARD.html, set PH-3's status to "In Progress".
+
+pytest-cov is already listed in pyproject.toml's dev extras but nothing
+invokes it — no --cov in addopts, no report generated anywhere. Add
+`--cov=agent_memory_sdk --cov-report=xml --cov-report=term-missing` to
+the PH-1 unit-test CI step, upload the XML report to Codecov (or
+Coveralls, whichever needs less setup for a not-yet-public repo), add the
+resulting badge to README.md, and set a minimum threshold via
+`--cov-fail-under` (propose 85%, given how thorough the VER-1..VER-10
+audit notes show the existing unit suite to be) as a merge-blocking
+check. Scope coverage to `src/agent_memory_sdk` only — not `tests/` or
+`scripts/`.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the chosen threshold and the coverage-reporting
+service used. In BOARD.html, set PH-3's status to "Done" and add a
+comment summarizing what you built. Then
+`git add -A && git commit -m "ph-3: coverage reporting and threshold gate"`.
+```
+
+---
+
+## PH-4 — Dependency and static security scanning
+
+```
+Before starting: in BOARD.html, set PH-4's status to "In Progress".
+
+Add a CI job running `pip-audit` against the resolved dependency set
+(fail on any known-exploitable CVE with no available fix; record any
+accepted/ignored advisory with a reason). Add `bandit` scoped at minimum
+to `db/`, `repositories/`, and `store.py` — the modules VER-5 hand-
+verified for SQL injection safety (`_scope_predicates`, `_vec_to_str`,
+`_build_metadata_filter`, and the REQUIRE_EXISTING catalog queries in
+`db/migrate.py`). Where bandit flags a pattern VER-5 already established
+as safe (e.g. the `float()` coercion guard in `_vec_to_str` before string
+interpolation), add a scoped `# nosec` with a comment pointing at the
+DECISIONS.md VER-5 entry rather than silencing the whole file — the goal
+is to keep the manual audit's conclusions enforced mechanically, not to
+bulk-suppress the tool.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry listing every suppression added and why, so a future reader
+isn't left guessing whether a `# nosec` is a real risk acceptance or
+someone silencing noise. In BOARD.html, set PH-4's status to "Done" and
+add a comment summarizing what you built. Then
+`git add -A && git commit -m "ph-4: dependency and static security scanning"`.
+```
+
+---
+
+## PH-5 — Packaging build verification
+
+```
+Before starting: in BOARD.html, set PH-5's status to "In Progress".
+
+Add a CI job (at minimum on tags/releases, ideally on every PR since it's
+cheap) that: runs `python -m build` to produce sdist + wheel, runs
+`twine check dist/*`, creates a fresh throwaway venv, `pip install`s the
+built wheel (not the editable source tree — the point is to catch
+`[tool.hatch.build.targets.wheel] packages = [...]` misconfiguration or
+missing-file bugs that `pip install -e .` would never surface), and runs
+a minimal smoke test that imports `agent_memory_sdk` and touches one
+symbol from each of models/store/db to confirm the package layout is
+intact. Also verify the `[langchain]`, `[openai-agents]`, `[mcp]`, and
+`[all]` extras each install cleanly from the built wheel.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the smoke-test symbols checked and confirming all
+four extras installed cleanly. In BOARD.html, set PH-5's status to "Done"
+and add a comment summarizing what you built. Then
+`git add -A && git commit -m "ph-5: packaging build verification"`.
+```
+
+---
+
+## PH-6 — Agent-memory benchmarking harness: retrieval quality, latency/cost, and isolation-under-load
+
+```
+Before starting: in BOARD.html, set PH-6's status to "In Progress".
+
+Build a `benchmarks/` harness (excluded from the wheel via the hatchling
+wheel target, same treatment as `project-management/`) with three parts:
+
+1. Retrieval quality — a LongMemEval-shaped synthetic dataset
+   (multi-session conversations with planted facts, later contradictions,
+   and questions covering LongMemEval's five ability categories:
+   extraction, multi-session reasoning, temporal reasoning, knowledge
+   updates, abstention) run through MemoryStore.remember()/search(),
+   scored by an LLM judge closely enough to the LongMemEval methodology
+   (arXiv 2410.10813) that the result is honestly comparable to the
+   vendor figures already cited in ai-agent-platform-competitive-
+   analysis.md. Document any methodology deviation explicitly rather than
+   calling a number "LongMemEval" if it isn't.
+2. Latency/cost — per-remember()/per-search() latency, and per-turn token
+   cost only where a Consolidator/Reconciler/Summarizer hook is actually
+   configured (the no-op default path should report near-zero LLM cost,
+   itself a comparison point against the extraction-pipeline competitors
+   in the market study).
+3. Isolation-under-load — concurrent writers across many synthetic
+   tenants/agents hammering search()/list_all(), asserting zero
+   cross-scope result leakage under concurrent load, not just the
+   single-threaded conditions VER-5's manual audit checked. This measures
+   the governed-substrate claim in the market study's SWOT instead of
+   only asserting it.
+
+Requires a live Db2 instance and a configured EmbeddingProvider/LLM —
+runs on demand via a `scripts/run_benchmarks.py` entry point, not in the
+PH-1/PH-2 CI jobs. Publish results as `project-management/BENCHMARKS.md`
+with the exact dataset size, model, and embedding provider used, caveated
+the same way ai-agent-platform-competitive-analysis.md caveats the
+vendor-reported figures it cites.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the dataset size/methodology and a summary of
+results. In BOARD.html, set PH-6's status to "Done" and add a comment
+summarizing what you built. Then
+`git add -A && git commit -m "ph-6: agent-memory benchmarking harness"`.
+```
