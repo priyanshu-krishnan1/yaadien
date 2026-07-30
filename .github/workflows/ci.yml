@@ -134,3 +134,52 @@ jobs:
 
       - name: Run integration tests
         run: pytest -m integration -v
+
+  security:
+    name: "Security scanning (pip-audit + bandit)"
+    runs-on: ubuntu-latest
+    # Run independently of the unit matrix so a security finding never delays
+    # lint/type-check/unit feedback.  Both jobs are required for PR merge.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-security-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            pip-security-3.11-
+
+      - name: Install package and dev dependencies
+        # Full editable install so pip-audit sees the resolved dependency set
+        # (including transitive deps) and bandit can import the package if needed.
+        run: pip install -e ".[dev]"
+
+      - name: Dependency audit — pip-audit
+        # Fail on any vulnerability with a known CVE that has no available fix.
+        # --fix is deliberately omitted (read-only audit in CI).
+        # --ignore-vuln: add entries here with a DECISIONS.md reference when an
+        # advisory is accepted (e.g. an unfixed vuln in a transitive dep with no
+        # available upgrade path and a risk acceptance recorded in DECISIONS.md).
+        # Example format: --ignore-vuln PYSEC-2024-XXXXX
+        run: pip-audit --strict
+
+      - name: Static security analysis — bandit
+        # Scope: the three module groups VER-5 hand-verified for SQL injection
+        # safety, plus the store facade.  All B608 (SQL string construction) and
+        # B110 (try/except/pass) findings that VER-5 established as safe are
+        # suppressed with per-site '# nosec B608' / '# nosec B110' comments on
+        # the closing line of each f-string or except clause; the suppression
+        # rationale is in DECISIONS.md PH-4.
+        run: |
+          bandit -r \
+            src/agent_memory_sdk/db/ \
+            src/agent_memory_sdk/repositories/ \
+            src/agent_memory_sdk/store.py

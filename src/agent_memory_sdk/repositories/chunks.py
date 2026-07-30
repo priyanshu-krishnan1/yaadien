@@ -131,7 +131,7 @@ class ChunkRepository:
                 ?, ?, ?, ?,
                 ?
             )
-        """
+        """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; vec_str from _vec_to_str() (float() coercion guard, DECISIONS.md VER-5); embedding_dim is an int constant; all other values are bound params.
         params = [
             chunk_id,
             source_table,
@@ -273,7 +273,7 @@ class ChunkRepository:
                 {metric.value}
             )
             FETCH FIRST ? ROWS ONLY{approx_clause}
-        """
+        """  # nosec B608 — table name is a hardcoded literal; vec_str from _vec_to_str() (float() guard, DECISIONS.md VER-5); metric.value is a DistanceMetric enum (hardcoded strings); scope_sql contains only literal column=? fragments (bound params).
         rank_params = [source_table, *scope_params, top_n]
 
         with self._pool.get_connection() as conn:
@@ -301,7 +301,7 @@ class ChunkRepository:
                    ) AS dist
             FROM memory_chunks
             WHERE id IN ({placeholders})
-        """
+        """  # nosec B608 — table name hardcoded; vec_str from _vec_to_str() (float() guard, DECISIONS.md VER-5); metric.value is a DistanceMetric enum; placeholders is a literal "?,?…" string; chunk IDs passed as bound params.
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(sql_dist, chunk_ids)

@@ -576,9 +576,14 @@
     "epic_id": "EPIC-5",
     "title": "Dependency and static security scanning",
     "summary": "Add pip-audit for dependency CVEs and bandit for the hand-audited SQL-construction code paths, both enforced in CI, so the injection/scope guarantees VER-5 verified by hand stay checked automatically going forward.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Add a CI job running `pip-audit` against the resolved dependency set (fail on any known-exploitable CVE with no available fix; document any accepted/ignored advisories with a reason, same spirit as DECISIONS.md's audit-trail convention). Add `bandit` scoped at minimum to `db/`, `repositories/`, and `store.py` — the modules VER-5 hand-verified for SQL injection safety (`_scope_predicates`, `_vec_to_str`, `_build_metadata_filter`, and the catalog queries in `db/migrate.py`'s `REQUIRE_EXISTING` path). Where bandit flags a pattern VER-5 already established as safe (e.g. the `float()` coercion guard before string interpolation in `_vec_to_str`), add a scoped `# nosec` with a comment pointing at the DECISIONS.md VER-5 entry rather than silencing the whole file — the goal is to keep the manual audit's conclusions enforced mechanically, not to bulk-suppress the tool.\n\nBefore finishing: append a dated DECISIONS.md entry listing every suppression added and why, so a future reader isn't left guessing whether a `# nosec` is a real risk acceptance or someone silencing noise.",
-    "comments": []
+    "comments": [
+      {
+        "date": "2025-07-31",
+        "text": "Done. Added 'security' job to .github/workflows/ci.yml (parallel, not blocking lint/unit/integration feedback). Two steps: (1) pip-audit --strict against pip install -e \".[dev]\" — fails on any known CVE in the resolved set; no advisories accepted at this time. (2) bandit -r scoped to db/, repositories/, and store.py — the three module groups VER-5 hand-verified. Bandit found 19 issues on first run: 18×B608 (string-based SQL construction) and 1×B110 (try/except/pass in _bootstrap()). All 19 are VER-5-verified false positives. Each was suppressed with a scoped '# nosec B608' or '# nosec B110' comment placed on the closing '\"\"\"' line of the multiline f-string (the line bandit v1.9.4 associates with the AST node). bandit and pip-audit added to pyproject.toml [dev] extras so developers can run both locally. DECISIONS.md PH-4 entry appended with: full nosec suppression register (19 entries across 4 files), rationale for each (Pattern A: hardcoded table/column names + bound params; Pattern B: _vec_to_str() float() coercion guard; B110: intentional existence probe), pip-audit accepted-advisory protocol, and scope rationale. All 517 unit tests still pass; bandit exits 0 on the target scope."
+      }
+    ]
   },
   {
     "id": "PH-5",

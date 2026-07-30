@@ -729,7 +729,7 @@ class BaseRepository(ABC, Generic[M]):
                   AND deleted_at IS NULL
                   {supersession_sql}
                 FETCH FIRST 1 ROWS ONLY
-            """
+            """  # nosec B608 — _TABLE/_SELECT_COLS are hardcoded class constants; scope_sql contains only literal column=? fragments from _scope_predicates (all values bound); supersession_sql is a hardcoded string fragment. DECISIONS.md VER-5.
             with self._pool.get_connection() as conn:
                 cur = conn.cursor()
                 cur.execute(dedup_sql, [*scope_params, h])
@@ -783,7 +783,7 @@ class BaseRepository(ABC, Generic[M]):
                 ?, ?,
                 ?, ?, ?, ?, ?
             )
-        """
+        """  # nosec B608 — _TABLE is a hardcoded class constant; vec_str is produced by _vec_to_str() which coerces every element through float() before formatting (injection guard established in DECISIONS.md VER-5); all column values are bound params.
         params = [
             record.id,
             record.tenant_id,
@@ -838,7 +838,7 @@ class BaseRepository(ABC, Generic[M]):
             WHERE id = ?
               AND {scope_sql}
               AND deleted_at IS NULL
-        """
+        """  # nosec B608 — _TABLE/_SELECT_COLS are hardcoded class constants; scope_sql contains only literal column=? fragments; all values are bound params. DECISIONS.md VER-5.
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(sql, [record_id, *scope_params])
@@ -928,7 +928,7 @@ class BaseRepository(ABC, Generic[M]):
               {meta_sql}
             ORDER BY created_at DESC
             FETCH FIRST ? ROWS ONLY
-        """
+        """  # nosec B608 — _TABLE/_SELECT_COLS are hardcoded constants; scope_sql from _scope_predicates (bound params only); supersession_sql/extra/conf_sql are hardcoded fragments; meta_sql from _build_metadata_filter which validates field names + uses bound params. DECISIONS.md VER-5.
         # Db2 doesn't support OFFSET in all configurations; handle via ROW_NUMBER
         # for paginated requests, but keep simple FETCH FIRST for offset=0 to avoid
         # unnecessary overhead.
@@ -945,7 +945,7 @@ class BaseRepository(ABC, Generic[M]):
                       {conf_sql}
                       {meta_sql}
                 ) WHERE rn > ? AND rn <= ?
-            """
+            """  # nosec B608 — same safety as the FETCH FIRST path above: all interpolated fragments are hardcoded constants or outputs of vetted helpers with bound params. DECISIONS.md VER-5.
             params = [*scope_params, *conf_params, *meta_params, offset, offset + limit]
         else:
             params = [*scope_params, *conf_params, *meta_params, limit]
@@ -1003,7 +1003,7 @@ class BaseRepository(ABC, Generic[M]):
             WHERE id = ?
               AND {scope_sql}
               AND deleted_at IS NULL
-        """
+        """  # nosec B608 — _TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.
         now = _now()
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
@@ -1084,7 +1084,7 @@ class BaseRepository(ABC, Generic[M]):
               AND {scope_sql}
               AND version = ?
               AND deleted_at IS NULL
-        """
+        """  # nosec B608 — _TABLE hardcoded; vec_str from _vec_to_str() (float() coercion guard, DECISIONS.md VER-5); scope_sql bound-params only; EMBEDDING_DIM is an int constant.
         params = [
             record.content,
             metadata_str,
@@ -1153,7 +1153,7 @@ class BaseRepository(ABC, Generic[M]):
             DELETE FROM {self._TABLE}
             WHERE deleted_at IS NOT NULL
               AND {scope_sql}
-        """
+        """  # nosec B608 — _TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(sql, scope_params)
@@ -1227,7 +1227,7 @@ class BaseRepository(ABC, Generic[M]):
             WHERE id = ?
               AND {scope_sql}
               AND consolidated_at IS NULL
-        """
+        """  # nosec B608 — _TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(sql, [now, record_id, *scope_params])
@@ -1431,7 +1431,7 @@ class BaseRepository(ABC, Generic[M]):
               {meta_sql}
             ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})
             FETCH FIRST ? ROWS ONLY{approx_clause}
-        """
+        """  # nosec B608 — _TABLE hardcoded; vec_str from _vec_to_str() (float() guard, DECISIONS.md VER-5); metric.value is a DistanceMetric enum (hardcoded strings); scope_sql/supersession_sql/extra/conf_sql/meta_sql are hardcoded or validated fragments with bound params.
         id_params = [*scope_params, *conf_params, *meta_params, top_k]
 
         with self._pool.get_connection() as conn:
@@ -1448,7 +1448,7 @@ class BaseRepository(ABC, Generic[M]):
             FROM {self._TABLE}
             WHERE id IN ({placeholders})
               AND deleted_at IS NULL
-        """
+        """  # nosec B608 — _TABLE/_SELECT_COLS are hardcoded constants; placeholders is a literal "?,?,…" string built from len(ordered_ids). DECISIONS.md VER-5.
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(sql_rows, ordered_ids)
@@ -1556,7 +1556,7 @@ class BaseRepository(ABC, Generic[M]):
               {extra}
               {conf_sql}
               {meta_sql}
-        """
+        """  # nosec B608 — _TABLE/_SELECT_COLS hardcoded; placeholders is literal "?,?…"; scope_sql/supersession_sql/extra/conf_sql/meta_sql are hardcoded or validated fragments with bound params. DECISIONS.md VER-5.
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
             cur.execute(sql_rows, [*ranked_ids, *scope_params, *conf_params, *meta_params])

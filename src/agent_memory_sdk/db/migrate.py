@@ -373,7 +373,7 @@ class Migrator:
                     f"SELECT UPPER(TABNAME), UPPER(COLNAME)"
                     f"  FROM SYSCAT.COLUMNS"
                     f" WHERE TABSCHEMA = UPPER(CURRENT SCHEMA)"
-                    f"   AND UPPER(TABNAME) IN ({placeholders})",
+                    f"   AND UPPER(TABNAME) IN ({placeholders})",  # nosec B608 — placeholders is a literal "?,?,…" string (len(present_tables) question marks); the actual table names from _REQUIRED_TABLES are passed as bound params, not interpolated. DECISIONS.md VER-5.
                     list(present_tables),
                 )
                 existing_cols: dict[str, set[str]] = {}
@@ -397,7 +397,7 @@ class Migrator:
                     f"SELECT UPPER(TABNAME), UPPER(INDNAME)"
                     f"  FROM SYSCAT.INDEXES"
                     f" WHERE TABSCHEMA = UPPER(CURRENT SCHEMA)"
-                    f"   AND UPPER(TABNAME) IN ({placeholders})",
+                    f"   AND UPPER(TABNAME) IN ({placeholders})",  # nosec B608 — placeholders is a literal "?,?,…" string; table names from _REQUIRED_TABLES (hardcoded constant) are passed as bound params. DECISIONS.md VER-5.
                     list(present_tables),
                 )
                 existing_idxs: dict[str, set[str]] = {}
@@ -458,7 +458,7 @@ class Migrator:
                 cur.execute("SELECT COUNT(*) FROM schema_migrations")
                 cur.fetchone()
                 return  # table already exists — nothing to do
-            except Exception:
+            except Exception:  # nosec B110 — intentional probe: we SELECT to test existence; any exception (table missing, driver error) means the table is absent and we create it. The pass is deliberate. DECISIONS.md VER-5.
                 pass  # table is absent; fall through to create it
 
             # Create the tracking table using Db2 DDL.

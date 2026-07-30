@@ -154,7 +154,7 @@ class SemanticFactRepository(BaseRepository[SemanticFact]):
               AND {scope_sql}
               AND deleted_at IS NULL
               AND superseded_at IS NULL
-        """
+        """  # nosec B608 — _TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments from _scope_predicates (all values bound). DECISIONS.md VER-5.
         params = [winner_id, now, truncated_reason, now, loser_id, *scope_params]
 
         with self._pool.get_connection() as conn:

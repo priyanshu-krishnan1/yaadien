@@ -65,6 +65,9 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "python-dotenv>=1.0",
+    # Security scanning (PH-4)
+    "bandit>=1.7",
+    "pip-audit>=2.7",
 ]
 
 [project.urls]

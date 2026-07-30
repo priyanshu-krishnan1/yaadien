@@ -154,3 +154,181 @@ immediate diagnosis without opening a dashboard).
   runtime; excluding them avoids penalising well-typed code.
 - `raise NotImplementedError` — abstract method stubs; covered by the
   concrete subclass tests, not the stub itself.
+
+---
+
+## 2025-07-31 — Dependency and static security scanning (PH-4)
+
+**Workflow file:** `.github/workflows/ci.yml` — new `security` job appended.
+
+**Triggers:** same as PH-1: `push` to `main`; all `pull_request` events.
+The job runs in parallel with the unit matrix and the integration job so
+a security finding never delays fast lint/type-check/unit feedback.
+
+### pip-audit
+
+**Command:** `pip-audit --strict`
+
+Audits the fully resolved dependency set installed by `pip install -e ".[dev]"`.
+`--strict` causes the command to exit non-zero on any known vulnerability
+regardless of severity, so the gate is unambiguous: no known CVEs with a
+published advisory in the PyPI advisory database are permitted in the
+resolved install.
+
+**Accepted/ignored advisories:** none at time of writing.  When a future
+advisory must be accepted (e.g. an unfixed transitive-dep vuln with no upgrade
+path and a documented risk acceptance), add `--ignore-vuln <PYSEC-ID>` to the
+`pip-audit` step and record it in this file with:
+- the PYSEC/GHSA advisory ID,
+- which package and version is affected,
+- why no upgrade is available,
+- the risk assessment (exploitability, actual attack surface in this project),
+- the expiry date for the acceptance (i.e. when to re-evaluate).
+
+**Why `.[dev]` only (not all extras):** `pip-audit` runs against the resolved
+install.  The `[langchain]`, `[openai-agents]`, and `[mcp]` extras are
+intentionally excluded here because they introduce rapidly-changing
+third-party dependency graphs whose version drift is out of scope for this job
+(the same rationale as PH-1 lint/type-check).  Those adapter deps are only
+installed and exercised by the `integration-test` job (PH-2).
+
+### bandit
+
+**Command:**
+```
+bandit -r \
+  src/agent_memory_sdk/db/ \
+  src/agent_memory_sdk/repositories/ \
+  src/agent_memory_sdk/store.py
+```
+
+**Why this scope:** VER-5 hand-audited all SQL construction in these three
+module groups for injection safety.  Enforcing bandit over exactly this scope
+turns the manual audit into a mechanical gate: any *new* SQL-construction
+pattern added in the future will be flagged and must either pass cleanly or
+receive a scoped suppression with a recorded rationale here.
+
+**Findings before suppression:** 19 issues detected on first run.
+All 19 were confirmed safe by the VER-5 audit.  No new `# nosec` comments
+were added that represent genuine risk acceptances — every suppression is a
+false-positive reclassification of a pattern whose safety was already
+established and documented.
+
+### # nosec suppressions added (PH-4) — complete register
+
+All suppressions use scoped IDs (`# nosec B608` or `# nosec B110`) placed
+on the **closing `"""` line** of each multiline f-string (or on the
+`except` line for B110), because bandit v1.9.4 associates the finding with
+the AST node's closing token for multiline strings.
+
+---
+
+#### `src/agent_memory_sdk/db/migrate.py`
+
+**B608 — `validate()` SYSCAT.COLUMNS query (line 376)**
+```python
+f"   AND UPPER(TABNAME) IN ({placeholders})",  # nosec B608
+```
+`placeholders` is `", ".join("?" * len(present_tables))` — a literal string
+of `?` characters.  The actual table names from `_REQUIRED_TABLES` (a
+hardcoded module-level constant, never user-supplied) are passed as bound
+parameters to `cur.execute()`.  No user data is interpolated into the SQL.
+
+**B608 — `validate()` SYSCAT.INDEXES query (line 400)**
+```python
+f"   AND UPPER(TABNAME) IN ({placeholders})",  # nosec B608
+```
+Same as above; same `placeholders` construction; same bound-param pattern.
+
+**B110 — `_bootstrap()` catalog probe (line ~462)**
+```python
+except Exception:  # nosec B110
+    pass  # table is absent; fall through to create it
+```
+This `try/except/pass` is an intentional existence probe: `SELECT COUNT(*)
+FROM schema_migrations` raises if the table doesn't exist (DB-API driver
+error, not a catchable SQL error code in ibm_db_dbi).  Swallowing the
+exception is the correct design — any non-empty exception means "table
+absent, create it".  The subsequent `CREATE TABLE IF NOT EXISTS` makes the
+handler idempotent.  The alternative (querying SYSCAT.TABLES first) would
+require a second round-trip; the probe pattern is simpler and documented in
+the `_bootstrap()` docstring.
+
+---
+
+#### `src/agent_memory_sdk/repositories/base.py`
+
+All 12 B608 findings in this file follow one of two patterns:
+
+**Pattern A — structural query builder with hardcoded table/column names**
+Interpolated variables: `self._TABLE` (hardcoded class attribute, e.g.
+`"working_memory"`), `self._SELECT_COLS` (hardcoded column list string),
+`scope_sql` (output of `_scope_predicates()` which only produces literal
+`"agent_id = ?"` / `"tenant_id = ?"` etc. fragments — all values bound),
+`supersession_sql` / `extra` / `conf_sql` (hardcoded constant string
+fragments — never user-supplied), `meta_sql` (output of
+`_build_metadata_filter()` which validates field names against
+`^[A-Za-z_][A-Za-z0-9_.]*$` and uses bound params for values),
+`placeholders` (`",".join("?" for _ in ids)` — all literal `?` chars).
+None of these originate from untrusted user input.
+
+**Pattern B — vector literal injection guard (`_vec_to_str`)**
+The only variable inlined as a literal SQL string (not as a bound param)
+is the vector string `vec_str`, produced by `_vec_to_str(embedding)`:
+```python
+def _vec_to_str(embedding: list[float]) -> str:
+    return "[" + ",".join(str(float(f)) for f in embedding) + "]"
+```
+Every element is coerced through `float()` before string-formatting.  Any
+non-numeric value raises `ValueError`/`TypeError` before reaching SQL.  This
+is the actual injection guard: for `create()`/`update()` the source is a
+Pydantic-validated `list[float]` (coercion is a no-op); for `search()` the
+source is the externally-reachable `query_embedding` parameter, where
+coercion is the real security boundary.  This pattern was established in
+VER-5 and is documented in the `repositories/base.py` module docstring.
+
+Specifically suppressed locations:
+- `create()` dedup SELECT (line ~732): Pattern A.
+- `create()` INSERT (line ~786): Patterns A + B.
+- `get_by_id()` SELECT (line ~841): Pattern A.
+- `list_all()` FETCH FIRST SELECT (line ~931): Pattern A.
+- `list_all()` ROW_NUMBER pagination SELECT (line ~948): Pattern A.
+- `forget()` UPDATE (line ~1006): Pattern A.
+- `update()` UPDATE (line ~1087): Patterns A + B.
+- `purge_expired()` DELETE (line ~1156): Pattern A.
+- `_claim_consolidated()` UPDATE (line ~1230): Pattern A.
+- `search()` ID-ranking SELECT (line ~1434): Patterns A + B.
+- `search()` full-row fetch SELECT (line ~1452): Pattern A.
+- `_search_via_chunks()` parent-row fetch SELECT (line ~1559): Pattern A.
+
+---
+
+#### `src/agent_memory_sdk/repositories/chunks.py`
+
+**B608 — `insert_chunk()` INSERT (line ~134):** Pattern B (vec_str) + table
+name `"memory_chunks"` is a hardcoded string literal in this file (not a
+variable); all other values bound.
+
+**B608 — `search_chunks()` ranking SELECT (line ~276):** Pattern B (vec_str)
++ `metric.value` is a `DistanceMetric` enum member (hardcoded strings:
+`"COSINE"`, `"EUCLIDEAN"`, `"INNER_PRODUCT"` — never user-supplied).
+
+**B608 — `search_chunks()` distance SELECT (line ~304):** Same as above.
+
+---
+
+#### `src/agent_memory_sdk/repositories/facts.py`
+
+**B608 — `SemanticFactRepository.supersede()` UPDATE (line ~157):** Pattern A.
+`self._TABLE = "semantic_facts"` (hardcoded class constant); `scope_sql`
+from `_scope_predicates()` (bound params only).
+
+---
+
+### Bandit configuration note
+
+`bandit` is run with no `--skip` or `-t` flags in CI.  All suppressions are
+per-site `# nosec B608` / `# nosec B110` comments placed in the source.
+This keeps the full test suite active for the entire scope and means any
+new finding in a future code change will surface immediately rather than
+being hidden by a global skip list.
