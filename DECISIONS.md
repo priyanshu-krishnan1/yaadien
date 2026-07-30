@@ -1204,6 +1204,45 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-08-01 — ENH-1 follow-up: Pydantic confidence range enforcement + docstring fixes
+
+- **Decision:** Two correctness fixes to the ENH-1 confidence work, applied
+  in a single commit.
+
+  1. **Pydantic range constraint on `_MemoryBase.confidence`.**
+     The ENH-1 entry stated "no validator constraint at the Pydantic layer
+     (application-level convention)" — this was aspirational, not actual.
+     `_MemoryBase.confidence` was a bare `float = 1.0`, meaning values like
+     `57.0` or `-0.1` were silently accepted and persisted, corrupting
+     `min_confidence`-based filtering and any future reconciliation logic that
+     assumes confidence is a meaningful 0–1 value.
+     Fixed by changing the field declaration to
+     `Field(default=1.0, ge=0.0, le=1.0)`.  No migration or schema change is
+     required — this is a Python-only change that makes the migration comment
+     ("the application enforces the 0.0–1.0 range") true instead of
+     aspirational.
+     Seven new unit tests added to `TestConfidenceScoring` in
+     `tests/test_repositories.py` cover: above-1.0, below-0.0, boundary 0.0,
+     boundary 1.0, a wildly wrong value (57.0), and the constraint applying to
+     all five concrete model subclasses.
+
+  2. **Stale docstring examples in `SemanticFact` and `ProceduralMemory`.**
+     Both usage examples in `models.py` showed `confidence` as an arbitrary
+     key inside the `metadata` dict (e.g. `metadata={"confidence": 0.95, ...}`),
+     a pattern from before ENH-1 added a real first-class field.  Updated to
+     pass `confidence=` as a proper constructor argument and removed the key
+     from `metadata`.
+
+- **Reason:** The range-enforcement gap would silently corrupt confidence-based
+  retrieval and reconciliation.  The docstring examples misled readers about
+  where confidence lives on the model.  Both are low-risk, no-schema fixes.
+- **Made during:** ENH-1 follow-up (post-story correctness pass)
+- **Supersedes:** The "no validator constraint at the Pydantic layer
+  (application-level convention)" line in the
+  `2026-08-01 — ENH-1: confidence scoring on memory records` entry above.
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```

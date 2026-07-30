@@ -495,6 +495,49 @@ class TestConfidenceScoring:
         params = pool.cursor.last_params
         assert 0.8 in params
 
+    # -- Pydantic range enforcement (ENH-1 fix) --------------------------------
+
+    def test_confidence_above_1_raises(self):
+        """confidence > 1.0 must be rejected at construction time."""
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            SemanticFact(agent_id="a", content="c", confidence=1.5)
+
+    def test_confidence_at_1_is_valid(self):
+        """Boundary value 1.0 must be accepted."""
+        fact = SemanticFact(agent_id="a", content="c", confidence=1.0)
+        assert fact.confidence == 1.0
+
+    def test_confidence_at_0_is_valid(self):
+        """Boundary value 0.0 must be accepted."""
+        fact = SemanticFact(agent_id="a", content="c", confidence=0.0)
+        assert fact.confidence == 0.0
+
+    def test_confidence_negative_raises(self):
+        """Negative confidence must be rejected at construction time."""
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            WorkingMemory(agent_id="a", content="c", confidence=-0.1)
+
+    def test_confidence_57_raises(self):
+        """A wildly out-of-range value (e.g. 57.0) must be rejected."""
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            SemanticFact(agent_id="a", content="c", confidence=57.0)
+
+    def test_confidence_constraint_applies_to_all_subtypes(self):
+        """All five concrete model types inherit the constraint from _MemoryBase."""
+        from pydantic import ValidationError
+        for Model in (
+            WorkingMemory,
+            EpisodicMemory,
+            SemanticFact,
+            EntityProfile,
+            ProceduralMemory,
+        ):
+            with pytest.raises(ValidationError, match="confidence"):
+                Model(agent_id="a", content="c", confidence=2.0)
+
 
 # ---------------------------------------------------------------------------
 # EpisodicMemoryRepository

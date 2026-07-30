@@ -84,7 +84,8 @@ class _MemoryBase(BaseModel):
     # Values below 1.0 indicate derived or inferred records — an LLM-based
     # Consolidator can set 0.6 for a tentative inference vs 0.95 for an
     # explicit user statement.  Persisted as DOUBLE in Db2 (see migration 0003).
-    confidence: float = 1.0
+    # Range [0.0, 1.0] enforced by Pydantic at construction time.
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -150,7 +151,8 @@ class SemanticFact(_MemoryBase):
             agent_id="agent-001",
             user_id="user-42",
             content="User prefers Python over Java.",
-            metadata={"confidence": 0.95, "source": "episode-xyz"},
+            confidence=0.95,
+            metadata={"source": "episode-xyz"},
         )
     """
 
@@ -185,6 +187,7 @@ class ProceduralMemory(_MemoryBase):
         skill = ProceduralMemory(
             agent_id="agent-001",
             content="When debugging Python, always check the traceback first.",
-            metadata={"skill": "debugging", "confidence": 0.9},
+            confidence=0.9,
+            metadata={"skill": "debugging"},
         )
     """
