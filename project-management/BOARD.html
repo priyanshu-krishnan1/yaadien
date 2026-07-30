@@ -438,8 +438,10 @@
     "epic_id": "EPIC-4",
     "title": "Verify: Step 6: Framework adapters",
     "summary": "Re-verify LangChain, OpenAI Agents SDK, and MCP adapters — duck-typing, optional extras, correct protocol methods against STEP-6 acceptance criteria.",
-    "status": "To Do",
-    "comments": []
+    "status": "Done",
+    "comments": [
+      "VER-6 PASS. LangChain (Db2ChatMessageHistory + Db2MemoryStore), OpenAI Agents SDK (Db2Session), and MCP (create_server + 4 tools) verified. All three adapters: (1) gate on deferred _require_*() import guard — core importable without any adapter dep; (2) are correctly declared in pyproject.toml optional-dependency extras [langchain], [openai-agents], [mcp]; (3) implement duck-typing protocols (not direct inheritance). Protocol correctness: Db2ChatMessageHistory has messages property, add_message(), add_messages(), clear() — all backed by store.working. Db2Session has add_items(), get_items(), pop_item(), clear_session() all async; scope maps session_id→thread_id. MCP has list_tools() and call_tool() dispatcher for remember/recall/forget/list_memories with proper scoping. 53 unit tests all pass; integration test suite (test_adapters_integration.py) covers real Db2 round-trips for all three adapters. ruff check + mypy clean on 4 adapter source files."
+    ]
   },
   {
     "id": "VER-7",

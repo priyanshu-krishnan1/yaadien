@@ -2247,3 +2247,17 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix. The isolation boundary is correctly enforced by bound SQL parameters on all 7 SQL paths. No path allows scope bypass.
 - **Made during:** VER-5 (EPIC-4 beta readiness verification — extra scrutiny pass)
 
+
+
+## 2026-08-02 — VER-6: Verified STEP-6 (Framework adapters)
+
+- **Decision:** VER-6 verification PASS — all three framework adapters meet STEP-6 acceptance criteria; no gaps or fixes required.
+- **Checked:**
+  - **LangChain adapter** (`adapters/langchain.py`): `Db2ChatMessageHistory` implements the `BaseChatMessageHistory` interface via duck-typing (`messages` property, `add_message()`, `add_messages()`, `clear()`), backed by `store.working`. `Db2MemoryStore` implements `BaseStore[str, str]` duck-typing (`mget`, `mset`, `mdelete`, `yield_keys`) backed by `store.facts` or `store.profiles` depending on namespace. Both have deferred `_require_langchain()` guard — the SDK core is importable without `langchain-core`. ✓
+  - **OpenAI Agents SDK adapter** (`adapters/openai_agents.py`): `Db2Session` implements the four required `Session` protocol methods all `async`: `add_items()`, `get_items()`, `pop_item()`, `clear_session()`. `session_id` maps to `MemoryScope.thread_id` as specified. `get_items(limit=N)` correctly returns the N most-recent messages in chronological order (list_all returns newest-first, reversed to chronological, then sliced from the tail). `recall_episodes()` is an extension (not part of the protocol) that uses `store.episodic.search()` across all sessions for the agent+user. Deferred `_require_openai_agents()` guard. ✓
+  - **MCP adapter** (`adapters/mcp_server.py`): `create_server()` returns an `mcp.server.Server` with `list_tools()` (remember, recall, forget, list_memories) and `call_tool()` dispatcher. All four tools handle scoping (agent_id, user_id, thread_id, tenant_id) and reject unknown memory_type values gracefully. `recall` gracefully degrades to `list_all` when `query_embedding` is omitted. Deferred `_require_mcp()` guard. CLI entry point `_main()` present. ✓
+  - **Optional extras in `pyproject.toml`**: `[langchain]` → `langchain-core>=0.2`; `[openai-agents]` → `openai-agents>=0.0.10`; `[mcp]` → `mcp>=1.0`; convenience `[all]` wraps all three. ✓
+  - **Tests:** 53 unit tests in `tests/test_adapters.py` — all pass. Full integration test suite in `tests/integration/test_adapters_integration.py` covering real Db2 round-trips for all three adapters. `ruff check` — clean. `mypy src` — clean (4 adapter source files). ✓
+- **Found:** Nothing to fix.
+- **Made during:** VER-6 (EPIC-4 beta readiness verification)
+
