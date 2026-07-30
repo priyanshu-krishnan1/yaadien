@@ -381,3 +381,173 @@ the way. In BOARD.html, set STEP-8's status to "Done" and add a comment
 summarizing what you built. Then
 `git add -A && git commit -m "step 8: docs and examples"`.
 ```
+
+---
+
+# Epic 2 — Cosmos-inspired memory enhancements (Db2-adapted)
+
+Everything below is a second phase, tracked as `EPIC-2` in
+[`BOARD.html`](BOARD.html) (Stories `ENH-1` through `ENH-4`), separate from
+the `EPIC-1` / Step 1-8 build sequence above. It assumes Steps 1-7 are
+already done — it builds directly on the existing schema, repositories,
+and `Consolidator` machinery rather than starting fresh. Same working
+agreement as above (read `DECISIONS.md` first, update it +
+`ARCHITECTURE.md` where noted + `BOARD.html` before finishing, commit each
+one separately) — paste `ENH-1` through `ENH-4` one at a time, in order,
+since `ENH-2` shares a migration with `ENH-1`, `ENH-3` depends on that
+migration existing, and `ENH-4`'s Reconciler-integration half depends on
+`ENH-3` (its `consolidated_at`/locking half does not, and may ship first
+if you want to reorder those two).
+
+These four were chosen after researching Azure Cosmos DB's Agent Memory
+Toolkit (github.com/AzureCosmosDB/AgentMemoryToolkit) and filtering its
+feature set through what's actually Db2-native-feasible — see the
+"2026-07-31 — EPIC-2 backlog" entry in `DECISIONS.md` for the full
+research writeup, what else the toolkit does that was deliberately left
+out of this set, and why.
+
+---
+
+## ENH-1 — Confidence scoring on memory records
+
+```
+Before starting: in BOARD.html, set ENH-1's status to "In Progress".
+
+Add a `confidence` field (float, 0.0-1.0, default 1.0) to `_MemoryBase`
+and a matching column on all five Db2 tables via a new migration (bundle
+with ENH-2's content_hash column in the same migration file if you're
+doing both stories back to back). Update `create()`/`update()` in
+`repositories/base.py` to persist it and `_model_from_row()` to read it
+back. Add an optional `min_confidence: float = 0.0` parameter to
+`search()` and `list_all()` that appends an `AND confidence >= ?`
+predicate to the WHERE clause.
+
+The pluggable `Consolidator` protocol's derived records can now carry a
+genuine grounding-certainty score (e.g. an LLM-based consolidator sets
+confidence=0.6 for a tentative inference vs 0.95 for an explicit user
+statement) instead of implicitly defaulting to 1.0 for everything it
+derives — update the `Consolidator` docstring's example to show this.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the migration file name, the confidence column's
+exact type/default, and how min_confidence interacts with the existing
+deleted_at/expires_at filters in the WHERE clause. Update section 3
+(schema ER diagram) of ARCHITECTURE.md to add the new column. In
+BOARD.html, set ENH-1's status to "Done" and add a comment summarizing
+what you built. Then `git add -A && git commit -m "enh-1: confidence scoring"`.
+```
+
+---
+
+## ENH-2 — Write-time exact-duplicate rejection via content hash
+
+```
+Before starting: in BOARD.html, set ENH-2's status to "In Progress".
+
+Add a `content_hash VARCHAR(64)` column (hex SHA-256 of normalized
+content — lowercased and whitespace-collapsed before hashing) to all five
+tables via the same migration as ENH-1 if not already done, plus a
+supporting index on `(agent_id, content_hash)`. In `create()`, compute the
+hash before INSERT; if a non-deleted, non-superseded row already exists in
+the same scope with the same content_hash, return that existing row
+instead of inserting a new one (an idempotent write) rather than silently
+creating a duplicate.
+
+Note: "non-superseded" only becomes a real filter once ENH-3 lands
+(superseded_at doesn't exist yet if you're doing these in order) — for now
+the dedup check only needs `deleted_at IS NULL`; revisit this check when
+you do ENH-3 so it also excludes superseded rows.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the hash normalization rule (exact steps: lowercase,
+whitespace-collapse, then SHA-256) and confirm it's applied consistently
+everywhere content_hash is computed or compared. In BOARD.html, set
+ENH-2's status to "Done" and add a comment summarizing what you built.
+Then `git add -A && git commit -m "enh-2: write-time dedup via content hash"`.
+```
+
+---
+
+## ENH-3 — Reconciliation: contradiction detection with supersession
+
+```
+Before starting: in BOARD.html, set ENH-3's status to "In Progress".
+
+Add `superseded_by VARCHAR(36)`, `superseded_at TIMESTAMP`,
+`supersede_reason VARCHAR(255)` (all nullable) to `semantic_facts` via a
+new migration (optionally also to `entity_profiles`/`procedural_memory`,
+your call — justify whichever you pick in DECISIONS.md). Add a
+`Reconciler` protocol in `types.py`, parallel in shape to the existing
+`Consolidator`: `(candidates: list[SemanticFact]) -> list[SupersedeDecision]`,
+where each decision names a winner id, a loser id, and a reason string
+(e.g. "contradicts: user now prefers light mode"). Ship a
+`NoOpReconciler` default, matching the `NoOpConsolidator` pattern exactly.
+
+Add `MemoryStore.reconcile(memory_type, scope)` that fetches recent,
+non-superseded facts for a scope, runs the configured Reconciler, and for
+each decision sets the loser's `superseded_by`/`superseded_at`/
+`supersede_reason` — a soft-supersede, NOT a hard delete and NOT a
+`forget()`-tombstone. Keep this a distinct mechanism from `deleted_at`:
+it lets an audit trail tell "the user asked us to forget this" apart from
+"we learned this was contradicted by a newer fact," which is a real
+governance distinction, not just a naming preference.
+
+Update `list_all()`/`search()` to also exclude `superseded_at IS NOT NULL`
+rows from normal reads, the same way they already exclude
+`deleted_at IS NOT NULL` rows. Go back to ENH-2's dedup check in
+`create()` and have it also exclude superseded rows now that the column
+exists.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the Reconciler protocol shape, the migration file
+name, and why you did/didn't extend supersession to entity_profiles and
+procedural_memory. Update section 3 (schema) of ARCHITECTURE.md for the
+new columns. In BOARD.html, set ENH-3's status to "Done" and add a
+comment summarizing what you built. Then
+`git add -A && git commit -m "enh-3: reconciliation and supersession"`.
+```
+
+---
+
+## ENH-4 — Formalize the async consolidation worker + EVERY_N cadence
+
+```
+Before starting: in BOARD.html, set ENH-4's status to "In Progress".
+
+Two related changes to the existing consolidation pipeline:
+
+1. `scripts/consolidate_pending.py` currently finds pending rows via a
+   `metadata.consolidated: false` JSON flag — its own docstring already
+   flags this as a stand-in, not a production implementation. Add a
+   `consolidated_at TIMESTAMP` (nullable) column to `working_memory`/
+   `episodic_memory` via a new migration, switch the eligibility filter to
+   `WHERE consolidated_at IS NULL`, and add a claim-based update
+   (`UPDATE ... SET consolidated_at = ? WHERE id = ? AND consolidated_at
+   IS NULL`, checking rowcount) so two concurrent worker instances can't
+   double-process the same row — the basic idempotency/locking the
+   script's own docstring says a real implementation needs.
+
+2. Add an optional `consolidate_every_n: int = 1` setting on
+   `MemoryStore` (default 1 = today's behavior — consolidate on every
+   write) so the *inline* synchronous consolidator only fires every Nth
+   `remember()` call per scope, reducing LLM-call cost on the hot write
+   path. Track the per-scope counter however's simplest given the
+   existing code (in-memory on the MemoryStore instance is fine for v1;
+   note in DECISIONS.md that this resets on process restart and isn't
+   shared across multiple app instances, since that's a real limitation
+   worth being upfront about, not a hidden gotcha).
+
+Also have the worker script optionally invoke the ENH-3 Reconciler every
+`--dedup-every-n` batches (mirrors the toolkit's own DEDUP_EVERY_N
+pattern this whole epic is inspired by).
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the claim-based locking mechanism, the
+consolidate_every_n counter implementation and its known limitations, and
+confirm this worker is documented as the Db2-appropriate substitute for
+Cosmos's change-feed-triggered async tier (no new external service
+dependency — keeps the Step 0 "zero mandatory external services"
+principle intact). In BOARD.html, set ENH-4's status to "Done" and add a
+comment summarizing what you built. Then
+`git add -A && git commit -m "enh-4: async worker hardening and EVERY_N cadence"`.
+```
