@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agent-memory-sdk · Board</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; background: #f0f2f5; color: #1f2328; min-height: 100vh; }
+
+  .header { background: #1f2328; color: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #3b82d4; }
+  .header-logo { width: 28px; height: 28px; background: #3b82d4; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; color: #fff; flex-shrink: 0; }
+  .header-title { font-size: 16px; font-weight: 600; }
+  .header-sub { font-size: 12px; color: #8b949e; margin-left: auto; }
+
+  .epic-banner { background: #fff; border-left: 4px solid #7c5cd8; margin: 20px 24px 0; padding: 14px 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.07); display: flex; align-items: flex-start; gap: 12px; }
+  .epic-banner + .epic-banner { margin-top: 10px; }
+  .epic-banner.epic-2 { border-left-color: #0d9488; }
+  .epic-banner.epic-3 { border-left-color: #c2410c; }
+  .epic-tag { background: #7c5cd8; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px; letter-spacing: .04em; flex-shrink: 0; margin-top: 3px; }
+  .epic-tag.epic-2 { background: #0d9488; }
+  .epic-tag.epic-3 { background: #c2410c; }
+  .story-tag { background: #3b82d4; }
+  .card-epic-badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; letter-spacing: .03em; color: #fff; }
+  .card-epic-badge.epic-1 { background: #7c5cd8; }
+  .card-epic-badge.epic-2 { background: #0d9488; }
+  .card-epic-badge.epic-3 { background: #c2410c; }
+  .epic-info h2 { font-size: 15px; font-weight: 600; }
+  .epic-info p { font-size: 12px; color: #57606a; margin-top: 2px; }
+  .epic-meta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+  .progress-bar-wrap { width: 160px; background: #e5e7eb; border-radius: 4px; height: 6px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: #3b82d4; border-radius: 4px; transition: width .4s; }
+  .progress-label { font-size: 11px; color: #57606a; }
+
+  .stats-row { display: flex; gap: 10px; margin: 14px 24px 0; flex-wrap: wrap; }
+  .stat-pill { background: #fff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 4px 12px; font-size: 12px; color: #57606a; display: flex; align-items: center; gap: 6px; }
+  .stat-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot-todo { background: #9ca3af; } .dot-wip { background: #f59e0b; } .dot-done { background: #22c55e; }
+
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 16px 24px 32px; }
+  .column { background: #fff; border-radius: 8px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,.06); display: flex; flex-direction: column; min-height: 420px; }
+  .column-header { padding: 12px 16px 10px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 8px 8px 0 0; }
+  .column-header h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #57606a; }
+  .col-count { background: #f0f2f5; color: #57606a; border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 600; }
+  .col-indicator { width: 10px; height: 10px; border-radius: 50%; margin-left: auto; }
+  .ind-todo { background: #e5e7eb; border: 2px solid #9ca3af; }
+  .ind-wip  { background: #fef3c7; border: 2px solid #f59e0b; }
+  .ind-done { background: #dcfce7; border: 2px solid #22c55e; }
+  .column-body { padding: 10px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+
+  .card { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow .15s, transform .1s; }
+  .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); transform: translateY(-1px); border-color: #3b82d4; }
+  .card-id { font-size: 10px; font-weight: 700; color: #3b82d4; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+  .card-title { font-size: 13px; font-weight: 600; color: #1f2328; line-height: 1.4; }
+  .card-summary { font-size: 11px; color: #57606a; margin-top: 4px; line-height: 1.4; }
+  .card-footer { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .badge-type { font-size: 10px; background: #e8f0fe; color: #3b82d4; border-radius: 3px; padding: 1px 6px; font-weight: 600; }
+  .badge-comments { font-size: 10px; color: #57606a; }
+  .move-btn { font-size: 10px; padding: 2px 8px; border-radius: 3px; border: 1px solid #d0d7de; background: #fff; color: #57606a; cursor: pointer; font-family: inherit; transition: background .1s; margin-left: auto; }
+  .move-btn:hover { background: #3b82d4; color: #fff; border-color: #3b82d4; }
+  .move-btn.back:hover { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+  .move-btn.reset:hover { background: #ef4444; border-color: #ef4444; color: #fff; }
+
+  /* Modal */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; }
+  .overlay.open { display: flex; }
+  .modal { background: #fff; border-radius: 8px; width: 100%; max-width: 700px; box-shadow: 0 8px 32px rgba(0,0,0,.18); overflow: hidden; }
+  .modal-header { padding: 16px 20px 12px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: flex-start; gap: 10px; }
+  .modal-titles { flex: 1; }
+  .modal-id { font-size: 11px; font-weight: 700; color: #3b82d4; text-transform: uppercase; letter-spacing: .05em; }
+  .modal-title { font-size: 17px; font-weight: 700; margin-top: 2px; line-height: 1.3; }
+  .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #57606a; padding: 0 2px; flex-shrink: 0; line-height: 1; }
+  .modal-close:hover { color: #1f2328; }
+  .modal-body { padding: 18px 20px; max-height: 70vh; overflow-y: auto; }
+  .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #57606a; margin-bottom: 6px; margin-top: 16px; }
+  .section-label:first-child { margin-top: 0; }
+  .meta-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .meta-item { display: flex; flex-direction: column; gap: 2px; }
+  .meta-key { font-size: 11px; color: #57606a; }
+  .meta-val { font-size: 13px; font-weight: 600; }
+  .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .s-todo { background: #f0f2f5; color: #57606a; }
+  .s-wip  { background: #fef3c7; color: #92400e; }
+  .s-done { background: #dcfce7; color: #166534; }
+  .description-box { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px 14px; font-size: 13px; line-height: 1.75; white-space: pre-wrap; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; color: #1f2328; }
+  .comments-list { display: flex; flex-direction: column; gap: 8px; }
+  .comment-item { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 5px; padding: 9px 12px; }
+  .comment-date { font-size: 11px; color: #57606a; margin-bottom: 2px; }
+  .comment-text { font-size: 13px; }
+  .no-comments { font-size: 12px; color: #9ca3af; font-style: italic; }
+  .modal-footer { padding: 12px 20px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; align-items: center; background: #f7f8fa; flex-wrap: wrap; }
+  .btn { padding: 6px 14px; border-radius: 5px; font-size: 13px; font-weight: 600; border: 1px solid transparent; cursor: pointer; font-family: inherit; transition: background .15s; }
+  .btn-primary   { background: #3b82d4; color: #fff; border-color: #3b82d4; }
+  .btn-primary:hover { background: #2563b8; }
+  .btn-secondary { background: #fff; color: #1f2328; border-color: #d0d7de; }
+  .btn-secondary:hover { background: #f3f4f6; }
+  .btn-danger    { background: #fff; color: #ef4444; border-color: #fca5a5; margin-left: auto; }
+  .btn-danger:hover { background: #fef2f2; }
+  .add-comment-area { width: 100%; margin-top: 4px; }
+  .add-comment-area textarea { width: 100%; min-height: 60px; resize: vertical; border: 1px solid #d0d7de; border-radius: 5px; padding: 8px 10px; font-size: 13px; font-family: inherit; color: #1f2328; background: #fff; outline: none; }
+  .add-comment-area textarea:focus { border-color: #3b82d4; }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: #1f2328; color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.2); opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; z-index: 200; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  footer { text-align: center; font-size: 11px; color: #8b949e; padding: 16px; border-top: 1px solid #e5e7eb; background: #fff; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     BOARD DATA — agents edit the JSON below to update story status
+     and add comments. Top-level shape:
+       epics     – array of { "id", "title", "description", "comments" }
+       stories   – flat array; each story has:
+         id        – stable identifier (e.g. "STEP-1", "ENH-1")
+         epic_id   – which epics[].id this story belongs to
+         title     – display title
+         summary   – one-line description shown on the card
+         status    – "To Do" | "In Progress" | "Done"
+         comments  – array of { "date": "YYYY-MM-DD", "text": "…" }
+     Do not rename or remove any field; the rendering script reads them
+     by name. Add new comments by appending to the comments array.
+  ═══════════════════════════════════════════════════════════════════ -->
+<script id="board-data" type="application/json">
+{
+  "epics": [
+    {
+      "id": "EPIC-1",
+      "title": "agent-memory-sdk",
+      "description": "Governed multi-type memory system for AI agents backed by IBM Db2 LUW with native VECTOR search (Db2 12.1.2+).",
+      "comments": []
+    },
+    {
+      "id": "EPIC-2",
+      "title": "Cosmos-inspired memory enhancements (Db2-adapted)",
+      "description": "Features studied from Azure Cosmos DB's Agent Memory Toolkit (github.com/AzureCosmosDB/AgentMemoryToolkit), reworked for what's actually feasible on Db2 LUW with no new mandatory infrastructure. See DECISIONS.md for the full research + what was deliberately excluded.",
+      "comments": []
+    },
+    {
+      "id": "EPIC-3",
+      "title": "Oracle-inspired memory enhancements (Db2-adapted)",
+      "description": "Features studied from Oracle AI Agent Memory (blogs.oracle.com/developers/oracle-ai-agent-memory-a-governed-unified-memory-core-for-enterprise-ai-agents and the oracleagentmemory PyPI package), reworked for what's actually feasible on Db2 LUW. See DECISIONS.md for the full research + what was deliberately excluded.",
+      "comments": []
+    }
+  ],
+  "stories": [
+    {
+      "id": "STEP-1",
+      "epic_id": "EPIC-1",
+      "title": "Step 1: Scaffold",
+      "summary": "src-layout, pyproject.toml, Db2 connection pool, check_connection script.",
+      "status": "Done",
+      "description": "Scaffold the `agent-memory-sdk` Python package. Use a standard src-layout\n(`src/agent_memory_sdk/`), `pyproject.toml` (build via hatchling or\nsetuptools, your choice — state which and why), and dependencies: ibm_db,\nibm_db_dbi, pydantic v2. Add dev deps: pytest, ruff, mypy.\n\nUse the Product Knowledge MCP tool to confirm current best practice for\n`ibm_db`/`ibm_db_dbi` connection setup and any known gotchas (e.g. required\nCLI driver install steps, connection string format) before writing the\nconnection module — don't rely on training-data assumptions for\nIBM-specific driver behavior.\n\nCreate a `Db2Connection`/connection-pool module (`db/connection.py`) that:\n- reads connection params from env vars (DATABASE, HOSTNAME, PORT, UID, PWD,\n  SECURITY) with a documented .env.example\n- wraps ibm_db_dbi.connect with a small manual pool (a bounded queue of\n  connections, since ibm_db_dbi has no built-in pooling)\n- exposes a context-manager `get_connection()` for safe checkout/checkin\n\nWrite a `scripts/check_connection.py` that opens a connection and runs\n`SELECT 1 FROM SYSIBM.SYSDUMMY1` to verify connectivity. Do not write any\nschema or memory logic yet — this step is scaffolding + connectivity only.",
+      "comments": [
+        {
+          "date": "2026-07-30",
+          "text": "Scaffold complete. pyproject.toml with hatchling build backend (zero-config src-layout, PEP 517/660). src/agent_memory_sdk/db/connection.py: ConnectionPool wrapping a queue.Queue of ibm_db handles, ibm_db_dbi.Connection re-wrapped per checkout, context-manager get_connection(), Windows DLL guard, pool exhaustion/closed-pool exceptions. .env.example documents all DB2_* env vars. scripts/check_connection.py runs SELECT 1 FROM SYSIBM.SYSDUMMY1. 10/10 unit tests passing (ibm_db fully mocked). Lint clean (ruff). Key findings from Product Knowledge + web: ibm_db_dbi is not a separate PyPI package; connection string is ODBC keyword pairs only; no built-in pooling."
+        }
+      ]
+    },
+    {
+      "id": "STEP-2",
+      "epic_id": "EPIC-1",
+      "title": "Step 2: Schema & migrations",
+      "summary": "Db2 DDL for 5 per-type tables, vector indexes, minimal migration runner.",
+      "status": "Done",
+      "description": "Design and write the Db2 DDL for the four per-type memory tables (working,\nepisodic, semantic_facts, entity_profiles, procedural), per the Step 0\ndecisions. For each table include: id, tenant_id, agent_id, user_id,\nthread_id, content (CLOB or VARCHAR based on expected size), metadata\n(JSON column), embedding (VECTOR(<dim>, FLOAT32) NOT NULL — default to a\nzero-vector if none provided, document why), created_at, updated_at,\nexpires_at (nullable), version, deleted_at (nullable, for soft-delete).\n\nUse the Product Knowledge MCP tool to verify the exact current `VECTOR`\ncolumn DDL syntax, `CREATE VECTOR INDEX` clause options, and DiskANN\nparameters/limitations before finalizing the DDL.\n\nAdd CREATE VECTOR INDEX statements per table using DiskANN with a documented\ndistance metric choice per type (justify cosine vs euclidean per table).\nAdd supporting indexes for the scoping columns (tenant_id, agent_id,\nuser_id, thread_id).\n\nBuild a minimal SQL migration runner (`db/migrations/`, numbered .sql files\n+ a `migrate.py` that applies pending ones and tracks applied versions in a\n`schema_migrations` table) — do not pull in alembic.",
+      "comments": [
+        {
+          "date": "2026-07-30",
+          "text": "Schema complete. 0001_schema_migrations.sql + 0002_memory_tables.sql. Five tables: working_memory, episodic_memory, semantic_facts, entity_profiles, procedural_memory. All columns per spec: id VARCHAR(36), scope cols VARCHAR(128), content CLOB(65536), metadata VARCHAR(4096), embedding VECTOR(1536,FLOAT32) NOT NULL DEFAULT VECTOR_FILL zero-vector, timestamps, version, deleted_at. CREATE VECTOR INDEX WITH DISTANCE COSINE on all five. Composite scope index + agent-only index + partial expires_at index per table. schema_migrations tracking table. Migrator class in db/migrate.py — stdlib only, no alembic. bootstrap is idempotent (check-before-create). 14 unit tests via SQLite fake pool, 24 total passing. ARCHITECTURE.md section 3 updated. DECISIONS.md entries: CLOB/VARCHAR/COSINE/1536-dim/zero-vec rationale all recorded."
+        }
+      ]
+    },
+    {
+      "id": "STEP-3",
+      "epic_id": "EPIC-1",
+      "title": "Step 3: Core models & repositories",
+      "summary": "Pydantic models, per-type repos with vector search, MemoryStore facade, unit tests.",
+      "status": "Done",
+      "description": "Implement Pydantic models for the four memory types (WorkingMemory,\nEpisodicMemory, SemanticFact, EntityProfile, ProceduralMemory) matching the\nStep 2 schema.\n\nImplement a repository class per type (e.g. `WorkingMemoryRepository`) with:\n- create/upsert, get_by_id, list (scoped + filtered), soft_delete\n- a `search(query_embedding, scope, top_k, metric, mode=EXACT|APPROX)`\n  method that builds the VECTOR_DISTANCE SQL with FETCH EXACT/APPROX\n- all methods REQUIRE at minimum agent_id scope; reject calls missing scope\n\nDefine an `EmbeddingProvider` protocol (a callable: text -> vector) that\ncallers inject — the SDK must not hard-depend on a specific embedding model.\n\nAdd a top-level `MemoryStore` facade that composes all four repositories\nbehind one object (`store.working`, `store.episodic`, `store.facts`,\n`store.profiles`, `store.procedures`).\n\nWrite unit tests using a fake/in-memory repository (mock ibm_db_dbi cursor)\nso tests don't require a live Db2 instance.",
+      "comments": [
+        {
+          "date": "2026-07-30",
+          "text": "Built types.py (EmbeddingProvider Protocol, DistanceMetric+SearchMode enums), models.py (MemoryScope + 5 Pydantic models mirroring the DDL columns), repositories/base.py (BaseRepository ABC with create/get_by_id/list/soft_delete/search — all scope-enforced via _scope_predicates), five concrete repos (working/episodic/facts/profiles/procedural), and store.py (MemoryStore composition root with embedding_dim propagation). SQL uses TO_VECTOR(?,FLOAT32) on write and VECTOR_SERIALIZE on read. Pagination uses ROW_NUMBER() for offset>0. All 68 unit tests pass (no live Db2 needed)."
+        }
+      ]
+    },
+    {
+      "id": "STEP-4",
+      "epic_id": "EPIC-1",
+      "title": "Step 4: Lifecycle: TTL, versioning, forget, consolidation",
+      "summary": "forget()/purge_expired(), optimistic concurrency, pluggable Consolidator.",
+      "status": "Done",
+      "description": "Add lifecycle features to the repositories/MemoryStore from Step 3:\n- `forget(id, scope)` — sets deleted_at (tombstone), never hard-deletes by\n  default; add a separate `purge_expired()` maintenance method that hard-\n  deletes rows past expires_at AND already soft-deleted, callable via a\n  script/cron, not automatically.\n- optimistic concurrency on `version` for updates (raise on stale write)\n- a `Consolidator` protocol: a pluggable callback\n  `(raw_memories: list) -> list[derived_memory]` that MemoryStore can\n  invoke synchronously after writes to working/episodic memory, producing\n  semantic facts / entity profile updates / procedural memory. Ship a\n  no-op default consolidator plus a documented example of wiring in an\n  LLM-based one. Make clear in docs how a caller would instead run this\n  async (e.g. call it from a cron job reading unconsolidated rows) —\n  implement the sync path now, just document the async extension point.",
+      "comments": [
+        {
+          "date": "2026-07-30",
+          "text": "Built BaseRepository.forget() (soft-delete tombstone; soft_delete() kept as alias), BaseRepository.update() (optimistic concurrency: WHERE version = record.version, raises StaleWriteError on 0 rowcount, atomically increments version), BaseRepository.purge_expired() (hard-DELETE WHERE deleted_at IS NOT NULL, scoped, never auto-called). Added Consolidator Protocol + NoOpConsolidator to types.py with full LLM-based wiring example in docstring. Added MemoryStore.remember() as primary write entry point (dispatches by model type, runs consolidator sync on working/episodic only, consolidator errors caught+logged never propagated). Added MemoryStore.forget(id, type, scope) facade and MemoryStore.purge_expired(scope) facade returning {table: count} dict. Added scripts/purge_expired.py (cron maintenance) and scripts/consolidate_pending.py (reference async polling pattern). Added StaleWriteError to exceptions.py, re-exported from store.py and __init__.py. 36 new unit tests (104 total). ruff clean, mypy strict clean."
+        }
+      ]
+    },
+    {
+      "id": "STEP-5",
+      "epic_id": "EPIC-1",
+      "title": "Step 5: Governance / scoping enforcement",
+      "summary": "MemoryScope value object, SQL scope predicates on every query, cross-scope isolation tests.",
+      "status": "Done",
+      "description": "Harden scoping across the SDK: add a `MemoryScope` value object\n(tenant_id, agent_id, user_id, thread_id) that's required on every\nMemoryStore call instead of loose kwargs. Ensure every generated SQL\nstatement includes scope predicates (never allow a query with only an id\nand no scope check — this is the multi-tenant isolation boundary). Add\ntests that assert cross-scope reads return nothing even if you know another\nscope's row id.",
+      "comments": [
+        {
+          "date": "2026-07-31",
+          "text": "Confirmed MemoryScope (frozen Pydantic model: tenant_id/agent_id/user_id/thread_id) is the required scope value object on every repository and MemoryStore call. Audited all 7 SQL paths in BaseRepository — every SELECT/UPDATE/DELETE includes _scope_predicates() in the WHERE clause; get_by_id pairs id=? with the full scope so IDs alone cannot bypass the isolation boundary. No schema or API changes were needed (enforcement was already in place from Step 3). Added tests/test_scoping.py with 91 unit tests: MemoryScope value object contract (frozen, hashable, equality), _scope_predicates() helper, cross-scope isolation for get_by_id/list_all/search/forget/update/purge_expired on all five repository types (parametrized, 30 tests), MemoryStore facade scope propagation, and empty agent_id rejection on every operation. Key edge case recorded in DECISIONS.md: cross-scope update() surfaces as StaleWriteError (0 rowcount), not a new ScopeViolationError — leaking the reason would provide information to a misbehaving caller. Total test suite: 195 tests, ruff clean, mypy strict clean."
+        }
+      ]
+    },
+    {
+      "id": "STEP-6",
+      "epic_id": "EPIC-1",
+      "title": "Step 6: Framework adapters",
+      "summary": "LangChain BaseChatMessageHistory, OpenAI Agents SDK Session, MCP tools — all optional extras.",
+      "status": "Done",
+      "description": "Build three thin adapters on top of the Step 3-5 core, each in its own\noptional-dependency submodule (agent_memory_sdk.adapters.langchain,\n.openai_agents, .mcp):\n1. LangChain: implement BaseChatMessageHistory backed by store.working,\n   and optionally a BaseStore implementation for facts/profiles.\n2. OpenAI Agents SDK: implement the Session protocol backed by\n   store.working + store.episodic.\n3. MCP: expose remember/recall/forget/list as MCP tools so any\n   MCP-compatible agent can use the SDK without a Python import.\n\nKeep the core package importable with zero adapter dependencies installed;\ngate each adapter behind an extras_require group in pyproject.toml\n(e.g. `pip install agent-memory-sdk[langchain]`).",
+      "comments": [
+        {
+          "date": "2026-07-31",
+          "text": "Built three thin adapters under src/agent_memory_sdk/adapters/. (1) LangChain: Db2ChatMessageHistory (BaseChatMessageHistory duck-type backed by store.working — messages round-trip through JSON metadata preserving HumanMessage/AIMessage/ToolMessage types) + Db2MemoryStore (BaseStore[str,str] backed by store.facts or store.profiles, keyed by metadata[store_key]). (2) OpenAI Agents SDK: Db2Session (Session protocol backed by store.working, messages stored as JSON dicts; bonus recall_episodes() searches store.episodic at agent+user scope). (3) MCP: create_server(store) factory exposing remember/recall/forget/list_memories tools; recall falls back to recency list when no query_embedding is provided; tools return TextContent(text=json_string). All framework imports deferred behind _require_*() guards — core remains importable with zero adapter deps. pyproject.toml extras groups already present from earlier steps. 48 new unit tests; all 243 tests pass, ruff clean, mypy strict clean."
+        }
+      ]
+    },
+    {
+      "id": "STEP-7",
+      "epic_id": "EPIC-1",
+      "title": "Step 7: Integration tests",
+      "summary": "Real Db2 tests (Docker): migration, vector search, scope isolation, TTL, adapter round-trips.",
+      "status": "Done",
+      "description": "Add integration tests that run against a real Db2 LUW instance (document\nhow to spin one up locally, e.g. the ibmcom/db2 Docker image) gated behind\nan env var / pytest marker so they're skippable in CI without Db2. Cover:\nschema migration end-to-end, vector search correctness (known nearest\nneighbor), scope isolation, TTL purge, forget/tombstone, and each adapter's\nbasic round-trip (LangChain history, OpenAI Session, MCP tool calls).",
+      "comments": [
+        {
+          "date": "2026-07-31",
+          "text": "Integration suite complete. tests/integration/ (3 files, ~105 test functions) gated by pytestmark=integration and a pytest_collection_modifyitems hook that auto-skips when DB2_DATABASE is unset — zero CI friction. Fixtures: session-scoped db2_pool/store, function-scoped unique_agent_id per test for full isolation. Coverage: (1) test_migration.py — Migrator idempotency, schema_migrations tracking, all 5 tables verified via SYSCAT.COLUMNS (cols + NOT NULL VECTOR type), vector indexes via SYSCAT.INDEXES; (2) test_core.py — CRUD round-trips for all 5 memory types, vector search nearest-neighbour correctness (unit vectors, deterministic cosine), scope isolation (list_all/get_by_id/search/thread), forget()/tombstone, purge_expired() hard-deletes only tombstoned rows + scope-safe, TTL expires_at filtering, StaleWriteError on stale update, consolidator derives SemanticFact; (3) test_adapters_integration.py — LangChain Db2ChatMessageHistory (add/retrieve/clear/batch/type preservation), Db2MemoryStore (mset/mget/mdelete/yield_keys/prefix), OpenAI Agents Db2Session (add_items/get_items/limit/clear_session/pop_item/recall_episodes), MCP tool functions (remember/recall/forget/list/fallback). Documentation: INTEGRATION_TESTING.md (Docker ibmcom/db2 setup, IBM Cloud variant, coverage table, cleanup, troubleshooting). Gap found and fixed: base.py module docstring for purge_expired() still described the old wrong semantics; corrected to match actual SQL and recorded decisions. All 248 unit tests still pass; ruff and mypy clean."
+        }
+      ]
+    },
+    {
+      "id": "STEP-8",
+      "epic_id": "EPIC-1",
+      "title": "Step 8: Docs & examples",
+      "summary": "README (install, quickstart, memory types, scoping, lifecycle) + one runnable example per adapter.",
+      "status": "To Do",
+      "description": "Write the README (install, quickstart with docker Db2, the four memory\ntypes explained, scoping model, lifecycle features) and one runnable\nexample per adapter under examples/. Keep examples short — under 50 lines\neach, showing store setup, a remember() call, and a recall() call.\n\nBefore starting: read DECISIONS.md in full — the README should reflect it\naccurately, not the original Step 0 aspiration if anything changed along\nthe way.",
+      "comments": []
+    },
+    {
+      "id": "ENH-1",
+      "epic_id": "EPIC-2",
+      "title": "Confidence scoring on memory records",
+      "summary": "Add a 0.0-1.0 confidence field to every memory type; support min_confidence filtering on read.",
+      "status": "Done",
+      "description": "Add a `confidence` field (float, 0.0-1.0, default 1.0) to `_MemoryBase` and a matching column on all five Db2 tables via a new migration (bundle with ENH-2's content_hash column if practical). Update `create()`/`update()` in `repositories/base.py` to persist it and `_model_from_row()` to read it back. Add an optional `min_confidence: float = 0.0` parameter to `search()` and `list_all()` that appends an `AND confidence >= ?` predicate to the WHERE clause. The pluggable `Consolidator` protocol's derived records can now carry a genuine grounding-certainty score (e.g. an LLM-based consolidator sets confidence=0.6 for a tentative inference vs 0.95 for an explicit user statement) instead of implicitly defaulting to 1.0 for everything it derives.\n\nInspired by: Azure Cosmos DB's Agent Memory Toolkit (github.com/AzureCosmosDB/AgentMemoryToolkit) grades every extracted memory 0.0-1.0 and lets `search_cosmos(..., min_confidence=0.7)` filter low-certainty results out of retrieval.\n\nDb2 feasibility: trivial — one new nullable-with-default numeric column plus one new optional query parameter. No new infrastructure, no schema philosophy change.",
+      "comments": [
+        {
+          "date": "2026-08-01",
+          "text": "Done. Added confidence (DOUBLE NOT NULL DEFAULT 1.0) to all five tables in migration 0003_confidence_and_content_hash.sql (bundled with ENH-2's content_hash column). _MemoryBase.confidence: float = 1.0 in models.py. BaseRepository._SELECT_COLS now includes confidence at index 8; create() and update() persist it as a bound param; _model_from_row() in all five repos reads it back with a None→1.0 guard for pre-migration rows. list_all() and search() both accept min_confidence: float = 0.0 — appends AND confidence >= ? when > 0.0, no predicate at 0.0 (full backward compat). In search(), the predicate is applied in the ID-ranking step 1 so low-confidence rows don't consume top_k slots. Consolidator docstring example updated to show confidence=0.6 for tentative inferences vs 0.95 for explicit user statements. ARCHITECTURE.md section 3 updated; DECISIONS.md entry appended. 12 new unit tests, all 260 unit tests pass; ruff clean; mypy strict clean."
+        }
+      ]
+    },
+    {
+      "id": "ENH-2",
+      "epic_id": "EPIC-2",
+      "title": "Write-time exact-duplicate rejection via content hash",
+      "summary": "SHA-256 hash of normalized content at write time; skip inserting exact duplicates within a scope.",
+      "status": "Done",
+      "description": "Add a `content_hash VARCHAR(64)` column (hex SHA-256 of normalized `content` — e.g. lowercased and whitespace-collapsed before hashing) to all five tables via the same migration as ENH-1, plus a supporting index on `(agent_id, content_hash)`. In `create()`, compute the hash before INSERT; if a non-deleted, non-superseded row already exists in the same scope with the same content_hash, return that existing row instead of inserting a new one (an idempotent write) rather than silently creating a duplicate.\n\nInspired by: the Agent Memory Toolkit's write-time dedup — a SHA-256 `content_hash` rejects exact duplicates before any LLM reconciliation pass even runs, catching the common case (an agent re-storing the same fact twice) cheaply and deterministically without an LLM call.\n\nDb2 feasibility: a Python-side hash computation plus one indexed lookup query before INSERT. No new infrastructure. Depends on ENH-1's migration existing (bundle both column additions in one migration file).",
+      "comments": [
+        {
+          "date": "2026-08-01",
+          "text": "Done. Normalization rule (lowercase → whitespace-collapse via re.sub → SHA-256 UTF-8) implemented in _content_hash() in repositories/base.py and applied consistently in create() and update(). _MemoryBase gains content_hash: str | None = None. _SELECT_COLS now includes content_hash at index 9; all five _model_from_row() implementations updated. create() issues a dedup SELECT (using ix_*_content_hash index) before INSERT — on a hit, returns the existing row without inserting. update() recomputes and persists the hash so it stays in sync with content. No UNIQUE DB constraint (app-level enforcement scoped to deleted_at IS NULL; ENH-3 note left to add superseded_at IS NULL once that column exists). column/index DDL already present in migration 0003. 20 new unit tests (TestContentHash). All 286 unit tests pass; ruff clean. DECISIONS.md updated with full normalization rule."
+        }
+      ]
+    },
+    {
+      "id": "ENH-3",
+      "epic_id": "EPIC-2",
+      "title": "Reconciliation: LLM-driven contradiction detection with supersession",
+      "summary": "New pluggable Reconciler protocol detects contradicting facts and soft-supersedes the losing record, distinct from forget().",
+      "status": "Done",
+      "description": "Add `superseded_by VARCHAR(36)`, `superseded_at TIMESTAMP`, `supersede_reason VARCHAR(255)` (all nullable) to `semantic_facts` (optionally `entity_profiles`/`procedural_memory` too, since those can also go stale) via a new migration. Add a `Reconciler` protocol in `types.py`, parallel in shape to the existing `Consolidator`: `(candidates: list[SemanticFact]) -> list[SupersedeDecision]`, where each decision names a winner id, a loser id, and a reason string (e.g. \"contradicts: user now prefers light mode\"). Ship a `NoOpReconciler` default, matching the `NoOpConsolidator` pattern. Add `MemoryStore.reconcile(memory_type, scope)` that fetches recent, non-superseded facts for a scope, runs the configured Reconciler, and for each decision sets the loser's `superseded_by`/`superseded_at`/`supersede_reason` — a soft-supersede, NOT a hard delete and NOT a `forget()`-tombstone. Keeping this a distinct field from `deleted_at` matters: it lets an audit trail tell \"the user asked us to forget this\" apart from \"we learned this was contradicted by a newer fact,\" which is a real governance distinction. Update `list_all()`/`search()` to also exclude `superseded_at IS NOT NULL` rows from normal reads, the same way they already exclude `deleted_at IS NOT NULL` rows.\n\nInspired by: the Agent Memory Toolkit's reconciliation pass — LLM-driven contradiction detection (not cosine-similarity clustering), with `supersede_reason`/`superseded_by`/`superseded_at` fields recorded on every affected record.\n\nDb2 feasibility: new nullable columns plus a new pluggable protocol following the exact same shape as the existing Consolidator. No new infrastructure. Depends on ENH-1/ENH-2's migration (bundle if practical, or a follow-on migration).",
+      "comments": [
+        {
+          "date": "2026-08-01",
+          "text": "Done. Migration 0004_supersession.sql adds superseded_by VARCHAR(36), superseded_at TIMESTAMP, supersede_reason VARCHAR(255) (all nullable) + ix_semantic_facts_superseded_by index to semantic_facts only. entity_profiles and procedural_memory excluded: they are versioned-object tables (update() is the right mechanism for staleness); supersession is meaningful only for semantic_facts which accumulate independently-created atomic claims. Reconciler Protocol + SupersedeDecision @dataclass + NoOpReconciler added to types.py — parallel shape to Consolidator/NoOpConsolidator. SemanticFactRepository extends _SELECT_COLS (now 18 cols: base 15 + 3 supersession), overrides _model_from_row(), and adds supersede(loser_id, winner_id, reason, scope) issuing a scoped UPDATE guarded by AND deleted_at IS NULL AND superseded_at IS NULL. MemoryStore gains reconciler= constructor arg (defaults to NoOpReconciler) and reconcile(memory_type, scope, limit=200) which lists live facts, invokes reconciler, applies each SupersedeDecision via facts.supersede(). list_all() and search() in BaseRepository both now include AND superseded_at IS NULL alongside AND deleted_at IS NULL. create() dedup check also excludes superseded rows (closes the ENH-2 revisit note). 44 new unit tests (test_reconciliation.py). 333 total unit tests pass; ruff clean; mypy strict clean. DECISIONS.md entry and ARCHITECTURE.md section 3 updated."
+        }
+      ]
+    },
+    {
+      "id": "ENH-4",
+      "epic_id": "EPIC-2",
+      "title": "Formalize the async consolidation worker + EVERY_N cadence throttling",
+      "summary": "Replace the metadata-flag polling hack with a real consolidated_at column + claim-based locking; throttle inline consolidation to every Nth write.",
+      "status": "Done",
+      "description": "Two related changes to the existing consolidation pipeline. (1) `scripts/consolidate_pending.py` currently finds pending rows via a `metadata.consolidated: false` JSON flag — its own docstring already flags this as a stand-in, not a production implementation. Add a `consolidated_at TIMESTAMP` (nullable) column to `working_memory`/`episodic_memory` via a new migration, switch the eligibility filter to `WHERE consolidated_at IS NULL`, and add a claim-based update (`UPDATE ... SET consolidated_at = ? WHERE id = ? AND consolidated_at IS NULL`, checking rowcount) so two concurrent worker instances can't double-process the same row — the basic idempotency/locking the script's own docstring says a real implementation needs. (2) Add an optional `consolidate_every_n: int = 1` setting on `MemoryStore` (default 1 = today's behavior — consolidate on every write) so the *inline* synchronous consolidator only fires every Nth `remember()` call per scope, reducing LLM-call cost on the hot write path. Also have the worker script optionally invoke the new Reconciler (ENH-3) every `--dedup-every-n` batches.\n\nInspired by: the Agent Memory Toolkit's `FACT_EXTRACTION_EVERY_N`/`THREAD_SUMMARY_EVERY_N`/`DEDUP_EVERY_N` env-var-driven cadence, and its change-feed-triggered Durable Functions tier for offloading processing off the write path.\n\nDb2 feasibility — this is the \"adapt, don't skip\" item: Db2 LUW has no native change-feed mechanism equivalent to Cosmos DB's, so the Durable Functions tier can't be ported directly. This worker (polling + a claim column) is the Db2-appropriate substitute — same underlying goal (async, off-the-hot-path processing), different mechanism. Builds entirely on the existing script and existing MemoryStore/Consolidator machinery — no new infrastructure, no new external service dependency, keeping the Step 0 \"zero mandatory external services\" principle intact. Depends on ENH-3 for the Reconciler-integration half; the consolidated_at/locking half can ship independently.",
+      "comments": [
+        {
+          "date": "2026-08-01",
+          "text": "Done. (1) Migration 0005: consolidated_at TIMESTAMP (nullable, indexed on agent_id) added to working_memory and episodic_memory only — these are the consolidation inputs; the other three tables are outputs. (2) _HAS_CONSOLIDATED_AT class-attribute gate on BaseRepository (mirrors _HAS_SUPERSESSION pattern) ensures SQL never references the column on tables that lack it (Db2 SQLCODE -206 guard). (3) BaseRepository._claim_consolidated(): issues UPDATE ... SET consolidated_at = ? WHERE id = ? AND consolidated_at IS NULL and checks rowcount — rowcount 0 means another worker already claimed the row, skip; rowcount 1 means this worker owns it. Db2 row-level locking serializes competing UPDATEs at the engine level. (4) MemoryStore.consolidate_every_n=N: in-memory per-scope counter (keyed by agent_id/user_id/thread_id) fires the inline consolidator every Nth remember() call. Default 1 = existing behaviour. Limitation documented: counter resets on process restart, not shared across multiple app instances. (5) scripts/consolidate_pending.py rewritten: eligibility filter is now consolidated_at IS NULL (drops the JSON_VALUE flag hack); uses _claim_consolidated() for locking; adds --reconciler-module/class/--dedup-every-n to invoke the ENH-3 Reconciler every N batches. Worker is documented as the Db2-appropriate substitute for Cosmos change-feed/Durable Functions — no new external service dependency. (6) 35 new unit tests in tests/test_enh4.py; 395 total pass. ruff clean. DECISIONS.md entry appended."
+        }
+      ]
+    },
+    {
+      "id": "ORC-1",
+      "epic_id": "EPIC-3",
+      "title": "Context card: condensed working-memory view for the active thread",
+      "summary": "MemoryStore.get_context_card(scope) returns a structured recent-turns view instead of making callers assemble raw WorkingMemory rows themselves.",
+      "status": "Done",
+      "description": "Add `MemoryStore.get_context_card(scope, max_turns=20)` returning a small structured object (not just a raw list): recent working-memory turns in chronological order, a turn count, and the timestamp of the most recent turn. This is a convenience/formatting layer over `store.working.list_all()` — no new schema, no LLM call required by default. Add an optional `summarizer` hook (same pluggable-callback shape as `Consolidator`/`Reconciler`) so a caller who wants an actual condensed narrative (not just the raw recent turns) can supply one; default behavior with no summarizer configured is the raw-turns view.\n\nInspired by: Oracle AI Agent Memory's `Thread.get_context_card()` — part of its \"short-term memory\" pillar (thread context cards + conversation summaries), distinct from long-term durable memory search.\n\nDb2 feasibility: trivial — a new read-only convenience method composing existing `list_all()` calls, plus an optional pluggable hook following a pattern already established twice in this codebase (Consolidator, Reconciler). No new infrastructure, no mandatory LLM dependency.",
+      "comments": [
+        {
+          "date": "2026-08-01",
+          "text": "Done. Added MemoryStore.get_context_card(scope, max_turns=20) returning a ContextCard object with chronological recent turns, turn_count, latest_at, and optional summary. Added Summarizer and NoOpSummarizer protocols/defaults alongside exports, kept the default path as raw turns with no mandatory LLM call, documented the exact shape/signature in DECISIONS.md, updated ARCHITECTURE.md section 1 to show the new read path, and added lifecycle tests covering ordering, max_turns, empty cards, summarizer invocation, and summarizer-failure fallback."
+        }
+      ]
+    },
+    {
+      "id": "ORC-2",
+      "epic_id": "EPIC-3",
+      "title": "Content chunking for long memories",
+      "summary": "Split long content into embedded chunks at write time so a 64KB memory gets more than one (diluted) embedding; search resolves chunk hits back to parent records.",
+      "status": "Done",
+      "description": "For content exceeding a configurable threshold (e.g. > 2000 characters), split it into overlapping chunks at write time and embed each chunk separately, instead of the current one-embedding-per-row-no-matter-how-long-the-content approach (a 64KB CLOB today gets a single embedding, which is a poor semantic representation of the whole text). Add a new companion table (e.g. `memory_chunks`: `id`, `source_table`, `source_id`, `chunk_index`, `chunk_text`, `embedding VECTOR(...) NOT NULL`, scope columns for isolation, `CREATE VECTOR INDEX`) via a new migration. `create()`/`update()` in `repositories/base.py` gain chunking logic gated by the length threshold — short content behaves exactly as today (single embedding on the parent row; no chunk rows created). Add a `search(..., search_chunks=True)` mode that searches `memory_chunks` first (finer-grained semantic match against chunk text) then resolves and dedupes back to parent records, ranked by each parent's best-matching chunk distance.\n\nInspired by: Oracle AI Agent Memory's `APP_MEMORY_RECORD_CHUNKS` table — content is chunked for retrieval rather than embedding one giant blob as a single vector.\n\nDb2 feasibility: feasible, but the largest-scope item in this epic — a new table + index per existing table (or one shared chunks table, your call, justify whichever in DECISIONS.md), new chunking utility code, and search() branching logic. No new infrastructure beyond what Step 2 already established (another VECTOR NOT NULL column + CREATE VECTOR INDEX, same pattern).",
+      "comments": [
+        {
+          "date": "2026-08-01",
+          "text": "Done. Added shared memory_chunks table (migration 0006) with VECTOR(1536,FLOAT32) NOT NULL embedding, source_table/source_id discriminator, chunk_index, scope columns, CREATE VECTOR INDEX (COSINE), and two supporting indexes. _split_chunks() sliding-window utility in repositories/base.py (chunk_size=800, chunk_overlap=200, configurable). BaseRepository gains chunk_repo/chunk_threshold/chunk_size/chunk_overlap constructor args and _write_chunks() helper; create() and update() gate on (chunk_repo is not None AND embedding_provider is not None AND len(content) > threshold) — below threshold behaves identically to pre-ORC-2. Parent row's embedding gets zero-vector sentinel when chunked (NOT NULL satisfied; semantic representation lives in memory_chunks). ChunkRepository (repositories/chunks.py) provides insert_chunk(), delete_by_source(), search_chunks() — two-step rank+resolve pattern for Db2 12.1.5 fp0 VECTOR_SERIALIZE compatibility. search(search_chunks=True) in BaseRepository routes to _search_via_chunks(): step 1 over-fetch chunks (top_k×4), step 2 dedup to best distance per source_id, step 3 resolve + re-rank parents. MemoryStore gains embedding_provider, enable_chunking, chunk_threshold, chunk_size, chunk_overlap constructor args; when embedding_provider is supplied it builds one shared ChunkRepository and injects it into all five per-type repos along with the provider. Backward compat: no embedding_provider → chunk_repo=None → pre-ORC-2 code path. 41 new unit tests, 445 total passing. ruff clean. DECISIONS.md + ARCHITECTURE.md section 3 updated."
+        }
+      ]
+    },
+    {
+      "id": "ORC-3",
+      "epic_id": "EPIC-3",
+      "title": "Structured metadata filter operators for search()/list_all()",
+      "summary": "A small operator DSL ($not, $array_contains, $array_contains_any, exact match) over the existing metadata JSON column, backed by Db2's JSON_VALUE/JSON_EXISTS.",
+      "status": "To Do",
+      "description": "Add a `metadata_filter: dict | None = None` parameter to `search()` and `list_all()` supporting a small operator set: exact match (`{\"source\": \"support\"}`), `$not` (`{\"status\": {\"$not\": \"archived\"}}`), `$array_contains` and `$array_contains_any` for list-valued metadata fields (e.g. tags). Translate the filter dict into `JSON_VALUE(metadata, '$.field')` / `JSON_EXISTS(metadata, ...)` predicates appended to the existing WHERE clause, alongside the scope and deleted_at/expires_at predicates that are already there. No schema change — `metadata` is already `VARCHAR(4096)` JSON text (a decision made in Step 2 specifically because it supports `JSON_VALUE`/`JSON_EXISTS` natively). Keep the operator set small and well-tested rather than building a general query language; document exactly which operators are supported and reject unrecognized ones with a clear error rather than silently ignoring them.\n\nInspired by: Oracle AI Agent Memory's metadata filtering (`$array_contains`, `$array_contains_any`, `$not`, exact match) on `memory.search(..., metadata_filter=...)`.\n\nDb2 feasibility: fully feasible with the existing column type — pure query-building logic, no new infrastructure, no migration needed.",
+      "comments": []
+    },
+    {
+      "id": "ORC-4",
+      "epic_id": "EPIC-3",
+      "title": "Schema attach mode: REQUIRE_EXISTING policy for the migration runner",
+      "summary": "Let the SDK validate against a pre-provisioned schema instead of always running DDL itself, for deployments where app code must never run DDL in production.",
+      "status": "To Do",
+      "description": "Add a schema-policy concept to `Migrator`: `CREATE_IF_NECESSARY` (today's only behavior — run pending migrations, create tables/indexes) vs `REQUIRE_EXISTING` (validate that every expected table, column, and vector index already exists via `SYSCAT.TABLES`/`SYSCAT.COLUMNS`/`SYSCAT.INDEXES` catalog queries; raise one clear, actionable error listing everything missing, and never attempt any DDL). Wire this as a constructor argument on `Migrator` (and expose it through `MemoryStore`/`ConnectionPool` setup wherever schema initialization currently happens), defaulting to `CREATE_IF_NECESSARY` so existing behavior is unchanged unless a caller opts in.\n\nInspired by: Oracle AI Agent Memory's `SchemaPolicy.CREATE_IF_NECESSARY` / `SchemaPolicy.REQUIRE_EXISTING` — for enterprise deployments where DBAs provision schema through their own change-management process and application code is not permitted to run DDL against production databases.\n\nDb2 feasibility: fully feasible — read-only catalog queries against `SYSCAT`, no new infrastructure. Directly reinforces this project's own \"governed\" framing (the same word used to justify the Step 0 architecture choice against Oracle's and Microsoft's approaches in the first place).",
+      "comments": []
+    }
+  ]
+}
+</script>
+
+<div class="header">
+  <div class="header-logo">AM</div>
+  <div>
+    <div class="header-title">agent-memory-sdk</div>
+  </div>
+  <div class="header-sub">Local Project Board &nbsp;·&nbsp; IBM Db2 LUW + Python</div>
+</div>
+
+<div id="epicBanners"></div>
+
+<div class="stats-row">
+  <div class="stat-pill"><span class="stat-dot dot-todo"></span><span id="cntTodo">0</span>&nbsp;To Do</div>
+  <div class="stat-pill"><span class="stat-dot dot-wip"></span><span id="cntWip">0</span>&nbsp;In Progress</div>
+  <div class="stat-pill"><span class="stat-dot dot-done"></span><span id="cntDone">0</span>&nbsp;Done</div>
+</div>
+
+<div class="board">
+  <div class="column">
+    <div class="column-header">
+      <h3>To Do</h3><span class="col-count" id="hTodo">0</span>
+      <span class="col-indicator ind-todo"></span>
+    </div>
+    <div class="column-body" id="col-todo"></div>
+  </div>
+  <div class="column">
+    <div class="column-header">
+      <h3>In Progress</h3><span class="col-count" id="hWip">0</span>
+      <span class="col-indicator ind-wip"></span>
+    </div>
+    <div class="column-body" id="col-wip"></div>
+  </div>
+  <div class="column">
+    <div class="column-header">
+      <h3>Done</h3><span class="col-count" id="hDone">0</span>
+      <span class="col-indicator ind-done"></span>
+    </div>
+    <div class="column-body" id="col-done"></div>
+  </div>
+</div>
+
+<!-- Detail modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="epic-tag story-tag" id="mTag">STORY</span>
+      <div class="modal-titles">
+        <div class="modal-id" id="mId"></div>
+        <div class="modal-title" id="mTitle"></div>
+      </div>
+      <button class="modal-close" id="btnClose">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+      <div class="section-label">Status &amp; meta</div>
+      <div class="meta-row">
+        <div class="meta-item"><span class="meta-key">Status</span><span id="mStatus" class="meta-val"></span></div>
+        <div class="meta-item"><span class="meta-key">Type</span><span class="meta-val">Story</span></div>
+        <div class="meta-item"><span class="meta-key">Epic</span><span class="meta-val" id="mEpic"></span></div>
+      </div>
+      <div class="section-label">Description</div>
+      <div class="description-box" id="mDesc"></div>
+      <div class="section-label">Comments</div>
+      <div id="mComments" class="comments-list"></div>
+      <div class="section-label" style="margin-top:12px">Add comment</div>
+      <div class="add-comment-area">
+        <textarea id="commentInput" placeholder="Enter comment text…"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="btnStart">▶ Start</button>
+      <button class="btn btn-primary"   id="btnDone">✓ Done</button>
+      <button class="btn btn-secondary" id="btnBack">↩ Back</button>
+      <button class="btn btn-secondary" id="btnAddComment">+ Comment</button>
+      <button class="btn btn-danger"    id="btnReset">Reset</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<footer>Made with IBM Bob</footer>
+
+<script>
+// ── Load data from the embedded JSON block ──────────────────────────────────
+const raw = document.getElementById('board-data').textContent;
+let data  = JSON.parse(raw);
+
+let activeId = null;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+const COL_KEY = { 'To Do': 'todo', 'In Progress': 'wip', 'Done': 'done' };
+const LABEL   = { todo: 'To Do', wip: 'In Progress', done: 'Done' };
+const SC      = { 'To Do': 's-todo', 'In Progress': 's-wip', 'Done': 's-done' };
+
+function getStory(id) { return data.stories.find(s => s.id === id); }
+function getEpic(id) { return data.epics.find(e => e.id === id); }
+function epicCssIndex(epicId) {
+  // "EPIC-1" -> 1, "EPIC-2" -> 2, ... used for epic-N CSS class suffixes.
+  const idx = data.epics.findIndex(e => e.id === epicId);
+  return idx >= 0 ? idx + 1 : 1;
+}
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function render() {
+  // Epics — one banner per epic, each with its own progress computed from
+  // only the stories whose epic_id matches.
+  const banners = document.getElementById('epicBanners');
+  banners.innerHTML = '';
+  data.epics.forEach((epic, i) => {
+    const n = i + 1;
+    const epicStories = data.stories.filter(s => s.epic_id === epic.id);
+    const doneCount = epicStories.filter(s => s.status === 'Done').length;
+    const pct = epicStories.length ? Math.round((doneCount / epicStories.length) * 100) : 0;
+
+    const el = document.createElement('div');
+    el.className = 'epic-banner' + (n > 1 ? ' epic-' + n : '');
+    el.innerHTML = `
+      <span class="epic-tag${n > 1 ? ' epic-' + n : ''}">EPIC</span>
+      <div class="epic-info">
+        <h2>${epic.title}</h2>
+        <p>${epic.description}</p>
+      </div>
+      <div class="epic-meta">
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+        <div class="progress-label">${doneCount} / ${epicStories.length} done</div>
+      </div>`;
+    banners.appendChild(el);
+  });
+
+  // Counts
+  const cnt = { todo: 0, wip: 0, done: 0 };
+  data.stories.forEach(s => cnt[COL_KEY[s.status]]++);
+  ['todo','wip','done'].forEach(k => {
+    document.getElementById('cnt' + k.charAt(0).toUpperCase() + k.slice(1)).textContent = cnt[k];
+    document.getElementById('h'   + k.charAt(0).toUpperCase() + k.slice(1)).textContent = cnt[k];
+  });
+
+
+  // Cards
+  ['todo','wip','done'].forEach(col => {
+    const el = document.getElementById('col-' + col);
+    el.innerHTML = '';
+    data.stories.filter(s => COL_KEY[s.status] === col).forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = s.id;
+
+      let btn = '';
+      if (col === 'todo') btn = `<button class="move-btn" data-action="start" data-id="${s.id}">Start</button>`;
+      if (col === 'wip')  btn = `<button class="move-btn back" data-action="back" data-id="${s.id}">Back</button>`;
+      if (col === 'done') btn = `<button class="move-btn reset" data-action="reset" data-id="${s.id}">Reset</button>`;
+
+      const nc = s.comments.length;
+      const epicIdx = epicCssIndex(s.epic_id);
+      const epicShort = (getEpic(s.epic_id) || {}).title || s.epic_id;
+      card.innerHTML = `
+        <div class="card-id">${s.id}</div>
+        <div class="card-title">${s.title}</div>
+        <div class="card-summary">${s.summary}</div>
+        <div class="card-footer">
+          <span class="badge-type">Story</span>
+          <span class="card-epic-badge epic-${epicIdx}" title="${epicShort}">v${epicIdx}</span>
+          ${nc ? `<span class="badge-comments">&#128172; ${nc}</span>` : ''}
+          ${btn}
+        </div>`;
+      el.appendChild(card);
+    });
+  });
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────────
+function openModal(id) {
+  const s = getStory(id);
+  if (!s) return;
+  activeId = id;
+  document.getElementById('mId').textContent    = s.id;
+  document.getElementById('mTitle').textContent  = s.title;
+  document.getElementById('mDesc').textContent   = s.description;
+  document.getElementById('mEpic').textContent   = (getEpic(s.epic_id) || {}).title || s.epic_id;
+  document.getElementById('commentInput').value  = '';
+
+  const badge = document.getElementById('mStatus');
+  badge.textContent = s.status;
+  badge.className   = 'status-badge ' + SC[s.status];
+
+  // Comments
+  const cl = document.getElementById('mComments');
+  if (s.comments.length === 0) {
+    cl.innerHTML = '<div class="no-comments">No comments yet.</div>';
+  } else {
+    cl.innerHTML = s.comments.map(c =>
+      `<div class="comment-item"><div class="comment-date">${c.date}</div><div class="comment-text">${c.text}</div></div>`
+    ).join('');
+  }
+
+  const col = COL_KEY[s.status];
+  document.getElementById('btnStart').style.display = col === 'todo' ? '' : 'none';
+  document.getElementById('btnDone') .style.display = col === 'wip'  ? '' : 'none';
+  document.getElementById('btnBack') .style.display = col === 'wip'  ? '' : 'none';
+  document.getElementById('btnReset').style.display = col === 'done' ? '' : 'none';
+
+  document.getElementById('overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('overlay').classList.remove('open');
+  activeId = null;
+}
+
+// ── Mutations (UI only — updates in-memory data; file edits use the JSON block) ──
+function moveStory(id, action) {
+  const s = getStory(id);
+  if (!s) return;
+  if (action === 'start') s.status = 'In Progress';
+  if (action === 'done')  s.status = 'Done';
+  if (action === 'back')  s.status = 'To Do';
+  if (action === 'reset') s.status = 'To Do';
+  toast(`${s.id} → ${s.status}`);
+  render();
+  if (activeId === id) openModal(id);
+}
+
+function addComment(id) {
+  const s    = getStory(id);
+  const text = document.getElementById('commentInput').value.trim();
+  if (!s || !text) return;
+  const today = new Date().toISOString().slice(0, 10);
+  s.comments.push({ date: today, text });
+  document.getElementById('commentInput').value = '';
+  toast('Comment added (in-memory only — edit JSON block to persist)');
+  render();
+  openModal(id);
+}
+
+// ── Event delegation ─────────────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  const actionBtn = e.target.closest('[data-action]');
+  if (actionBtn) {
+    e.stopPropagation();
+    moveStory(actionBtn.dataset.id, actionBtn.dataset.action);
+    return;
+  }
+  const card = e.target.closest('.card');
+  if (card) { openModal(card.dataset.id); return; }
+  if (e.target.id === 'btnClose' || e.target.id === 'overlay') closeModal();
+  if (e.target.id === 'btnStart')  moveStory(activeId, 'start');
+  if (e.target.id === 'btnDone')   moveStory(activeId, 'done');
+  if (e.target.id === 'btnBack')   moveStory(activeId, 'back');
+  if (e.target.id === 'btnReset')  moveStory(activeId, 'reset');
+  if (e.target.id === 'btnAddComment') addComment(activeId);
+});
+
+render();
+</script>
+</body>
+</html>
