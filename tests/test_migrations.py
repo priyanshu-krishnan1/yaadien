@@ -247,3 +247,328 @@ class TestMigratorStatus:
         assert status["0001_a"] == "applied"
         assert status["0002_new"] == "pending"
         pool.close()
+
+
+# ---------------------------------------------------------------------------
+# Tests: SchemaPolicy.REQUIRE_EXISTING
+# ---------------------------------------------------------------------------
+#
+# validate() issues three SYSCAT catalog queries.  On a real Db2 instance those
+# views exist; in the test suite we use SQLite and stub the three views with
+# real in-memory tables that we populate to simulate "everything present" vs.
+# "something missing".
+#
+# The approach: build a _SyscatPool that pre-creates synthetic
+# SYSCAT_TABLES / SYSCAT_COLUMNS / SYSCAT_INDEXES SQLite tables, then
+# monkey-patch validate() to redirect the three catalog queries to those
+# tables.  We patch at the function level — the SQL strings are simple enough
+# that we can intercept via a wrapper cursor that rewrites the queries.
+
+class _RewritingCursor:
+    """Wraps a sqlite3 cursor and rewrites SYSCAT queries to SQLite equivalents."""
+
+    def __init__(self, cur: sqlite3.Cursor) -> None:
+        self._cur = cur
+        self._last_rows: list[tuple] = []
+
+    # ------- query rewriting -------
+
+    @staticmethod
+    def _rewrite(sql: str, params: list) -> tuple[str, list]:
+        """Map Db2 SYSCAT catalog queries to in-memory SQLite table queries."""
+        s = sql.upper()
+        if "SYSCAT.TABLES" in s:
+            # SELECT UPPER(TABNAME) FROM SYSCAT.TABLES
+            # WHERE TABSCHEMA = UPPER(CURRENT SCHEMA) AND TYPE = 'T'
+            return (
+                "SELECT TABNAME FROM _syscat_tables WHERE TYPE = 'T'",
+                [],
+            )
+        if "SYSCAT.COLUMNS" in s:
+            # SELECT UPPER(TABNAME), UPPER(COLNAME) FROM SYSCAT.COLUMNS
+            # WHERE TABSCHEMA = ... AND UPPER(TABNAME) IN (?, ...)
+            n = len(params)
+            ph = ", ".join("?" * n)
+            return (
+                f"SELECT TABNAME, COLNAME FROM _syscat_columns"
+                f" WHERE TABNAME IN ({ph})",
+                params,
+            )
+        if "SYSCAT.INDEXES" in s:
+            n = len(params)
+            ph = ", ".join("?" * n)
+            return (
+                f"SELECT TABNAME, INDNAME FROM _syscat_indexes"
+                f" WHERE TABNAME IN ({ph})",
+                params,
+            )
+        return sql, params
+
+    def execute(self, sql: str, params=None):
+        rewritten_sql, rewritten_params = self._rewrite(sql, list(params or []))
+        if rewritten_params:
+            self._cur.execute(rewritten_sql, rewritten_params)
+        else:
+            self._cur.execute(rewritten_sql)
+        return self
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+
+class _RewritingConnection:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def cursor(self):
+        return _RewritingCursor(self._conn.cursor())
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+
+class _SyscatPool:
+    """SQLite pool pre-populated with synthetic SYSCAT tables."""
+
+    def __init__(self) -> None:
+        self._conn = sqlite3.connect(":memory:", check_same_thread=False)
+        self._setup()
+
+    def _setup(self) -> None:
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS _syscat_tables (
+                TABNAME TEXT NOT NULL PRIMARY KEY,
+                TYPE    TEXT NOT NULL DEFAULT 'T'
+            );
+            CREATE TABLE IF NOT EXISTS _syscat_columns (
+                TABNAME TEXT NOT NULL,
+                COLNAME TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS _syscat_indexes (
+                TABNAME TEXT NOT NULL,
+                INDNAME TEXT NOT NULL
+            );
+        """)
+        self._conn.commit()
+
+    @contextmanager
+    def get_connection(self):
+        yield _RewritingConnection(self._conn)
+
+    def close(self):
+        self._conn.close()
+
+    # helpers to populate the fake catalog ----------
+
+    def add_table(self, name: str) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO _syscat_tables (TABNAME, TYPE) VALUES (?, 'T')",
+            (name.upper(),),
+        )
+        self._conn.commit()
+
+    def add_column(self, table: str, col: str) -> None:
+        self._conn.execute(
+            "INSERT INTO _syscat_columns (TABNAME, COLNAME) VALUES (?, ?)",
+            (table.upper(), col.upper()),
+        )
+        self._conn.commit()
+
+    def add_index(self, table: str, idx: str) -> None:
+        self._conn.execute(
+            "INSERT INTO _syscat_indexes (TABNAME, INDNAME) VALUES (?, ?)",
+            (table.upper(), idx.upper()),
+        )
+        self._conn.commit()
+
+
+def _full_pool() -> _SyscatPool:
+    """Return a _SyscatPool that contains ALL required tables, columns, and indexes."""
+    from agent_memory_sdk.db.migrate import (
+        _REQUIRED_COLUMNS,
+        _REQUIRED_INDEXES,
+        _REQUIRED_TABLES,
+    )
+
+    pool = _SyscatPool()
+    for tbl in _REQUIRED_TABLES:
+        pool.add_table(tbl)
+    for tbl, cols in _REQUIRED_COLUMNS.items():
+        for col in cols:
+            pool.add_column(tbl, col)
+    for tbl, idxs in _REQUIRED_INDEXES.items():
+        for idx in idxs:
+            pool.add_index(tbl, idx)
+    return pool
+
+
+class TestSchemaPolicy:
+    def test_create_if_necessary_is_default(self, tmp_path):
+        """Default policy should remain CREATE_IF_NECESSARY."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+
+        migrations_dir = tmp_path / "m"
+        migrations_dir.mkdir()
+        pool = _SqlitePool()
+        pool._conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations "
+            "(version TEXT NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        pool._conn.commit()
+        m = Migrator(pool, migrations_dir=migrations_dir)
+        assert m._policy is SchemaPolicy.CREATE_IF_NECESSARY
+        pool.close()
+
+    def test_validate_passes_when_schema_complete(self):
+        """validate() must NOT raise when every required object is present."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+
+        pool = _full_pool()
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+        m.validate()  # must not raise
+        pool.close()
+
+    def test_validate_raises_on_missing_table(self):
+        """Validate should raise SchemaPolicyError listing the missing table."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+        from agent_memory_sdk.exceptions import SchemaPolicyError
+
+        pool = _full_pool()
+        # Remove MEMORY_CHUNKS from fake catalog
+        pool._conn.execute("DELETE FROM _syscat_tables WHERE TABNAME = 'MEMORY_CHUNKS'")
+        pool._conn.commit()
+
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+        with pytest.raises(SchemaPolicyError) as exc_info:
+            m.validate()
+
+        msg = str(exc_info.value)
+        assert "table: MEMORY_CHUNKS" in msg
+        pool.close()
+
+    def test_validate_raises_on_missing_column(self):
+        """validate() should list a missing column in its error."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+        from agent_memory_sdk.exceptions import SchemaPolicyError
+
+        pool = _full_pool()
+        pool._conn.execute(
+            "DELETE FROM _syscat_columns WHERE TABNAME='WORKING_MEMORY' AND COLNAME='CONSOLIDATED_AT'"
+        )
+        pool._conn.commit()
+
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+        with pytest.raises(SchemaPolicyError) as exc_info:
+            m.validate()
+
+        msg = str(exc_info.value)
+        assert "column: WORKING_MEMORY.CONSOLIDATED_AT" in msg
+        pool.close()
+
+    def test_validate_raises_on_missing_index(self):
+        """validate() should list a missing index in its error."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+        from agent_memory_sdk.exceptions import SchemaPolicyError
+
+        pool = _full_pool()
+        pool._conn.execute(
+            "DELETE FROM _syscat_indexes"
+            " WHERE TABNAME='SEMANTIC_FACTS' AND INDNAME='IX_SEMANTIC_FACTS_EMBEDDING'"
+        )
+        pool._conn.commit()
+
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+        with pytest.raises(SchemaPolicyError) as exc_info:
+            m.validate()
+
+        msg = str(exc_info.value)
+        assert "index: IX_SEMANTIC_FACTS_EMBEDDING on SEMANTIC_FACTS" in msg
+        pool.close()
+
+    def test_validate_aggregates_multiple_missing_objects(self):
+        """A single SchemaPolicyError should list ALL missing objects at once."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+        from agent_memory_sdk.exceptions import SchemaPolicyError
+
+        pool = _full_pool()
+        # Remove a table, a column from another table, and an index
+        pool._conn.execute("DELETE FROM _syscat_tables WHERE TABNAME='PROCEDURAL_MEMORY'")
+        pool._conn.execute(
+            "DELETE FROM _syscat_columns WHERE TABNAME='EPISODIC_MEMORY' AND COLNAME='CONFIDENCE'"
+        )
+        pool._conn.execute(
+            "DELETE FROM _syscat_indexes WHERE TABNAME='ENTITY_PROFILES' AND INDNAME='IX_ENTITY_PROFILES_SCOPE'"
+        )
+        pool._conn.commit()
+
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+        with pytest.raises(SchemaPolicyError) as exc_info:
+            m.validate()
+
+        msg = str(exc_info.value)
+        assert "table: PROCEDURAL_MEMORY" in msg
+        assert "column: EPISODIC_MEMORY.CONFIDENCE" in msg
+        assert "index: IX_ENTITY_PROFILES_SCOPE on ENTITY_PROFILES" in msg
+        pool.close()
+
+    def test_run_with_require_existing_returns_empty_list_on_success(self):
+        """run() with REQUIRE_EXISTING should return [] when schema is complete."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+
+        pool = _full_pool()
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+        result = m.run()
+        assert result == []
+        pool.close()
+
+    def test_run_with_require_existing_raises_on_incomplete_schema(self):
+        """run() with REQUIRE_EXISTING must propagate SchemaPolicyError."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+        from agent_memory_sdk.exceptions import SchemaPolicyError
+
+        pool = _SyscatPool()  # empty — no tables present
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+        with pytest.raises(SchemaPolicyError) as exc_info:
+            m.run()
+
+        msg = str(exc_info.value)
+        # Every required table must appear in the error message
+        for tbl in ("WORKING_MEMORY", "EPISODIC_MEMORY", "SEMANTIC_FACTS",
+                    "ENTITY_PROFILES", "PROCEDURAL_MEMORY", "MEMORY_CHUNKS"):
+            assert f"table: {tbl}" in msg
+        pool.close()
+
+    def test_require_existing_does_not_run_ddl(self):
+        """REQUIRE_EXISTING must never bootstrap or create tables."""
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+        from agent_memory_sdk.exceptions import SchemaPolicyError
+
+        # Use a pool with no tables at all (not even the SQLite helpers)
+        pool = _SyscatPool()  # empty catalog
+        m = Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)
+
+        with pytest.raises(SchemaPolicyError):
+            m.run()
+
+        # Confirm that _bootstrap (DDL) was never called — schema_migrations
+        # must NOT exist in the underlying SQLite db.
+        cur = pool._conn.cursor()
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+        )
+        assert cur.fetchone() is None, "REQUIRE_EXISTING must never run DDL"
+        pool.close()
+
+    def test_schema_policy_exported_from_top_level(self):
+        """SchemaPolicy and SchemaPolicyError must be importable from the package root."""
+        import agent_memory_sdk
+        assert hasattr(agent_memory_sdk, "SchemaPolicy")
+        assert hasattr(agent_memory_sdk, "SchemaPolicyError")
+        from agent_memory_sdk import SchemaPolicy, SchemaPolicyError  # noqa: F401
+

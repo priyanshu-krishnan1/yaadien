@@ -53,3 +53,24 @@ class InvalidMetadataFilterError(ValueError):
         - ``$array_contains``:   ``{"field": {"$array_contains": "value"}}``
         - ``$array_contains_any``: ``{"field": {"$array_contains_any": ["a", "b"]}}``
     """
+
+
+class SchemaPolicyError(RuntimeError):
+    """Raised when :class:`~agent_memory_sdk.db.migrate.SchemaPolicy.REQUIRE_EXISTING`
+    validation fails.
+
+    The error message lists every missing table, column, and index so the DBA
+    can provision them in a single pass before restarting the application.
+
+    Example::
+
+        from agent_memory_sdk.db.migrate import Migrator, SchemaPolicy
+        from agent_memory_sdk.db.connection import ConnectionPool
+
+        pool = ConnectionPool()
+        try:
+            Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING).validate()
+        except SchemaPolicyError as exc:
+            # exc.args[0] contains the full list of missing objects
+            sys.exit(str(exc))
+    """

@@ -2084,3 +2084,86 @@ explicitly supersedes it and say why.
   `mypy src` — **clean (no issues found in 20 source files)**.
 
 - **Made during:** ORC-3 audit pass
+
+## 2026-08-02 — ORC-4: schema attach mode (REQUIRE_EXISTING policy)
+
+- **Decision:**
+
+  Added a `SchemaPolicy` enum to `db/migrate.py` with two values:
+
+  | Value | Behaviour |
+  |---|---|
+  | `CREATE_IF_NECESSARY` | Default — apply pending migrations, creating tables and indexes. |
+  | `REQUIRE_EXISTING`    | Read-only catalog validation; raise `SchemaPolicyError` on any missing object; never execute DDL. |
+
+  Wired as `Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING)`.
+  Default is `CREATE_IF_NECESSARY` — all existing call sites are unaffected.
+  `Migrator.validate()` is also callable directly for startup guard-rails.
+  `SchemaPolicyError` added to `exceptions.py` and exported from the package root.
+
+  **Exact SYSCAT queries used by `validate()`**
+
+  All three queries filter on `TABSCHEMA = UPPER(CURRENT SCHEMA)` to restrict
+  results to the application user's schema and exclude Db2 system objects.
+
+  1. **Table presence — `SYSCAT.TABLES`**
+     ```sql
+     SELECT UPPER(TABNAME) FROM SYSCAT.TABLES
+      WHERE TABSCHEMA = UPPER(CURRENT SCHEMA) AND TYPE = 'T'
+     ```
+     `TYPE = 'T'` excludes views, aliases, and nicknames.
+
+  2. **Column presence — `SYSCAT.COLUMNS`**
+     ```sql
+     SELECT UPPER(TABNAME), UPPER(COLNAME) FROM SYSCAT.COLUMNS
+      WHERE TABSCHEMA = UPPER(CURRENT SCHEMA)
+        AND UPPER(TABNAME) IN (?, ?, …)
+     ```
+     Only tables confirmed present in step 1 are included in the `IN`-list,
+     so a missing table does not generate a flood of spurious column-missing
+     messages.
+
+  3. **Index presence — `SYSCAT.INDEXES`**
+     ```sql
+     SELECT UPPER(TABNAME), UPPER(INDNAME) FROM SYSCAT.INDEXES
+      WHERE TABSCHEMA = UPPER(CURRENT SCHEMA)
+        AND UPPER(TABNAME) IN (?, ?, …)
+     ```
+     Same IN-list guard as step 2.  Primary-key system indexes are excluded
+     from `_REQUIRED_INDEXES` because Db2 creates them implicitly; only
+     application-named `ix_*` indexes are in the manifest.
+
+  **Error-message format** — `SchemaPolicyError` message:
+  ```
+  REQUIRE_EXISTING validation failed: N object(s) are missing from the
+  database schema. Create them before starting the application:
+
+    table: MEMORY_CHUNKS
+    column: WORKING_MEMORY.CONSOLIDATED_AT
+    index: IX_SEMANTIC_FACTS_EMBEDDING on SEMANTIC_FACTS
+
+  Run the standard migration runner (SchemaPolicy.CREATE_IF_NECESSARY) or
+  apply the DDL manually using the .sql files in
+  src/agent_memory_sdk/db/migrations/.
+  ```
+  Tables first, then columns (sorted by name within each table), then indexes
+  (sorted by name within each table).  All names UPPER CASE to match Db2
+  catalog conventions.  Single pass covers all three categories so the DBA
+  can provision everything at once.
+
+  **Schema manifest** — `_REQUIRED_TABLES`, `_REQUIRED_COLUMNS`,
+  `_REQUIRED_INDEXES` are inline constants in `db/migrate.py` derived from all
+  six migration files (0001–0006).  Co-located with the runner for
+  auditability; must be updated whenever a new migration adds schema objects.
+
+- **Validation:** `pytest` — **517 passed** (10 new `TestSchemaPolicy` tests
+  added over the previous 507-test baseline).  Tests use a `_SyscatPool`
+  SQLite fake with a `_RewritingCursor` that intercepts SYSCAT query strings
+  and redirects them to in-memory stub tables — fully hermetic, no live Db2.
+  `ruff check .` — clean (1 auto-fixed import ordering in `__init__.py`).
+  `mypy src` — **clean (no issues found in 20 source files)**.
+
+- **Made during:** ORC-4 implementation
+
+}
+
