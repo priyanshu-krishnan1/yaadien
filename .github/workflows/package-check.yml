@@ -1,0 +1,115 @@
+name: Package build & smoke test
+
+# Runs on every PR (fast, no external services needed) and on every push to
+# main so tags/releases also get a verification pass.  The job is cheap:
+# ~60-90 s end-to-end because it installs from a local wheel and needs no
+# Db2 instance.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  package-check:
+    name: "Build, twine-check & smoke-test (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirror the version matrix used in the main CI job so a packaging
+        # regression on any supported interpreter is caught immediately.
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # ── Build tools (build + twine) ─────────────────────────────────────────
+      # Installed into the runner's base Python, not the test venv, so they
+      # are always available regardless of the wheel's dependency set.
+      - name: Install build tools
+        run: pip install build twine
+
+      # ── Produce sdist + wheel ───────────────────────────────────────────────
+      - name: Build sdist and wheel
+        run: python -m build --outdir dist/
+
+      # ── Validate metadata / long_description / RECORD ──────────────────────
+      - name: Validate with twine check
+        run: twine check dist/*
+
+      # ── Core smoke test ─────────────────────────────────────────────────────
+      # Create a clean throwaway venv and install the wheel (not the editable
+      # source tree).  This is the critical difference from `pip install -e .`:
+      # it exercises the [tool.hatch.build.targets.wheel] packages list and
+      # RECORD manifest, catching any file that was accidentally excluded.
+      - name: Create clean venv and install wheel
+        run: |
+          python -m venv .smoke-venv
+          .smoke-venv/bin/pip install --upgrade pip
+          WHEEL=$(ls dist/*.whl | head -1)
+          echo "Installing wheel: $WHEEL"
+          .smoke-venv/bin/pip install "$WHEEL"
+
+      - name: Run smoke test (core package layout)
+        run: .smoke-venv/bin/python scripts/smoke_test.py
+
+      # ── Extras smoke tests ──────────────────────────────────────────────────
+      # Each extra is installed into its own throwaway venv so there is no
+      # cross-contamination between extras.  The wheel is already in dist/;
+      # we use "wheel[extra]" syntax so pip resolves from the local file.
+      - name: Smoke test — [langchain] extra
+        run: |
+          python -m venv .smoke-langchain
+          .smoke-langchain/bin/pip install --upgrade pip
+          WHEEL=$(ls dist/*.whl | head -1)
+          .smoke-langchain/bin/pip install "${WHEEL}[langchain]"
+          .smoke-langchain/bin/python -c "
+          import agent_memory_sdk  # noqa: F401
+          from langchain_core.messages import BaseMessage  # noqa: F401
+          print('OK: [langchain] extra installs cleanly')
+          "
+
+      - name: Smoke test — [openai-agents] extra
+        run: |
+          python -m venv .smoke-openai-agents
+          .smoke-openai-agents/bin/pip install --upgrade pip
+          WHEEL=$(ls dist/*.whl | head -1)
+          .smoke-openai-agents/bin/pip install "${WHEEL}[openai-agents]"
+          .smoke-openai-agents/bin/python -c "
+          import agent_memory_sdk  # noqa: F401
+          import agents  # noqa: F401 — openai-agents top-level package
+          print('OK: [openai-agents] extra installs cleanly')
+          "
+
+      - name: Smoke test — [mcp] extra
+        run: |
+          python -m venv .smoke-mcp
+          .smoke-mcp/bin/pip install --upgrade pip
+          WHEEL=$(ls dist/*.whl | head -1)
+          .smoke-mcp/bin/pip install "${WHEEL}[mcp]"
+          .smoke-mcp/bin/python -c "
+          import agent_memory_sdk  # noqa: F401
+          import mcp  # noqa: F401
+          print('OK: [mcp] extra installs cleanly')
+          "
+
+      - name: Smoke test — [all] extra
+        run: |
+          python -m venv .smoke-all
+          .smoke-all/bin/pip install --upgrade pip
+          WHEEL=$(ls dist/*.whl | head -1)
+          .smoke-all/bin/pip install "${WHEEL}[all]"
+          .smoke-all/bin/python -c "
+          import agent_memory_sdk  # noqa: F401
+          from langchain_core.messages import BaseMessage  # noqa: F401
+          import agents  # noqa: F401
+          import mcp  # noqa: F401
+          print('OK: [all] extra installs cleanly — all adapter dependencies present')
+          "

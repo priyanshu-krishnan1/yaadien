@@ -69,11 +69,25 @@ dev = [
     "bandit>=1.7",
     "pip-audit>=2.7",
 ]
+# Optional real embedding/judge providers for benchmarks/ — see benchmarks/README.md.
+# Not required to run the harness (the "hashing"/"keyword" fallbacks need nothing
+# beyond the base install) but needed for a retrieval-quality number worth comparing
+# to vendor-reported LongMemEval figures.
+benchmark = [
+    "sentence-transformers>=3.0",
+    "google-generativeai>=0.7",
+]
 
 [project.urls]
 Repository = "https://github.com/oss-ai-connector/agent-memory-sdk"
 
 # ── Hatchling source layout ──────────────────────────────────────────────────
+# NOTE: `packages` below is the *only* thing that ends up in the built wheel —
+# everything else in the repo (project-management/, benchmarks/, scripts/,
+# tests/) is excluded from the wheel by omission, not by an explicit exclude
+# list. benchmarks/ gets the same treatment as project-management/: real,
+# checked-in, run on demand (`make benchmark`), never shipped to end users
+# installing the package from PyPI.
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_memory_sdk"]
 

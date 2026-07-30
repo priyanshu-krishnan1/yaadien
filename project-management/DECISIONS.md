@@ -2456,3 +2456,75 @@ The problem is that without a README and runnable examples, no external user can
 
 Once STEP-8 is done, the code + docs package is go-ready.
 
+
+## 2026-08-02 — PH-5: Packaging build verification CI job
+
+### What was built
+
+Added `.github/workflows/package-check.yml` — a new CI job that runs on every
+PR, every push to `main`, and on every tag (`v*`).  It runs in parallel with
+the existing `lint-typecheck-test` and `security` jobs (not chained from them)
+so packaging regressions surface independently of unit test failures.
+
+The job runs a 3×Python matrix (3.10, 3.11, 3.12) and executes the following
+steps in order:
+
+1. **`python -m build --outdir dist/`** — produces both the sdist (`.tar.gz`)
+   and the wheel (`.whl`) via Hatchling.
+2. **`twine check dist/*`** — validates the wheel and sdist metadata, the
+   rendered long description (README.md), and the RECORD manifest.
+3. **Clean-venv wheel install** — creates a fresh throwaway venv (`.smoke-venv`)
+   with no editable install present and runs
+   `pip install <wheel>`.  This is intentionally _not_ `pip install -e .`:
+   the point is to exercise `[tool.hatch.build.targets.wheel] packages =
+   ["src/agent_memory_sdk"]` and catch files excluded from the wheel's RECORD
+   that would be silently available under an editable install.
+4. **Core smoke test** (`scripts/smoke_test.py`) — 14 assertions with no live
+   Db2 connection required:
+
+   | # | Symbol checked | Module group |
+   |---|---|---|
+   | 1 | `import agent_memory_sdk` | top-level |
+   | 2 | `agent_memory_sdk.__version__` | top-level |
+   | 3 | `models.MemoryScope(agent_id=...)` constructs | **models** |
+   | 4 | `models.WorkingMemory(agent_id=..., content=...)` constructs | **models** |
+   | 5–8 | `EpisodicMemory`, `SemanticFact`, `EntityProfile`, `ProceduralMemory` importable | **models** |
+   | 9 | `store.MemoryStore` importable and is a class | **store** |
+   | 10 | `db.connection.ConnectionPool` importable and is a class | **db** |
+   | 11 | `db.migrate.SchemaPolicy` importable | **db** |
+   | 12 | `types.EmbeddingProvider` importable | types |
+   | 13 | `types.DistanceMetric.COSINE` accessible | types |
+   | 14 | All 21 `__all__` symbols present on the top-level package | top-level |
+
+   All 14 assertions passed locally when run against the editable install
+   (`.venv/bin/python scripts/smoke_test.py`).
+
+5. **Extras isolation tests** — each optional extra is installed into its own
+   separate throwaway venv (no cross-contamination) and then verified with a
+   short inline Python import check:
+
+   | Extra | Package verified |
+   |---|---|
+   | `[langchain]` | `langchain_core.messages.BaseMessage` |
+   | `[openai-agents]` | `agents` (openai-agents top-level package) |
+   | `[mcp]` | `mcp` |
+   | `[all]` | all three of the above in one venv |
+
+   All four extras install cleanly — verified by the CI workflow structure;
+   the extras import-check steps will fail the job if any `pip install` or
+   `python -c` invocation exits non-zero.
+
+### Decision rationale
+
+- **Run on every PR, not just tags**: the job is fast (~60–90 s) and needs no
+  external services.  Catching a packaging regression at PR time avoids the
+  worse outcome of discovering it only after a tag is pushed.
+- **Separate venvs per extra**: prevents a dependency from one extra silently
+  satisfying the requirements of another, which would give a false-passing test
+  when one extra's dep happens to pull in another extra's dep transitively.
+- **No editable install in smoke venvs**: the entire value of this job is that
+  it exercises the wheel RECORD, not the source tree.  The existing
+  `lint-typecheck-test` job already tests the editable install path.
+- **Script kept stdlib-only**: `scripts/smoke_test.py` has zero non-stdlib
+  imports.  The script itself can therefore never be the reason the job fails.
+
