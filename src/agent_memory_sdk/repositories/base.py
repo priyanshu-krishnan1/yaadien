@@ -258,9 +258,11 @@ class BaseRepository(ABC, Generic[M]):
         single-writer or low-concurrency case; it is not a uniqueness guarantee
         under high-concurrency writers to the same scope.
 
-        The dedup check uses ``deleted_at IS NULL``.  Once ENH-3 lands and
-        ``superseded_at`` exists, the check should also add
-        ``AND superseded_at IS NULL``; revisit at that point.
+        The dedup check uses both ``deleted_at IS NULL`` and
+        ``superseded_at IS NULL`` so that superseded rows do not block
+        new writes of content with the same hash — a superseded fact is
+        no longer the live version of that claim and must not act as a
+        dedup barrier for a fresh write.
 
         The record's ``agent_id`` is overwritten with ``scope.agent_id``
         to ensure consistency.  The ``id`` is generated on the Python side
@@ -299,6 +301,7 @@ class BaseRepository(ABC, Generic[M]):
                 WHERE {scope_sql}
                   AND content_hash = ?
                   AND deleted_at IS NULL
+                  AND superseded_at IS NULL
                 FETCH FIRST 1 ROWS ONLY
             """
             with self._pool.get_connection() as conn:
@@ -399,7 +402,7 @@ class BaseRepository(ABC, Generic[M]):
         include_expired: bool = False,
         min_confidence: float = 0.0,
     ) -> list[M]:
-        """List non-deleted rows within scope, ordered by created_at DESC.
+        """List non-deleted, non-superseded rows within scope, ordered by created_at DESC.
 
         Args:
             scope:           Must include at minimum agent_id.
@@ -416,7 +419,10 @@ class BaseRepository(ABC, Generic[M]):
                              backward compatibility).
 
         Returns:
-            A list of model instances.
+            A list of model instances.  Rows where ``deleted_at IS NOT NULL``
+            or ``superseded_at IS NOT NULL`` are always excluded from normal
+            reads.  To access superseded rows for audit purposes, query the
+            table directly.
         """
         _require_agent_id(scope)
         scope_sql, scope_params = _scope_predicates(scope)
@@ -439,6 +445,7 @@ class BaseRepository(ABC, Generic[M]):
             FROM {self._TABLE}
             WHERE {scope_sql}
               AND deleted_at IS NULL
+              AND superseded_at IS NULL
               {extra}
               {conf_sql}
             ORDER BY created_at DESC
@@ -455,6 +462,7 @@ class BaseRepository(ABC, Generic[M]):
                     FROM {self._TABLE}
                     WHERE {scope_sql}
                       AND deleted_at IS NULL
+                      AND superseded_at IS NULL
                       {extra}
                       {conf_sql}
                 ) WHERE rn > ? AND rn <= ?
@@ -749,6 +757,7 @@ class BaseRepository(ABC, Generic[M]):
             FROM {self._TABLE}
             WHERE {scope_sql}
               AND deleted_at IS NULL
+              AND superseded_at IS NULL
               {extra}
               {conf_sql}
             ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})

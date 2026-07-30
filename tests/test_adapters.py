@@ -123,6 +123,40 @@ def _row(
     )
 
 
+def _fact_row(
+    id_: str = "row-1",
+    content: str = "some fact",
+    metadata: dict[str, Any] | None = None,
+    version: int = 1,
+    confidence: float = 1.0,
+) -> tuple[Any, ...]:
+    """Build a fake DB row for SemanticFactRepository._model_from_row (18 cols).
+
+    Index map (0-based):
+      0  id           1  tenant_id   2  agent_id    3  user_id     4  thread_id
+      5  content      6  metadata    7  embedding
+      8  confidence   9  content_hash
+      10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
+      15 superseded_by  16 superseded_at  17 supersede_reason
+    """
+    import hashlib
+    import re as _re
+    meta = metadata or {}
+    vec_str = "[" + ",".join("0.1" for _ in range(1536)) + "]"
+    h = hashlib.sha256(_re.sub(r"\s+", " ", content.lower()).strip().encode()).hexdigest()
+    return (
+        id_, "tenant-x", "test-agent", None, "sess-1",
+        content, json.dumps(meta),
+        vec_str,
+        confidence,  # 8 — confidence
+        h,           # 9 — content_hash
+        _NOW, _NOW, None, version, None,
+        None,        # 15 — superseded_by
+        None,        # 16 — superseded_at
+        None,        # 17 — supersede_reason
+    )
+
+
 # ---------------------------------------------------------------------------
 # OpenAI Agents adapter tests
 # ---------------------------------------------------------------------------
@@ -412,14 +446,14 @@ class TestDb2MemoryStore:
 
     def test_mget_returns_value_when_found(self):
         meta = {"store_key": "key1"}
-        row = _row(content="my-value", metadata=meta)
+        row = _fact_row(content="my-value", metadata=meta)
         ms, pool = self._make_memstore(rows=[row])
         result = ms.mget(["key1"])
         assert result == ["my-value"]
 
     def test_mdelete_soft_deletes_row(self):
         meta = {"store_key": "to-delete"}
-        row = _row(id_="r-del", content="value", metadata=meta)
+        row = _fact_row(id_="r-del", content="value", metadata=meta)
         ms, pool = self._make_memstore(rows=[row])
         ms.mdelete(["to-delete"])
         update_sqls = [s for s in pool.cursor.all_sqls if "UPDATE semantic_facts" in s]
@@ -432,8 +466,8 @@ class TestDb2MemoryStore:
 
     def test_yield_keys_returns_stored_keys(self):
         rows = [
-            _row(id_="r1", metadata={"store_key": "alpha"}),
-            _row(id_="r2", metadata={"store_key": "beta"}),
+            _fact_row(id_="r1", metadata={"store_key": "alpha"}),
+            _fact_row(id_="r2", metadata={"store_key": "beta"}),
         ]
         ms, _ = self._make_memstore(rows=rows)
         keys = ms.yield_keys()
@@ -442,9 +476,9 @@ class TestDb2MemoryStore:
 
     def test_yield_keys_prefix_filter(self):
         rows = [
-            _row(id_="r1", metadata={"store_key": "user:1"}),
-            _row(id_="r2", metadata={"store_key": "user:2"}),
-            _row(id_="r3", metadata={"store_key": "system:x"}),
+            _fact_row(id_="r1", metadata={"store_key": "user:1"}),
+            _fact_row(id_="r2", metadata={"store_key": "user:2"}),
+            _fact_row(id_="r3", metadata={"store_key": "system:x"}),
         ]
         ms, _ = self._make_memstore(rows=rows)
         keys = ms.yield_keys(prefix="user:")

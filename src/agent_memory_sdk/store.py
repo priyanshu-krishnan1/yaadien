@@ -99,7 +99,7 @@ from agent_memory_sdk.repositories.facts import SemanticFactRepository
 from agent_memory_sdk.repositories.procedural import ProceduralMemoryRepository
 from agent_memory_sdk.repositories.profiles import EntityProfileRepository
 from agent_memory_sdk.repositories.working import WorkingMemoryRepository
-from agent_memory_sdk.types import NoOpConsolidator
+from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,11 @@ class MemoryStore:
               ``working`` or ``episodic`` memory.  Defaults to
               :class:`~agent_memory_sdk.types.NoOpConsolidator` (does
               nothing).
+        reconciler: A :class:`~agent_memory_sdk.types.Reconciler`
+              implementation (any callable matching the protocol).  Used by
+              :meth:`reconcile` to detect contradictions among live semantic
+              facts.  Defaults to
+              :class:`~agent_memory_sdk.types.NoOpReconciler` (does nothing).
     """
 
     def __init__(
@@ -155,6 +160,7 @@ class MemoryStore:
         pool: Any,
         embedding_dim: int = 1536,
         consolidator: Any | None = None,
+        reconciler: Any | None = None,
     ) -> None:
         self.working = WorkingMemoryRepository(pool)
         self.episodic = EpisodicMemoryRepository(pool)
@@ -174,6 +180,7 @@ class MemoryStore:
             repo.EMBEDDING_DIM = embedding_dim
 
         self._consolidator = consolidator if consolidator is not None else NoOpConsolidator()
+        self._reconciler = reconciler if reconciler is not None else NoOpReconciler()
 
     # ------------------------------------------------------------------
     # remember() — primary write entry point
@@ -333,6 +340,101 @@ class MemoryStore:
         ):
             results[repo._TABLE] = repo.purge_expired(scope)
         return results
+
+    # ------------------------------------------------------------------
+    # reconcile() — run a reconciliation pass over semantic facts
+    # ------------------------------------------------------------------
+
+    def reconcile(
+        self,
+        memory_type: str,
+        scope: MemoryScope,
+        limit: int = 200,
+    ) -> list[Any]:
+        """Fetch live facts and run the configured Reconciler to detect contradictions.
+
+        Fetches the most recent non-deleted, non-superseded records for the
+        given *memory_type* and *scope*, invokes the configured
+        :class:`~agent_memory_sdk.types.Reconciler`, and for each returned
+        :class:`~agent_memory_sdk.types.SupersedeDecision` calls
+        :meth:`~agent_memory_sdk.repositories.facts.SemanticFactRepository.supersede`
+        on the loser row.
+
+        **Soft-supersession vs. forget():**
+        This method uses a distinct mechanism from
+        :meth:`forget`: ``superseded_at`` is set (not ``deleted_at``), so
+        the audit trail can distinguish "the AI decided this was contradicted"
+        from "the user/operator asked us to forget this."
+
+        Currently only ``"facts"`` / ``"semantic_facts"`` is supported — those
+        are the only rows that carry the supersession columns.  Passing any
+        other memory type raises :exc:`ValueError`.
+
+        Args:
+            memory_type: Must be ``"facts"`` or ``"semantic_facts"``.
+            scope:       Must include at minimum agent_id.
+            limit:       How many recent live facts to fetch as candidates for
+                         the reconciliation pass (default 200, capped at 1000).
+
+        Returns:
+            The list of :class:`~agent_memory_sdk.types.SupersedeDecision`
+            objects returned by the Reconciler.  Decisions that did not match
+            a live row (e.g. the loser was already superseded by a concurrent
+            call) are silently skipped.
+
+        Raises:
+            ValueError: if ``memory_type`` is not ``"facts"`` /
+                        ``"semantic_facts"``, or if scope.agent_id is missing.
+        """
+        # Only semantic_facts carries supersession columns.
+        if memory_type not in ("facts", "semantic_facts"):
+            raise ValueError(
+                f"reconcile() only supports memory_type='facts' / 'semantic_facts'; "
+                f"got {memory_type!r}.  entity_profiles and procedural_memory do not "
+                f"carry supersession columns (see DECISIONS.md ENH-3 entry)."
+            )
+
+        candidates = self.facts.list_all(scope, limit=min(limit, 1000))
+
+        try:
+            decisions = self._reconciler(candidates)
+        except Exception:
+            logger.exception(
+                "Reconciler raised an exception; no supersession decisions applied."
+            )
+            return []
+
+        applied: list[Any] = []
+        for decision in decisions:
+            try:
+                ok = self.facts.supersede(
+                    loser_id=decision.loser_id,
+                    winner_id=decision.winner_id,
+                    reason=decision.reason,
+                    scope=scope,
+                )
+                if ok:
+                    applied.append(decision)
+                    logger.debug(
+                        "reconcile: superseded fact loser=%s winner=%s reason=%r",
+                        decision.loser_id,
+                        decision.winner_id,
+                        decision.reason,
+                    )
+                else:
+                    logger.debug(
+                        "reconcile: supersede no-op (already superseded or not found) "
+                        "loser=%s winner=%s",
+                        decision.loser_id,
+                        decision.winner_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "reconcile: failed to supersede loser=%s winner=%s",
+                    decision.loser_id,
+                    decision.winner_id,
+                )
+        return applied
 
     # ------------------------------------------------------------------
     # Internal helpers

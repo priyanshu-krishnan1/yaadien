@@ -154,6 +154,20 @@ class SemanticFact(_MemoryBase):
     pattern is encouraged but not enforced — callers may structure
     ``content`` however they like.
 
+    Supersession fields (ENH-3 — migration 0004):
+        superseded_by:    id of the winning row that replaced this fact, or
+                          None if this fact is still live.
+        superseded_at:    timestamp when the Reconciler soft-superseded this
+                          row, or None if still live.
+        supersede_reason: human-readable reason string set by the Reconciler
+                          (e.g. "contradicts: user now prefers light mode"),
+                          or None if still live.
+
+    Governance note: ``superseded_at IS NOT NULL`` means "the AI learned
+    this was contradicted."  ``deleted_at IS NOT NULL`` means "the operator
+    / user asked us to forget this."  Both cause the row to be excluded from
+    normal reads; neither hard-deletes the row.
+
     Example usage::
 
         fact = SemanticFact(
@@ -164,6 +178,13 @@ class SemanticFact(_MemoryBase):
             metadata={"source": "episode-xyz"},
         )
     """
+
+    # Supersession fields — None means "this fact is still live".
+    # Populated only by SemanticFactRepository.supersede() or
+    # MemoryStore.reconcile(); callers should not set these directly.
+    superseded_by: str | None = None
+    superseded_at: datetime | None = None
+    supersede_reason: str | None = None
 
 
 class EntityProfile(_MemoryBase):

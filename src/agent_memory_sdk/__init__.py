@@ -40,7 +40,10 @@ from agent_memory_sdk.types import (
     DistanceMetric,
     EmbeddingProvider,
     NoOpConsolidator,
+    NoOpReconciler,
+    Reconciler,
     SearchMode,
+    SupersedeDecision,
 )
 
 __version__ = "0.1.0"
@@ -57,5 +60,8 @@ __all__ = [
     "DistanceMetric",
     "SearchMode",
     "NoOpConsolidator",
+    "NoOpReconciler",
+    "Reconciler",
+    "SupersedeDecision",
     "StaleWriteError",
 ]

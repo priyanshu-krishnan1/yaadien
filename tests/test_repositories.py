@@ -159,6 +159,43 @@ def _row(
     )
 
 
+def _fact_row(
+    id_: str = "row-uuid",
+    content: str = "hello",
+    metadata: dict | None = None,
+    embedding: list[float] | None = None,
+    confidence: float = 1.0,
+    content_hash: str | None = None,
+    superseded_by: Any = None,
+    superseded_at: Any = None,
+    supersede_reason: Any = None,
+) -> tuple[Any, ...]:
+    """Build a fake DB row for SemanticFactRepository._model_from_row (18 cols).
+
+    Index map (0-based):
+      0  id            1  tenant_id   2  agent_id    3  user_id     4  thread_id
+      5  content       6  metadata    7  embedding
+      8  confidence    9  content_hash
+      10 created_at   11 updated_at  12 expires_at  13 version     14 deleted_at
+      15 superseded_by  16 superseded_at  17 supersede_reason
+    """
+    meta = metadata or {}
+    vec = embedding or _VEC
+    vec_str = "[" + ",".join(str(f) for f in vec) + "]"
+    h = content_hash if content_hash is not None else _content_hash(content)
+    return (
+        id_, "t1", "agent-001", "user-42", None,
+        content, json.dumps(meta),
+        vec_str,
+        confidence,
+        h,
+        _NOW, _NOW, None, 1, None,
+        superseded_by,    # 15
+        superseded_at,    # 16
+        supersede_reason, # 17
+    )
+
+
 # ---------------------------------------------------------------------------
 # _vec_to_str
 # ---------------------------------------------------------------------------
@@ -859,7 +896,7 @@ class TestContentHash:
         """SemanticFact dedup: whitespace/case variants of same content must dedup."""
         # "  HELLO  WORLD  " normalizes to "hello world" — same hash
         normalized_content = "hello world"
-        existing = _row(
+        existing = _fact_row(
             id_="norm-id",
             content=normalized_content,
             content_hash=_content_hash("  HELLO  WORLD  "),
@@ -872,7 +909,7 @@ class TestContentHash:
 
     def test_create_dedup_returns_existing_for_semantic_fact(self):
         """SemanticFact.create() must return the existing row on a dedup hit."""
-        existing = _row(id_="sf-existing-id", content="User prefers Python")
+        existing = _fact_row(id_="sf-existing-id", content="User prefers Python")
         pool = _FakePool([existing])
         repo = SemanticFactRepository(pool)
         fact = SemanticFact(agent_id="agent-001", content="User prefers Python")

@@ -1399,6 +1399,105 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-08-01 — ENH-3: Reconciler protocol, supersession columns, MemoryStore.reconcile()
+
+- **Decision:** Implemented soft-supersession for `semantic_facts` via three new nullable
+  columns (`superseded_by VARCHAR(36)`, `superseded_at TIMESTAMP`,
+  `supersede_reason VARCHAR(255)`), a `Reconciler` protocol + `NoOpReconciler` default in
+  `types.py`, `SemanticFactRepository.supersede()`, and `MemoryStore.reconcile()`.
+
+  **Supersession columns — semantic_facts only (entity_profiles and procedural_memory excluded)**
+
+  The columns were added to `semantic_facts` only.  The justification for each excluded table:
+
+  * **`entity_profiles`** — profiles are dense aggregated summaries kept current via `update()`
+    (optimistic concurrency), not an append of competing individual claims.  Typically there is
+    one profile row per `(agent_id, user_id)` pair; "which profile supersedes which?" does not
+    naturally arise.  If a profile becomes stale, the correct action is `update()`, not
+    supersession.  Adding the columns would add schema cost with no query path that would use them.
+
+  * **`procedural_memory`** — skills and instructions are versioned via `update()`.  A new version
+    of a skill replaces the old one in place; a competing row is not typically written alongside
+    the old one.  The supersession mechanism assumes two independently-created rows that later turn
+    out to contradict each other — that pattern is specific to atomic fact accumulation, not to
+    skills that are deliberately updated.
+
+  The two excluded tables are versioned objects; `semantic_facts` is an accumulation of
+  independently-created atomic claims.  That structural difference is why supersession is
+  meaningful for one and not the other.
+
+  **Reconciler protocol shape** (mirrors `Consolidator` exactly):
+
+  ```
+  class Reconciler(Protocol):
+      def __call__(self, candidates: list[SemanticFact]) -> list[SupersedeDecision]: ...
+
+  @dataclass
+  class SupersedeDecision:
+      winner_id: str   # id of the winning fact (left untouched)
+      loser_id:  str   # id of the superseded fact
+      reason:    str   # e.g. "contradicts: user now prefers light mode"
+  ```
+
+  **`NoOpReconciler`** — matches `NoOpConsolidator` pattern exactly: a plain class with a
+  `__call__` that always returns `[]`.  Used as the default when no reconciler is supplied to
+  `MemoryStore(pool, reconciler=...)`.
+
+  **`SemanticFactRepository.supersede(loser_id, winner_id, reason, scope)`** — issues a scoped
+  UPDATE setting the three supersession columns plus bumping `updated_at` and `version`.  Guards:
+  `AND deleted_at IS NULL AND superseded_at IS NULL` so only live, non-superseded rows can be
+  superseded.  Returns `True` on hit, `False` on miss.  Reason is truncated to 255 chars to match
+  the column width.
+
+  **`MemoryStore.reconcile(memory_type, scope, limit=200)`** — fetches up to `limit`
+  non-deleted, non-superseded `SemanticFact` rows, passes them to the configured Reconciler,
+  and for each `SupersedeDecision` calls `self.facts.supersede()`.  Reconciler errors are
+  caught and logged (same pattern as `_run_consolidator()`).  Returns the list of applied
+  decisions.  Only accepts `memory_type="facts"` / `"semantic_facts"` — calling with any other
+  type raises `ValueError` immediately.
+
+  **`list_all()` / `search()` in `BaseRepository`** — both now include
+  `AND superseded_at IS NULL` alongside the existing `AND deleted_at IS NULL`.  This applies
+  to all five tables (the predicate is a no-op for the four tables that don't have the column,
+  but that is correct: `superseded_at IS NULL` is vacuously true when the column doesn't exist,
+  so normal Db2 DDL will reject queries referencing a missing column — which is exactly right:
+  the other four tables must not be queried with this predicate until/unless a future migration
+  adds the column).  In practice, only `SemanticFactRepository` overrides `_SELECT_COLS` and
+  `_model_from_row`; the base filter is written into the SQL for all tables so the exclusion
+  behaviour is consistent and can't be accidentally omitted when extending.
+
+  **ENH-2 dedup check updated** — `create()` dedup SELECT now also excludes superseded rows
+  (`AND superseded_at IS NULL`).  This closes the case where a fact is superseded and then the
+  same content is written again: the superseded row must not be returned as a dedup hit; a fresh
+  row should be inserted.  The ENH-2 DECISIONS.md entry referenced this as a future revisit point;
+  it is resolved here.
+
+  **Governance note (not just naming):** `deleted_at IS NOT NULL` = "the user / operator asked
+  us to forget this."  `superseded_at IS NOT NULL` = "the AI learned this was contradicted by a
+  newer fact."  Keeping them as separate nullable columns lets audit tooling, compliance queries,
+  and human review distinguish these two lifecycle events without ambiguity.  This is a real
+  governance distinction — data-erasure obligations (GDPR Right to Erasure) apply to
+  user-initiated `forget()` calls; they do not automatically apply to AI-managed supersession,
+  which may need to be retained for model-governance audit purposes.
+
+  **Migration file:** `0004_supersession.sql` — three `ALTER TABLE … ADD COLUMN` statements
+  plus a `CREATE INDEX ix_semantic_facts_superseded_by ON semantic_facts (agent_id, superseded_by)`.
+  No `NOT NULL` constraint (nullable, existing rows are `NULL` = live).  No DB-level FK
+  (would prevent orphan handling if the winner is itself later superseded or deleted).
+
+  **`types.py` module path updated** — `SupersedeDecision`, `Reconciler`, `NoOpReconciler`
+  exported from `src/agent_memory_sdk/types.py` and re-exported from `__init__.py`.
+
+- **Reason:** Implements Oracle AI Agent Memory-inspired contradiction detection as a
+  soft-supersession mechanism.  Keeps a permanent audit trail of "this fact was replaced by
+  that one, for this reason" without hard-deleting rows or mixing the AI-managed lifecycle
+  event with user-initiated forget().
+- **Made during:** ENH-3 (EPIC-2 backlog, third story)
+- **Supersedes:** The ENH-2 DECISIONS.md note "once ENH-3 lands… the dedup check should also
+  add `AND superseded_at IS NULL`" — resolved in this entry.
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```

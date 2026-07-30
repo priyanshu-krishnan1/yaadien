@@ -137,7 +137,7 @@ scope before ranking by vector distance. See `MemoryScope` (built in Step
 
 ## 3. Schema (entity-relationship)
 
-_Last updated: ENH-2 — `content_hash` column added to all five tables (migration 0003)_
+_Last updated: ENH-3 — supersession columns added to `semantic_facts` (migration 0004)_
 
 Column type legend:
 - `id` → `VARCHAR(36)` (UUID)
@@ -150,6 +150,9 @@ Column type legend:
 - `created_at`, `updated_at` → `TIMESTAMP NOT NULL DEFAULT CURRENT TIMESTAMP`
 - `expires_at`, `deleted_at` → `TIMESTAMP` (nullable)
 - `version` → `INTEGER NOT NULL DEFAULT 1`
+- `superseded_by` → `VARCHAR(36)` nullable (id of the winning row; `semantic_facts` only; NULL = this fact is still live; see DECISIONS.md ENH-3 entry)
+- `superseded_at` → `TIMESTAMP` nullable (`semantic_facts` only; NULL = live)
+- `supersede_reason` → `VARCHAR(255)` nullable (`semantic_facts` only; human-readable reason set by the Reconciler)
 
 Each table has: a `CREATE VECTOR INDEX … WITH DISTANCE COSINE`, a composite
 scope index on `(agent_id, tenant_id, user_id, thread_id)`, an agent-only
@@ -221,6 +224,9 @@ erDiagram
         TIMESTAMP expires_at "nullable"
         INTEGER version "NOT NULL default 1"
         TIMESTAMP deleted_at "nullable"
+        VARCHAR_36 superseded_by "nullable, winner row id"
+        TIMESTAMP superseded_at "nullable, ENH-3"
+        VARCHAR_255 supersede_reason "nullable, Reconciler reason"
     }
 
     entity_profiles {

@@ -11,10 +11,11 @@ their own module to avoid circular imports.
 from __future__ import annotations
 
 import enum
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from agent_memory_sdk.models import _MemoryBase
+    from agent_memory_sdk.models import SemanticFact, _MemoryBase
 
 # ---------------------------------------------------------------------------
 # EmbeddingProvider
@@ -204,6 +205,179 @@ class NoOpConsolidator:
     """
 
     def __call__(self, raw_memories: list[_MemoryBase]) -> list[_MemoryBase]:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# SupersedeDecision, Reconciler, NoOpReconciler
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SupersedeDecision:
+    """A single reconciliation decision produced by a :class:`Reconciler`.
+
+    Attributes:
+        winner_id:  ``id`` of the fact that wins (the more current / correct
+                    record).  This row is left untouched.
+        loser_id:   ``id`` of the fact that is superseded (the stale /
+                    contradicted record).  Its ``superseded_by``,
+                    ``superseded_at``, and ``supersede_reason`` fields will be
+                    set by :meth:`~agent_memory_sdk.store.MemoryStore.reconcile`.
+        reason:     Human-readable explanation, e.g.
+                    ``"contradicts: user now prefers light mode"``.
+    """
+
+    winner_id: str
+    loser_id: str
+    reason: str
+
+
+class Reconciler(Protocol):
+    """Protocol for pluggable memory reconciliation callbacks.
+
+    A ``Reconciler`` examines a list of candidate :class:`~agent_memory_sdk.models.SemanticFact`
+    records and returns zero or more :class:`SupersedeDecision` objects
+    indicating which facts should be soft-superseded.
+
+    Shape::
+
+        (candidates: list[SemanticFact]) -> list[SupersedeDecision]
+
+    This protocol is parallel in shape to :class:`Consolidator`:
+
+    * **Consolidator** — receives raw working/episodic writes, returns derived
+      semantic records to persist.
+    * **Reconciler** — receives live, non-superseded semantic facts for a
+      scope, returns soft-supersede decisions (no new rows are created).
+
+    The ``MemoryStore.reconcile(memory_type, scope)`` method fetches the
+    relevant non-superseded candidates, invokes the configured ``Reconciler``,
+    and then applies each decision by calling
+    :meth:`~agent_memory_sdk.repositories.facts.SemanticFactRepository.supersede`
+    on the losing row.  The winning row is left untouched.
+
+    Governance note
+    ---------------
+    Soft-supersession is **not** the same as :meth:`~agent_memory_sdk.store.MemoryStore.forget`:
+
+    * ``deleted_at IS NOT NULL`` → "the user / operator asked us to forget
+      this."  Set by ``forget()`` / ``soft_delete()``.
+    * ``superseded_at IS NOT NULL`` → "we learned this was contradicted by a
+      newer, more accurate fact."  Set by ``reconcile()``.
+
+    Both mechanisms cause rows to be excluded from normal reads.  Keeping them
+    as separate columns lets audit tooling distinguish explicit user erasure
+    from AI-managed lifecycle events — a real governance distinction, not just
+    a naming preference.
+
+    **Sync path (default)**
+    -----------------------
+    Pass a ``Reconciler`` to :class:`~agent_memory_sdk.store.MemoryStore` at
+    construction time::
+
+        store = MemoryStore(pool, reconciler=MyLLMReconciler())
+
+    Then call ``store.reconcile("facts", scope)`` explicitly — reconciliation
+    is never triggered automatically.
+
+    **LLM-based reconciler example**
+    ---------------------------------
+    ::
+
+        import openai
+        from agent_memory_sdk.types import Reconciler, SupersedeDecision
+
+        class LLMReconciler:
+            \"\"\"Detect contradictions in a list of semantic facts.\"\"\"
+
+            def __init__(self, client: openai.OpenAI) -> None:
+                self._client = client
+
+            def __call__(
+                self, candidates: list
+            ) -> list[SupersedeDecision]:
+                if len(candidates) < 2:
+                    return []
+
+                # Build an enumerated list for the LLM to reference by index.
+                enumerated = "\\n".join(
+                    f"{i}: {f.content}" for i, f in enumerate(candidates)
+                )
+                resp = self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are given numbered memory facts. "
+                                "Find pairs where one fact directly contradicts "
+                                "or supersedes another. For each such pair, "
+                                "output a JSON line: "
+                                '{{"winner": <index>, "loser": <index>, '
+                                '"reason": "<short reason>"}}. '
+                                "Output nothing if no contradictions exist."
+                            ),
+                        },
+                        {"role": "user", "content": enumerated},
+                    ],
+                )
+                text = resp.choices[0].message.content or ""
+                decisions: list[SupersedeDecision] = []
+                import json
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        w = candidates[int(obj["winner"])]
+                        l = candidates[int(obj["loser"])]
+                        decisions.append(
+                            SupersedeDecision(
+                                winner_id=w.id,
+                                loser_id=l.id,
+                                reason=obj.get("reason", "contradicts"),
+                            )
+                        )
+                    except Exception:
+                        continue
+                return decisions
+
+        # Wire in at store construction:
+        store = MemoryStore(pool, reconciler=LLMReconciler(openai.OpenAI()))
+        # Later, run a reconciliation pass:
+        decisions = store.reconcile("facts", scope)
+    """
+
+    def __call__(self, candidates: list[SemanticFact]) -> list[SupersedeDecision]:
+        """Identify facts that should be soft-superseded.
+
+        Args:
+            candidates: Live, non-superseded, non-deleted
+                :class:`~agent_memory_sdk.models.SemanticFact` records for a
+                single scope.  The Reconciler should examine these for
+                contradictions and return decisions for any pairs where one
+                fact supersedes another.
+
+        Returns:
+            A (possibly empty) list of :class:`SupersedeDecision` objects.
+            Return ``[]`` if no contradictions are detected.
+        """
+        ...
+
+
+class NoOpReconciler:
+    """Default reconciler that does nothing.
+
+    Always returns an empty decision list.  This is the default used by
+    :class:`~agent_memory_sdk.store.MemoryStore` when no ``reconciler``
+    argument is supplied — callers opt in to reconciliation explicitly.
+
+    Because it returns an empty list, ``store.reconcile(...)`` with this
+    default is a no-op: no facts are ever superseded automatically.
+    """
+
+    def __call__(self, candidates: list[SemanticFact]) -> list[SupersedeDecision]:
         return []
 
 
