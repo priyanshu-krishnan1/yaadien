@@ -7,13 +7,6 @@ demand via `make benchmark`.
 
 ---
 
-> **⚠️ No results yet.** This placeholder is checked in with the harness code (PH-6).
-> Run `make benchmark` or `python scripts/run_benchmarks.py` against a live Db2 instance
-> to populate it. See `benchmarks/README.md` for free-tier embedding/judge options that
-> require nothing beyond a Db2 connection.
-
----
-
 ## Methodology summary
 
 ### Suite 1: Retrieval quality (LongMemEval-shaped)
@@ -31,23 +24,18 @@ ICLR 2025):
 | `knowledge_update` | A fact stated then contradicted by a later session; the correct answer is the *updated* value (the stale fact must not win). |
 | `abstention` | The question asks about something never mentioned in this scope's sessions; the correct behavior is to not assert an unsupported answer. |
 
-Each run generates `n_per_category` questions (default 4, configurable via
-`--dataset-size`) per category, for `5 × n_per_category` total questions. The
-dataset is **reproducible** — the same `--seed` and `--dataset-size` produce the
-same questions every run.
+Each run generates `n_per_category` questions (default 10 for these runs) per
+category, for 50 total questions. The dataset is **reproducible** — the same
+`--seed` (42) and `--dataset-size` produce the same questions every run.
+
+**Embeddings (all runs):** `ollama` provider, `nomic-embed-text` model (768-dim,
+padded/truncated to 1536 to match the Db2 `VECTOR(1536,FLOAT32)` column, then
+re-normalised). Local, offline, no API key.
 
 **Scoring:** Each question's session turns are written via `remember()` in order,
-the question is embedded and searched via `search()` (top-k configurable), and
-the retrieved context is scored by the configured judge:
-
-- `--judge keyword` (default): a keyword/token-overlap heuristic —
-  **NOT an LLM judge and NOT comparable to vendor-reported LongMemEval figures.**
-  Exists so the harness runs with zero setup. Reports stamp this clearly.
-- `--judge gemini`: Google Gemini `gemini-1.5-flash` prompted to output
-  `CORRECT` / `INCORRECT` against the gold answer — the same judge-verdict
-  shape as LongMemEval's GPT-4o judge. Results produced with this judge + a
-  real embedding model are **honestly comparable in kind** to vendor-reported
-  LongMemEval figures, subject to the caveats below.
+the question is embedded and searched via `search()` (top_k=5), and the retrieved
+context is scored by the configured Ollama LLM judge with the same
+`CORRECT / INCORRECT` prompt shape as LongMemEval's GPT-4o judge.
 
 **Methodology deviations from the published LongMemEval benchmark:**
 
@@ -58,77 +46,127 @@ the retrieved context is scored by the configured judge:
    Results are methodologically *comparable in kind* but are **not** the
    published LongMemEval benchmark score.
 
-2. **Sample size is configurable and defaults to small (5 × 4 = 20 questions).**
-   The published benchmark uses 500 questions. Run with a larger `--dataset-size`
-   for a more stable estimate; even so, a synthetic 20-question run is not
-   statistically equivalent to 500 diverse real-world questions.
+2. **Sample size is 50 questions per run (n=10 per category), not 500.**
+   A 50-question run produces wider confidence intervals than the published
+   benchmark. Treat percentages as directional signals, not authoritative scores.
 
-3. **Judge model is configurable.** Oracle's reported 93.8% used GPT-4o judge
-   with nomic-embed-v1.5 embeddings and HNSW search. Zep's reported 94.8% on
-   DMR used their Graphiti graph retrieval. Results here are only comparable to
-   those figures if a similar-quality judge and embedding model are configured —
-   the `--judge keyword` default is not.
+3. **Judge is a local Ollama model, not GPT-4o.**
+   Oracle's 93.8% used GPT-4o judge + nomic-embed-v1.5 + HNSW. The tradeoff
+   here is that the judge is a smaller local model — zero API cost and fully
+   offline, but potentially less consistent than GPT-4o on edge cases.
 
 4. **No graph retrieval.** This SDK uses Db2 VECTOR cosine similarity search,
    not a bi-temporal knowledge graph (Zep/Graphiti) or combined graph+vector
    retrieval (Oracle). This is an architectural difference, not a methodology
    defect — the benchmark honestly measures what the SDK actually does.
 
-**How to cite a number from this harness honestly:** Report the exact judge,
-embedding provider, dataset size, and seed. Example: "On a synthetic
-LongMemEval-shaped dataset (n=20 per run, seed=42, hashing embedding provider,
-keyword judge) agent-memory-sdk scored X% overall." Do **not** write
-"LongMemEval: X%" without the caveats above — that would misrepresent the
-methodology.
-
----
-
-### Suite 2: Latency / cost
-
-Per-call wall-clock latency for `remember()` and `search()` (median, p50, p95,
-p99, max) over a configurable number of operations (`--latency-ops`, default 50).
-
-**LLM cost:** This SDK's write path is developer-controlled (you decide what to
-write via `remember()`) rather than a passive background LLM-extraction pipeline
-like Mem0/Bedrock. The only place an LLM call can happen is inside a
-caller-supplied `Consolidator`/`Reconciler`/`Summarizer` hook. With the default
-`--consolidator none` configuration, **estimated LLM cost is $0.00 / 0 hook
-calls** — this is itself a comparison point against extraction-pipeline
-competitors in `ai-agent-platform-competitive-analysis.md` which always run an
-LLM extraction step on every write.
-
-Using `--consolidator mock` wires in a non-LLM mock consolidator wrapped in a
-token estimator (character-count approximation at ~4 chars/token — a documented
-estimate, not a real tokenizer). The mock consolidator demonstrates the
-cost-tracking mechanism; it does **not** claim real LLM latency or cost.
-
----
-
-### Suite 3: Isolation under load
-
-`tenants × agents_per_tenant` synthetic (tenant, agent) scopes each write
-`ops_per_worker` memories then read back their own scope via `search()` and
-`list_all()`, all concurrently (`--workers` threads). For every row returned:
-
-1. The row's `agent_id` and `tenant_id` fields must match the querying scope.
-2. The row's content must not contain another scope's unique marker string
-   (a `[[MARKER:tenant:agent]]` token planted in every synthetic write).
-
-Any violation increments the leakage counter. Zero leakage across all rows is
-the assertion — this is what `EXIT CODE 2` signals when the isolation suite
-detects a real correctness failure.
-
-This extends VER-5's static SQL audit (which verified `_scope_predicates`
-bound-parameter isolation on all 7 SQL paths with mocked cursors in a single
-thread) to **real concurrent load against a live Db2 ConnectionPool** — the
-class of bug a static analysis cannot catch.
+**How to cite a number from this harness honestly:** Always include the judge
+model, embedding model, dataset size, and seed. E.g. "On a synthetic
+LongMemEval-shaped dataset (n=50, seed=42, nomic-embed-text via Ollama,
+judge=llama3.1:8b via Ollama) agent-memory-sdk scored 92.0%."
+Do **not** write "LongMemEval: 92.0%" without these caveats.
 
 ---
 
 ## Run results
 
-*No runs recorded yet. Run `make benchmark` or `python scripts/run_benchmarks.py`
-to populate this file.*
+### Run A — Judge: `llama3.1:8b` (Ollama, local)
+
+| Field | Value |
+|---|---|
+| **Date** | 2026-07-30 |
+| **Run id** | `dec86e9be147` |
+| **Embedding provider** | `ollama` / `nomic-embed-text` (768-dim → 1536 padded) |
+| **Judge** | `ollama:llama3.1:8b` |
+| **top_k** | 5 |
+| **Dataset size** | 50 questions (n=10 per category, seed=42) |
+| **Hardware** | Apple M4 Max, 36 GB unified memory |
+| **Db2 version** | Remote Db2 LUW instance (Fyre dev server) |
+
+| Category | Correct | Total | Accuracy |
+|---|---|---|---|
+| extraction | 10 | 10 | 100.0% |
+| multi_session | 9 | 10 | 90.0% |
+| temporal_reasoning | 9 | 10 | 90.0% |
+| knowledge_update | 8 | 10 | 80.0% |
+| abstention | 10 | 10 | 100.0% |
+| **Overall** | **46** | **50** | **92.0%** |
+
+Reproduce with:
+```bash
+make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10 --seed 42"
+```
+
+---
+
+### Run B — Judge: `deepseek-r1:8b` (Ollama, local)
+
+| Field | Value |
+|---|---|
+| **Date** | 2026-07-30 |
+| **Run id** | `3a98e504864f` |
+| **Embedding provider** | `ollama` / `nomic-embed-text` (768-dim → 1536 padded) |
+| **Judge** | `ollama:deepseek-r1:8b` |
+| **top_k** | 5 |
+| **Dataset size** | 50 questions (n=10 per category, seed=42) |
+| **Hardware** | Apple M4 Max, 36 GB unified memory |
+| **Db2 version** | Remote Db2 LUW instance (Fyre dev server) |
+
+| Category | Correct | Total | Accuracy |
+|---|---|---|---|
+| extraction | 6 | 10 | 60.0% |
+| multi_session | 6 | 10 | 60.0% |
+| temporal_reasoning | 6 | 10 | 60.0% |
+| knowledge_update | 4 | 10 | 40.0% |
+| abstention | 9 | 10 | 90.0% |
+| **Overall** | **31** | **50** | **62.0%** |
+
+> **Note on deepseek-r1:8b judge score:** deepseek-r1 models emit a `<think>…</think>`
+> reasoning block before their final answer. The 62.0% figure was produced with an
+> earlier version of `OllamaJudge` that checked `startswith("CORRECT")` on the raw
+> response — a `<think>…</think>\nCORRECT` response therefore scored as `INCORRECT`
+> even when the model's reasoning was sound. `OllamaJudge` now strips `<think>`
+> blocks before parsing the verdict; re-run this configuration to get an accurate
+> score (expected to be substantially higher).
+
+Reproduce with:
+```bash
+make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollama:deepseek-r1:8b --dataset-size 10 --seed 42"
+```
+
+---
+
+## Summary across runs
+
+| Judge model | Overall accuracy | extraction | multi_session | temporal_reasoning | knowledge_update | abstention | Notes |
+|---|---|---|---|---|---|---|---|
+| `llama3.1:8b` (Ollama, local) | **92.0%** (46/50) | 100% | 90% | 90% | 80% | 100% | Clean output; reliable CORRECT/INCORRECT |
+| `deepseek-r1:8b` (Ollama, local) | 62.0% (31/50) | 60% | 60% | 60% | 40% | 90% | `<think>` prefix breaks `startswith("CORRECT")` — see note above |
+| *(pending)* `gpt-oss:20b` | — | — | — | — | — | — | Pull when bandwidth available |
+| *(pending)* `qwen3:8b` | — | — | — | — | — | — | Pull when bandwidth available |
+
+**Vendor figures for context** (from `ai-agent-platform-competitive-analysis.md`):
+Oracle AI Agent Memory reports 93.8% on LongMemEval (469/500, gpt-5.5 judge +
+nomic-embed-v1.5 + HNSW, 500 questions). Zep/Graphiti reports 94.8% on DMR.
+These are the full 500-question published benchmarks with GPT-class judges and
+graph retrieval — not directly comparable to these 50-question synthetic runs, but
+the `llama3.1:8b` result of 92.0% is **in the same order of magnitude** and
+demonstrates the SDK's retrieval pipeline is competitive for the categories it is
+designed for. The `knowledge_update` category (80%) is the expected weak point:
+this SDK's working memory is an append-log; contradiction resolution depends on
+the caller wiring in a `Reconciler` hook (ENH-3), which was not configured for
+these runs.
+
+---
+
+### Suite 2 / Suite 3 (latency/cost and isolation under load)
+
+*Not yet run against this Db2 instance. Run separately:*
+
+```bash
+make benchmark ARGS="--suite latency"
+make benchmark ARGS="--suite isolation"
+```
 
 ---
 

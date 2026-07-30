@@ -9,9 +9,9 @@ requires a live Db2 instance and, for the retrieval-quality suite, an
 ## Why not CI
 
 PH-1/PH-2 are required-status checks that run on every PR. Wiring this
-harness into them would mean every PR either fails (no Db2/API credentials
-in the CI environment) or burns real API cost on every push. Run it
-yourself, on demand.
+harness into them would mean every PR either fails (no Db2 credentials in
+the CI environment) or burns real compute on every push. Run it yourself,
+on demand.
 
 ## Quick start (zero setup)
 
@@ -28,25 +28,36 @@ vendor-reported LongMemEval figures** — the generated report says so in
 bold. They exist so the harness is runnable with nothing beyond a Db2
 connection, to sanity-check the code path end-to-end.
 
-## Free-tier options for a real retrieval-quality number
+## Options for a real retrieval-quality number
 
-| Component | Free-tier option | Setup |
+All options below are fully local and offline — no API key, no external
+network, no rate limit. The tradeoff is model quality vs. your machine's
+compute.
+
+| Component | Option | Setup |
 |---|---|---|
-| Embeddings | `sentence-transformers` (local, no API key, no rate limit) | `pip install sentence-transformers`, then `--embedding-provider sentence-transformers` |
-| Embeddings | Gemini `text-embedding-004` (hosted, free tier) | `pip install google-generativeai`, set `GEMINI_API_KEY`, then `--embedding-provider gemini` |
-| LLM judge | Gemini `gemini-1.5-flash` (hosted, free tier, generous quota) | `pip install google-generativeai`, set `GEMINI_API_KEY`, then `--judge gemini` |
+| Embeddings | `sentence-transformers` (local, no daemon needed) | `pip install sentence-transformers`, then `--embedding-provider sentence-transformers` |
+| Embeddings | `ollama` (`nomic-embed-text`, local Ollama daemon) | `pip install ollama`, start Ollama, `ollama pull nomic-embed-text`, then `--embedding-provider ollama` |
+| LLM judge | `ollama` (`llama3.1:8b`, local Ollama daemon) | `pip install ollama`, start Ollama, model already pulled, then `--judge ollama` |
+| LLM judge | `ollama:<model>` (any pulled Ollama model) | Same as above; e.g. `--judge ollama:deepseek-r1:8b` |
 
-Recommended real-number run:
+Recommended real-number run (fully offline, no API key):
 
 ```bash
-pip install sentence-transformers google-generativeai
-export GEMINI_API_KEY=...   # https://aistudio.google.com — free tier
-make benchmark ARGS="--embedding-provider sentence-transformers --judge gemini --dataset-size 10"
+pip install ollama
+# Ollama daemon must be running (ollama serve or the desktop app)
+# Required models: nomic-embed-text (embeddings) + your chosen judge model
+ollama pull nomic-embed-text
+ollama pull llama3.1:8b   # or deepseek-r1:8b, qwen3:8b, etc.
+make benchmark ARGS="--embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10"
 ```
 
-Gemini's free tier has a requests-per-day cap — for a larger dataset,
-increase `--dataset-size` gradually or spread runs across a couple of days
-rather than requesting a huge batch at once.
+To use a different judge model, substitute its tag after `ollama:`:
+
+```bash
+make benchmark ARGS="--embedding-provider ollama --judge ollama:deepseek-r1:8b --dataset-size 10"
+make benchmark ARGS="--embedding-provider ollama --judge ollama:qwen3:8b --dataset-size 10"
+```
 
 ## Suites
 

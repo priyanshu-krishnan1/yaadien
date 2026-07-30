@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 #: Component names that constitute a real (non-fallback) semantic embedding
 #: or real LLM-judge — used to decide whether a run's number may be labeled
 #: LongMemEval-comparable in the report.
-_REAL_EMBEDDING_PROVIDERS = {"sentence-transformers", "gemini"}
-_REAL_JUDGES = {"gemini"}
+_REAL_EMBEDDING_PROVIDERS = {"sentence-transformers", "ollama"}
+_REAL_JUDGES = {"ollama"}
 
 
 def run_retrieval_quality(
@@ -104,7 +104,9 @@ def run_retrieval_quality(
             f"Embedding provider '{embedding_provider_name}' is a lexical-overlap fallback, "
             "not a real semantic embedding model."
         )
-    if judge_name not in _REAL_JUDGES:
+    # judge_name may be "ollama", "ollama:deepseek-r1:8b", etc. — any ollama
+    # variant is a real LLM judge; only keyword is the fallback heuristic.
+    if judge_name not in _REAL_JUDGES and not judge_name.startswith("ollama:"):
         deviation_notes.append(
             f"Judge '{judge_name}' is a keyword-overlap heuristic, not an LLM judge."
         )

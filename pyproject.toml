@@ -75,7 +75,7 @@ dev = [
 # to vendor-reported LongMemEval figures.
 benchmark = [
     "sentence-transformers>=3.0",
-    "google-generativeai>=0.7",
+    "ollama>=0.3",
 ]
 
 [project.urls]

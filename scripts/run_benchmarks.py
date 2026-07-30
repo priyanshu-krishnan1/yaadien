@@ -71,26 +71,26 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--embedding-provider",
-        choices=["hashing", "sentence-transformers", "gemini"],
+        choices=["hashing", "sentence-transformers", "ollama"],
         default="hashing",
         help=(
             "Embedding provider used by retrieval/latency/isolation suites. "
             "'hashing' (default) is dependency-free but NOT semantic — see "
-            "benchmarks/README.md. Use 'sentence-transformers' (free, local, "
-            "pip install sentence-transformers) or 'gemini' (free-tier API, "
-            "GEMINI_API_KEY + pip install google-generativeai) for a "
+            "benchmarks/README.md. Use 'sentence-transformers' (pip install "
+            "sentence-transformers) or 'ollama' (local Ollama daemon, "
+            "pip install ollama, model nomic-embed-text) for a "
             "retrieval-quality number worth comparing to vendor figures."
         ),
     )
     parser.add_argument(
         "--judge",
-        choices=["keyword", "gemini"],
         default="keyword",
         help=(
             "Judge used by the retrieval-quality suite. 'keyword' (default) is "
             "a dependency-free fallback heuristic, NOT an LLM judge. Use "
-            "'gemini' (free-tier API, GEMINI_API_KEY + pip install "
-            "google-generativeai) for a LongMemEval-style judge verdict."
+            "'ollama' (local Ollama daemon, pip install ollama, default model "
+            "llama3.1:8b) or 'ollama:<model>' (any pulled model, e.g. "
+            "'ollama:deepseek-r1:8b') for a LongMemEval-style judge verdict."
         ),
     )
     parser.add_argument(

@@ -19,11 +19,13 @@ quality tradeoff of each tier explicit:
 2. :class:`SentenceTransformersEmbeddingProvider` — free, local, real
    semantic embeddings via the ``sentence-transformers`` package (no API key,
    no rate limit, runs on CPU). Requires ``pip install sentence-transformers``
-   (a heavy optional dependency — not installed by default). This is the
-   recommended provider for a retrieval-quality number worth comparing.
-3. :class:`GeminiEmbeddingProvider` — hosted, free-tier (Google AI Studio),
-   real embeddings, requires a ``GEMINI_API_KEY`` and the
-   ``google-generativeai`` package. Subject to free-tier rate limits.
+   (a heavy optional dependency — not installed by default). This is an
+   alternative local provider for a retrieval-quality number worth comparing.
+3. :class:`OllamaEmbeddingProvider` — local, free, real semantic embeddings
+   via a locally-running Ollama daemon (``localhost:11434`` by default).
+   No API key, no external network, no rate limit — the tradeoff is model
+   quality and local compute. Requires ``pip install ollama`` and a running
+   daemon with the chosen model pulled. Default model: ``nomic-embed-text``.
 
 All three implement the same ``__call__(text: str) -> list[float]`` shape
 required by ``agent_memory_sdk.types.EmbeddingProvider``.
@@ -103,44 +105,72 @@ class SentenceTransformersEmbeddingProvider:
         return self._model.encode(text, normalize_embeddings=True).tolist()
 
 
-class GeminiEmbeddingProvider:
-    """Hosted embeddings via Google's free-tier Generative AI API.
+class OllamaEmbeddingProvider:
+    """Local embeddings via a locally-running Ollama daemon.
 
-    Requires ``pip install google-generativeai`` and a ``GEMINI_API_KEY``
-    environment variable (create one for free at aistudio.google.com).
-    Subject to free-tier requests-per-day limits — for a large dataset,
-    batch runs over time or use :class:`SentenceTransformersEmbeddingProvider`
-    instead.
+    No API key, no external network call, no rate limit — the tradeoff vs.
+    hosted providers is model quality and local compute. Requires
+    ``pip install ollama`` and a running Ollama daemon (``ollama serve`` /
+    the desktop app, default host ``http://localhost:11434``) with the
+    chosen embedding model already pulled.
+
+    The ``nomic-embed-text`` model (768-dim) is the recommended default: it
+    is available from the Ollama registry, covers semantic similarity well,
+    and runs fast on CPU/Apple Silicon. Note that Ollama embedding models
+    return a fixed dimension determined by the model — the ``dim`` parameter
+    below is only used to zero-pad or truncate to match the Db2 VECTOR
+    column dimension if they differ (default: 1536).
 
     Args:
-        model: Gemini embedding model id. Defaults to ``models/text-embedding-004``.
-        api_key: Overrides the ``GEMINI_API_KEY`` env var if supplied.
+        model: Any Ollama embedding model that has been pulled locally.
+            Defaults to ``"nomic-embed-text"``.
+        host:  Override the Ollama daemon URL (default
+            ``"http://localhost:11434"``).
+        dim:   Target vector dimension for padding/truncation to match
+            the Db2 VECTOR(1536, FLOAT32) column (default 1536).
     """
 
-    def __init__(self, model: str = "models/text-embedding-004", api_key: str | None = None) -> None:
-        import os
-
+    def __init__(
+        self,
+        model: str = "nomic-embed-text",
+        host: str | None = None,
+        dim: int = 1536,
+    ) -> None:
         try:
-            import google.generativeai as genai
+            import ollama  # noqa: F401 — import-check only
         except ImportError as exc:
             raise ImportError(
-                "GeminiEmbeddingProvider requires 'google-generativeai': "
-                "pip install google-generativeai"
+                "OllamaEmbeddingProvider requires the 'ollama' package: "
+                "pip install ollama"
             ) from exc
-
-        key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not key:
-            raise ValueError(
-                "GeminiEmbeddingProvider requires a GEMINI_API_KEY environment "
-                "variable (or an explicit api_key argument)."
-            )
-        genai.configure(api_key=key)
-        self._genai = genai
         self._model = model
+        self._host = host
+        self._dim = dim
 
     def __call__(self, text: str) -> list[float]:
-        result = self._genai.embed_content(model=self._model, content=text)
-        return list(result["embedding"])
+        import ollama
+
+        kwargs: dict = {"model": self._model, "input": text}
+        if self._host:
+            client = ollama.Client(host=self._host)
+            response = client.embed(**kwargs)
+        else:
+            response = ollama.embed(**kwargs)
+
+        # ollama.embed returns {"embeddings": [[float, ...]]}
+        raw: list[float] = response["embeddings"][0]
+
+        # Pad or truncate to the Db2 VECTOR column dimension.
+        if len(raw) < self._dim:
+            raw = raw + [0.0] * (self._dim - len(raw))
+        elif len(raw) > self._dim:
+            raw = raw[: self._dim]
+
+        # Re-normalise after pad/truncate so cosine distance still makes sense.
+        norm = math.sqrt(sum(v * v for v in raw))
+        if norm > 0:
+            raw = [v / norm for v in raw]
+        return raw
 
 
 def build_embedding_provider(name: str, dim: int = 1536):
@@ -148,9 +178,11 @@ def build_embedding_provider(name: str, dim: int = 1536):
 
     Args:
         name: One of ``"hashing"`` (default), ``"sentence-transformers"``,
-            ``"gemini"``.
-        dim:  Vector dimension, only used by ``HashingEmbeddingProvider``
-            (the other two providers have a fixed model-defined dimension).
+            or ``"ollama"`` (uses ``nomic-embed-text`` model).
+        dim:  Vector dimension, used by ``HashingEmbeddingProvider`` and
+            ``OllamaEmbeddingProvider`` for pad/truncate to the Db2 column
+            width (the sentence-transformers provider has a fixed model
+            dimension and is not padded).
 
     Raises:
         ValueError: for an unrecognized name.
@@ -159,9 +191,9 @@ def build_embedding_provider(name: str, dim: int = 1536):
         return HashingEmbeddingProvider(dim=dim)
     if name == "sentence-transformers":
         return SentenceTransformersEmbeddingProvider()
-    if name == "gemini":
-        return GeminiEmbeddingProvider()
+    if name == "ollama":
+        return OllamaEmbeddingProvider(dim=dim)
     raise ValueError(
         f"Unknown embedding provider {name!r}. "
-        "Expected one of: hashing, sentence-transformers, gemini."
+        "Expected one of: hashing, sentence-transformers, ollama."
     )

@@ -16,10 +16,13 @@ provides:
   any report produced with it must say so explicitly rather than being
   presented as a LongMemEval-comparable number (see report.py, which stamps
   every report with the judge that was actually used).
-* :class:`GeminiJudge` — a real LLM-judge using Google's free-tier Gemini
-  API, prompted the way LongMemEval's judge is used (correct/incorrect
-  verdict against the gold answer). This is the mode that produces a number
-  honestly comparable to vendor-reported figures.
+* :class:`OllamaJudge` — a real LLM-judge using a locally-running Ollama
+  daemon (localhost:11434 by default), prompted the way LongMemEval's judge
+  is used (correct/incorrect verdict against the gold answer). No API key,
+  no external network — the tradeoff vs. the vendor-reported LongMemEval
+  figures is model quality and local compute, not cost or setup friction.
+  This is the mode that produces a number honestly comparable to
+  vendor-reported figures.
 """
 
 from __future__ import annotations
@@ -81,7 +84,7 @@ class KeywordMatchJudge:
     over-count (context happens to share words without actually answering
     the question) and under-count (a correct paraphrase using different
     words). It exists so the harness can run with zero setup; use
-    :class:`GeminiJudge` (or your own real LLM judge) for a number that
+    :class:`OllamaJudge` (or your own real LLM judge) for a number that
     means anything next to vendor-reported LongMemEval figures.
 
     Args:
@@ -113,43 +116,39 @@ class KeywordMatchJudge:
         return (matched / len(gold_tokens)) >= self._threshold
 
 
-class GeminiJudge:
-    """Real LLM-judge using Google's free-tier Gemini API.
+class OllamaJudge:
+    """Real LLM-judge using a locally-running Ollama daemon.
 
     Prompts the model to output exactly ``CORRECT`` or ``INCORRECT`` given
     the question, gold answer, and retrieved context — the same
-    judge-verdict shape LongMemEval's GPT-4o judge produces. Requires
-    ``pip install google-generativeai`` and a ``GEMINI_API_KEY`` environment
-    variable.
+    judge-verdict shape LongMemEval's GPT-4o judge produces. No API key,
+    no external network call — the tradeoff vs. the vendor-reported figures
+    is model quality and local compute, not cost. Requires ``pip install
+    ollama`` and a running Ollama daemon (``ollama serve`` / the desktop app,
+    default host ``http://localhost:11434``).
 
     Args:
-        model:   Gemini model id. Defaults to ``gemini-1.5-flash`` (fast,
-                 generous free-tier quota — appropriate for a judge role).
-        api_key: Overrides the ``GEMINI_API_KEY`` env var if supplied.
+        model: Any Ollama model tag that has been pulled locally (e.g.
+            ``"llama3.1:8b"``, ``"deepseek-r1:8b"``, ``"qwen3:8b"``).
+            Defaults to ``"llama3.1:8b"``.
+        host:  Override the Ollama daemon URL (default
+            ``"http://localhost:11434"``).
     """
 
-    def __init__(self, model: str = "gemini-1.5-flash", api_key: str | None = None) -> None:
-        import os
-
+    def __init__(self, model: str = "llama3.1:8b", host: str | None = None) -> None:
         try:
-            import google.generativeai as genai
+            import ollama  # noqa: F401 — import-check only; keep module-level reference
         except ImportError as exc:
             raise ImportError(
-                "GeminiJudge requires 'google-generativeai': "
-                "pip install google-generativeai"
+                "OllamaJudge requires the 'ollama' package: pip install ollama"
             ) from exc
-
-        key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not key:
-            raise ValueError(
-                "GeminiJudge requires a GEMINI_API_KEY environment variable "
-                "(or an explicit api_key argument)."
-            )
-        genai.configure(api_key=key)
-        self._client = genai.GenerativeModel(model)
-        self.name = f"llm-judge:{model} (LongMemEval-style correct/incorrect verdict)"
+        self._model = model
+        self._host = host
+        self.name = f"llm-judge:ollama/{model} (LongMemEval-style correct/incorrect verdict, local)"
 
     def __call__(self, question: str, gold_answer: str, retrieved_context: str) -> bool:
+        import ollama
+
         prompt = (
             "You are grading whether a memory-retrieval system's retrieved "
             "context supports the correct answer to a question. "
@@ -161,15 +160,35 @@ class GeminiJudge:
             f"Retrieved context:\n{retrieved_context}\n\n"
             "Respond with exactly one word: CORRECT or INCORRECT."
         )
-        response = self._client.generate_content(prompt)
-        verdict = (response.text or "").strip().upper()
-        return verdict.startswith("CORRECT")
+        kwargs: dict = {"model": self._model, "prompt": prompt}
+        if self._host:
+            client = ollama.Client(host=self._host)
+            response = client.generate(**kwargs)
+        else:
+            response = ollama.generate(**kwargs)
+        raw = (response.get("response") or "").strip()
+        # Strip <think>…</think> reasoning blocks emitted by deepseek-r1 and
+        # similar chain-of-thought models before looking for the verdict.
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        return raw.upper().startswith("CORRECT")
 
 
 def build_judge(name: str) -> LLMJudge:
-    """Factory used by the CLI entry point to select a judge by name."""
+    """Factory used by the CLI entry point to select a judge by name.
+
+    Accepts ``"keyword"``, ``"ollama"`` (default model ``llama3.1:8b``),
+    or ``"ollama:<model>"`` to specify any pulled model
+    (e.g. ``"ollama:deepseek-r1:8b"``).
+    """
     if name == "keyword":
         return KeywordMatchJudge()
-    if name == "gemini":
-        return GeminiJudge()
-    raise ValueError(f"Unknown judge {name!r}. Expected one of: keyword, gemini.")
+    if name == "ollama":
+        return OllamaJudge()
+    if name.startswith("ollama:"):
+        model = name[len("ollama:"):]
+        return OllamaJudge(model=model)
+    raise ValueError(
+        f"Unknown judge {name!r}. "
+        "Expected 'keyword', 'ollama', or 'ollama:<model>' "
+        "(e.g. 'ollama:deepseek-r1:8b')."
+    )
