@@ -2350,3 +2350,46 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-12 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-13: Market-fit gap check (ai-agent-platform-competitive-analysis.md)
+
+- **Decision:** VER-13 COMPLETE. Assessment of implemented SDK features against market-study yardstick for each competitive differentiator follows.
+
+### Market-fit gap table
+
+| Capability | Have / Partial / Missing | Evidence in code | Beta call |
+|---|---|---|---|
+| **Multi-tenant isolation** | **HAVE** | `MemoryScope` (tenant_id, agent_id, user_id, thread_id) enforced as bound SQL `?` params on all 7 SQL paths in `BaseRepository`; `_require_agent_id()` blocks empty string; cross-scope ops return `None`/`[]`/`StaleWriteError` (never leak). VER-5 extra scrutiny confirms. | **Not a blocker.** Production-grade. |
+| **Audit / erasure (GDPR-style scoping)** | **PARTIAL** | `forget()` / `deleted_at` tombstone (soft-delete, durable for audit) separates "user asked us to forget" from `superseded_at` "AI-detected contradiction." `purge_expired()` hard-deletes tombstoned rows on demand. However: no per-record erasure report API, no explicit GDPR right-to-erasure workflow, no PII detection, no cross-table cascading erase by user_id (caller must call `forget()` per-record, per-type). | **Documented limitation** — acceptable for beta. The erasure primitive exists (`forget()`), but the ergonomic wrapper ("forget everything for user X across all memory types in one call") and the erasure report are absent. Note in documentation. |
+| **Temporal / bi-temporal fact handling** | **PARTIAL** | `expires_at` (TTL — valid-time expiry), `superseded_at` (soft-supersede for contradicted facts — semantic-facts only), optimistic-concurrency `version`. **Missing**: bi-temporal model (valid-time + ingestion-time + fact invalidation that keeps both timestamps, as Zep/Graphiti uses), temporal reasoning queries (find facts valid at time T), ingestion-time rollback. The soft-supersede pattern is closer to Mem0's ADD/UPDATE/DELETE than to Zep's bi-temporal graph. | **Documented limitation** — acceptable for beta. TTL + supersession cover the primary use case; full bi-temporal (fact provenance chains, "what did the agent believe at time T?") is explicitly out of scope for this SDK's positioning against Oracle/Zep for that use case. |
+| **Hybrid retrieval quality** | **PARTIAL** | Vector search via Db2 `VECTOR_DISTANCE` (COSINE, L2, IP) in EXACT and APPROX modes. Metadata filters (ORC-3): `JSON_VALUE` equality/`$not`, `JSON_EXISTS` array operators. Content chunking (ORC-2) for long-content semantic search. **Missing**: keyword/BM25 full-text search (Db2 has text search but it's not wired in), reranking (RRF/MMR/cross-encoder), hybrid combining vector + keyword in a single result set. Metadata filter operators are also narrower than competitors (no `$gt`, `$lt`, `$in` for scalar numeric ranges). | **Documented limitation** — acceptable for beta. Pure vector + metadata filter covers the majority of production retrieval patterns. BM25 hybrid and reranking are meaningful quality improvements but not hard blockers for a beta; document as a known gap. |
+| **Cost / token control** | **PARTIAL** | `consolidate_every_n` throttles inline consolidator calls (reduces LLM API calls per write). `ContextCard.summary` + `Summarizer` hook for bounded context injection. `max_turns` in `get_context_card()` bounds the raw turns passed to context. **Missing**: automatic context compaction (token-counting, sliding-window, trim-oldest), cross-session retrieval token budget, and end-to-end per-turn token instrumentation. | **Documented limitation** — acceptable for beta. The SDK is a storage and retrieval layer; callers control their own LLM prompts and must implement token-budget logic above the SDK. Document that bounded retrieval (`max_turns`, `min_confidence`, `top_k`) is the provided mechanism; full compaction is out of scope. |
+| **Contradiction resolution + supersession** | **HAVE** | `SemanticFactRepository.supersede()` + `MemoryStore.reconcile()` with pluggable `Reconciler` protocol + `NoOpReconciler` default. Supersession columns (`superseded_by`, `superseded_at`, `supersede_reason`) on `semantic_facts`. Audit-trail governance distinction between `deleted_at` and `superseded_at`. `reconcile()` sanity guards (self-supersession, hallucinated winner_id). | **Not a blocker.** Functionality present; pluggable for LLM-based reconcilers. |
+| **Deduplication** | **HAVE** | Content-hash dedup at write time: `_content_hash()` (lowercase → whitespace-collapse → SHA-256) with `_DEDUP_ON_WRITE=True` for all fact/profile/episodic/procedural repos. `WorkingMemoryRepository._DEDUP_ON_WRITE=False` intentionally (append-only log). Dedup check excludes superseded rows (`_HAS_SUPERSESSION` gate). Best-effort (SELECT + INSERT non-atomic; no UNIQUE constraint — documented). | **Not a blocker.** Content-hash dedup is implemented and effective for single-writer scenarios. Race-condition concavity is documented. |
+
+### Additional differentiators from the market study
+
+| Capability | Have / Partial / Missing | Evidence | Beta call |
+|---|---|---|---|
+| **Four memory types (cognitive taxonomy)** | **HAVE** | WorkingMemory, EpisodicMemory, SemanticFact, EntityProfile, ProceduralMemory. Five tables, correctly mapped to short-term/episodic/semantic/entity/procedural. | Not a blocker. |
+| **Confidence scoring** | **HAVE** | `confidence` field (0.0–1.0), Pydantic-enforced, `min_confidence` filter in `list_all`/`search`. | Not a blocker. |
+| **TTL/expiry** | **HAVE** | `expires_at` column, filtered on all read paths. `purge_expired()` for hard-delete. | Not a blocker. |
+| **Consolidation (STM→LTM)** | **HAVE** | Pluggable `Consolidator` protocol + `NoOpConsolidator`, inline + background worker (`consolidate_pending.py`). | Not a blocker. |
+| **Framework adapters** | **HAVE** | LangChain (`Db2ChatMessageHistory`, `Db2MemoryStore`), OpenAI Agents SDK (`Db2Session`), MCP (`create_server()` with 4 tools). | Not a blocker. |
+| **Context card / bounded context injection** | **HAVE** | `get_context_card()` returns `ContextCard` (turns, turn_count, latest_at, summary). Pluggable `Summarizer`. | Not a blocker. |
+| **Content chunking for long content** | **HAVE** | ORC-2: `memory_chunks` table + `_write_chunks()` + two-step chunk search + `search_chunks` parameter. | Not a blocker. |
+| **Metadata filtering** | **PARTIAL** | ORC-3: exact-match, `$not`, `$array_contains`, `$array_contains_any`. **Missing**: numeric range operators (`$gt`, `$lt`, `$in`). | Documented limitation. |
+| **MCP support** | **HAVE** | `create_server()` exposes remember/recall/forget/list_memories as MCP tools. | Not a blocker. |
+| **Knowledge graph / relational memory** | **MISSING** | No graph component; Db2 is relational + vector, no native graph layer in this SDK. | Out of scope — positioned as a converged-DB relational+vector solution like Oracle AI Agent Memory, not a graph-memory solution like Neo4j/Zep. |
+| **Hybrid keyword+vector search (BM25)** | **MISSING** | Vector-only; no Db2 text-search integration. | Documented limitation — notable gap vs Oracle/Zep/Redis Iris. |
+| **Cross-agent shared memory** | **MISSING** | No shared memory blocks across agent scopes. Each agent_id is its own isolated scope. | Out of scope for beta — multi-agent patterns are an EPIC-4+ item; document as limitation. |
+| **RBAC / encryption at rest** | **MISSING** | No application-level RBAC (MemoryScope scoping is isolation, not permission-level access control). Encryption at rest is a Db2 infrastructure concern, not SDK-managed. | Out of scope — delegated to Db2 infrastructure. Document that scoping is the isolation layer; RBAC beyond that is operator responsibility. |
+| **PII detection** | **MISSING** | None. | Out of scope for this SDK (infrastructure/pre-processing concern). |
+| **README / docs** | **MISSING (STEP-8 not done)** | README.md is a stub. No runnable examples. This is the only incomplete EPIC-1 story. | **Hard blocker for worldwide public beta** — see Part 4. |
+
+### Summary of capability posture
+
+The SDK covers the *table-stakes* for an enterprise agent-memory platform (4-type taxonomy, multi-tenant isolation, lifecycle, framework adapters, MCP, confidence/dedup/reconciliation) and is competitive with Oracle AI Agent Memory in its IBM Db2 positioning as a "converged-DB memory substrate." The key gaps relative to the competitive market are: (1) pure vector search with no BM25/hybrid retrieval — a meaningful quality gap vs Oracle/Zep/Redis Iris; (2) no bi-temporal fact model — positioned behind Zep but consistent with Mem0/Oracle; (3) ergonomic erasure workflow — erasure primitive exists but no user-scoped "forget all" API; (4) no README/docs (STEP-8 outstanding).
+
+- **Made during:** VER-13 (EPIC-4 beta readiness verification)
+

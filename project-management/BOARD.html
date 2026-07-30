@@ -508,8 +508,10 @@
     "epic_id": "EPIC-4",
     "title": "Market-fit gap check against ai-agent-platform-competitive-analysis.md",
     "summary": "Cross-check implemented features against the market study; flag gaps as beta blockers, documented limitations, or out of scope.",
-    "status": "To Do",
-    "comments": []
+    "status": "Done",
+    "comments": [
+      "VER-13 COMPLETE. 7 competitive differentiators assessed: multi-tenant isolation (HAVE — not a blocker), audit/erasure GDPR-style (PARTIAL — forget() primitive exists, no user-scoped erase-all API or erasure report — documented limitation), temporal/bi-temporal facts (PARTIAL — TTL+supersession, no bi-temporal timestamp pair or temporal queries — documented limitation, out of scope for this SDK positioning), hybrid retrieval (PARTIAL — vector+metadata, no BM25/hybrid or reranking — documented limitation), cost/token control (PARTIAL — consolidate_every_n, max_turns, top_k — documented limitation, compaction out of scope), contradiction resolution+supersession (HAVE — not a blocker), deduplication (HAVE — not a blocker). Additional: knowledge graph (MISSING — out of scope), keyword/BM25 search (MISSING — documented limitation), cross-agent memory (MISSING — out of scope beta), RBAC/encryption (MISSING — delegated to Db2 infra), PII detection (MISSING — out of scope), README/docs STEP-8 (MISSING — HARD BLOCKER for worldwide public beta)."
+    ]
   }
 ]
 }
