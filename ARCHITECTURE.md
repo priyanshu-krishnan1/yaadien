@@ -148,7 +148,7 @@ scope before ranking by vector distance. See `MemoryScope` (built in Step
 
 ## 3. Schema (entity-relationship)
 
-_Last updated: ENH-4 — `consolidated_at` column added to `working_memory` and `episodic_memory` (migration 0005)_
+_Last updated: ORC-2 — `memory_chunks` table added (migration 0006) for content chunking_
 
 Column type legend:
 - `id` → `VARCHAR(36)` (UUID)
@@ -165,6 +165,8 @@ Column type legend:
 - `superseded_by` → `VARCHAR(36)` nullable (id of the winning row; `semantic_facts` only; NULL = this fact is still live; see DECISIONS.md ENH-3 entry)
 - `superseded_at` → `TIMESTAMP` nullable (`semantic_facts` only; NULL = live)
 - `supersede_reason` → `VARCHAR(255)` nullable (`semantic_facts` only; human-readable reason set by the Reconciler)
+
+**ORC-2 companion table:** `memory_chunks` stores overlapping fixed-size character chunks for parent records whose content exceeds the configurable `chunk_threshold` (default 2000 chars).  Each chunk has its own `VECTOR(1536, FLOAT32) NOT NULL` embedding and scope columns.  When a parent row is long enough to be chunked, its own `embedding` column is set to the zero-vector sentinel (satisfying NOT NULL) and semantic search routes through `memory_chunks`.  When content is short, no chunk rows are created and the system behaves exactly as before ORC-2.  See DECISIONS.md ORC-2 entry for the threshold, overlap strategy, shared-vs-per-type table decision, and chunk-to-parent resolution logic.
 
 Each table has: a `CREATE VECTOR INDEX … WITH DISTANCE COSINE`, a composite
 scope index on `(agent_id, tenant_id, user_id, thread_id)`, an agent-only
@@ -278,7 +280,23 @@ erDiagram
         INTEGER version "NOT NULL default 1"
         TIMESTAMP deleted_at "nullable"
     }
+
+    memory_chunks {
+        VARCHAR_36 id PK
+        VARCHAR_64 source_table "NOT NULL, e.g. working_memory"
+        VARCHAR_36 source_id "NOT NULL, FK to parent id"
+        INTEGER chunk_index "NOT NULL, 0-based ordinal"
+        CLOB_4096 chunk_text "NOT NULL"
+        VECTOR_1536_FLOAT32 embedding "NOT NULL, per-chunk embedding"
+        VARCHAR_128 tenant_id "nullable, replicated from parent"
+        VARCHAR_128 agent_id "NOT NULL, replicated from parent"
+        VARCHAR_128 user_id "nullable"
+        VARCHAR_128 thread_id "nullable"
+        TIMESTAMP created_at "NOT NULL"
+    }
 ```
+
+`memory_chunks` indexes: `CREATE VECTOR INDEX ix_memory_chunks_embedding WITH DISTANCE COSINE`, `ix_memory_chunks_parent ON (agent_id, source_table, source_id)`, `ix_memory_chunks_scope ON (agent_id, tenant_id, user_id, thread_id)`.
 
 ---
 

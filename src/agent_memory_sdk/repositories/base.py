@@ -22,6 +22,22 @@ Step-4 additions
                                alone — callers must call ``forget()`` first.
                                Never called automatically.
 
+ORC-2 additions
+---------------
+- ``_split_chunks(text, chunk_size, chunk_overlap)``
+    Pure utility: splits *text* into overlapping fixed-size character
+    chunks.  Returns a list of strings.  No-ops when len(text) <=
+    chunk_size (returns [text] — same as the caller just not chunking).
+- Chunking gate ``_HAS_CHUNKS = True`` on every repository by default.
+    When a record's content exceeds ``CHUNK_THRESHOLD``, ``create()`` and
+    ``update()`` write chunk rows to the shared ``memory_chunks`` table
+    (via an injected ``ChunkRepository``) and replace the parent's embedding
+    with a zero-vector sentinel so the NOT NULL constraint is satisfied —
+    semantic search on the parent row's embedding column is superseded by
+    chunk-level search.  When content length ≤ ``CHUNK_THRESHOLD``, the
+    path is identical to pre-ORC-2 behaviour: a single embedding on the
+    parent row, no chunk rows.
+
 DB-API usage notes
 ------------------
 - Parameter placeholder: ``?`` (ibm_db_dbi uses qmark style, like SQLite).
@@ -54,7 +70,10 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from agent_memory_sdk.repositories.chunks import ChunkRepository
 
 from agent_memory_sdk.exceptions import StaleWriteError
 from agent_memory_sdk.models import MemoryScope, _MemoryBase
@@ -65,8 +84,71 @@ logger = logging.getLogger(__name__)
 M = TypeVar("M", bound=_MemoryBase)
 
 
+# ---------------------------------------------------------------------------
+# Chunking defaults (ORC-2)
+# ---------------------------------------------------------------------------
+
+#: Content-length threshold above which a record is split into chunks.
+#: Records at or below this length use a single embedding on the parent row
+#: (identical to pre-ORC-2 behaviour; no chunk rows are created).
+CHUNK_THRESHOLD: int = 2000
+
+#: Maximum characters per chunk (default).
+CHUNK_SIZE: int = 800
+
+#: Overlap between consecutive chunks in characters (default).
+CHUNK_OVERLAP: int = 200
+
+
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _split_chunks(
+    text: str,
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
+) -> list[str]:
+    """Split *text* into overlapping fixed-size character chunks.
+
+    Chunks are extracted using a sliding window of width *chunk_size* and
+    step ``(chunk_size - chunk_overlap)``.  The final chunk always extends
+    to the end of the string, even if it is shorter than *chunk_size*.
+
+    When ``len(text) <= chunk_size``, a single-element list ``[text]`` is
+    returned — identical to no chunking.
+
+    Args:
+        text:          The text to chunk.
+        chunk_size:    Maximum number of characters per chunk (default 800).
+        chunk_overlap: Number of characters that adjacent chunks share
+                       (default 200).  Must be < chunk_size.
+
+    Returns:
+        A non-empty list of string chunks.
+
+    Raises:
+        ValueError: if ``chunk_size < 1`` or ``chunk_overlap >= chunk_size``.
+    """
+    if chunk_size < 1:
+        raise ValueError(f"chunk_size must be >= 1; got {chunk_size!r}.")
+    if chunk_overlap >= chunk_size:
+        raise ValueError(
+            f"chunk_overlap must be < chunk_size; "
+            f"got chunk_overlap={chunk_overlap!r}, chunk_size={chunk_size!r}."
+        )
+    if len(text) <= chunk_size:
+        return [text]
+    step = chunk_size - chunk_overlap
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start += step
+    return chunks
 
 
 def _content_hash(content: str) -> str:
@@ -191,6 +273,15 @@ class BaseRepository(ABC, Generic[M]):
             ``working_memory`` and ``episodic_memory`` have this column
             (added by migration 0005 / ENH-4).  All other repositories leave
             this as False so their SQL never references a missing column.
+
+    ORC-2 (content chunking):
+        The repository accepts an optional ``chunk_repo`` argument at
+        construction time.  When set and a record's content exceeds
+        ``chunk_threshold``, ``create()`` and ``update()`` write chunk rows
+        to ``memory_chunks`` via that repository and store a zero-vector
+        sentinel on the parent row.  When ``chunk_repo`` is ``None`` (the
+        default when not wired in), chunking is silently skipped — backward-
+        compatible with any code that constructs a repository directly.
     """
 
     _TABLE: str
@@ -219,14 +310,44 @@ class BaseRepository(ABC, Generic[M]):
     # False so their SQL never references a missing column (Db2 SQLCODE -206).
     _HAS_CONSOLIDATED_AT: bool = False
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(
+        self,
+        pool: Any,
+        chunk_repo: ChunkRepository | None = None,
+        chunk_threshold: int = CHUNK_THRESHOLD,
+        chunk_size: int = CHUNK_SIZE,
+        chunk_overlap: int = CHUNK_OVERLAP,
+    ) -> None:
         """
         Args:
-            pool: A ``ConnectionPool`` instance (or any object with a
-                  ``get_connection()`` context-manager method returning a
-                  DB-API 2.0 connection).
+            pool:            A ``ConnectionPool`` instance (or any object with a
+                             ``get_connection()`` context-manager method returning a
+                             DB-API 2.0 connection).
+            chunk_repo:      An optional :class:`~agent_memory_sdk.repositories.chunks.ChunkRepository`
+                             instance.  When provided and a record's content
+                             exceeds *chunk_threshold*, ``create()`` and
+                             ``update()`` write overlapping chunk rows to
+                             ``memory_chunks`` and store a zero-vector sentinel
+                             on the parent embedding column.  ``None`` (default)
+                             disables chunking — backward-compatible.
+            chunk_threshold: Content-length threshold in characters above which
+                             chunking is applied (default :data:`CHUNK_THRESHOLD`
+                             = 2000).
+            chunk_size:      Maximum characters per chunk (default
+                             :data:`CHUNK_SIZE` = 800).
+            chunk_overlap:   Overlap in characters between adjacent chunks
+                             (default :data:`CHUNK_OVERLAP` = 200).
         """
         self._pool = pool
+        self._chunk_repo: ChunkRepository | None = chunk_repo
+        self._chunk_threshold: int = chunk_threshold
+        self._chunk_size: int = chunk_size
+        self._chunk_overlap: int = chunk_overlap
+        # embedding_provider is injected by MemoryStore after construction
+        # (or by a caller who wants chunk-level embeddings).  None means
+        # "no provider wired in" — chunking will be skipped even if chunk_repo
+        # is set, because there is nothing to call for per-chunk embeddings.
+        self._embedding_provider: Any = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -240,6 +361,67 @@ class BaseRepository(ABC, Generic[M]):
     def _zero_vec_str(self) -> str:
         """Return the vector string for a zero-vector sentinel (inlined in SQL)."""
         return "[" + ",".join("0.0" for _ in range(self.EMBEDDING_DIM)) + "]"
+
+    def _write_chunks(
+        self,
+        source_id: str,
+        content: str,
+        embedding_provider: Any,
+        scope: MemoryScope,
+    ) -> int:
+        """Split *content* into chunks, embed each, and persist to ``memory_chunks``.
+
+        Only called when all three conditions hold:
+        1. ``self._chunk_repo`` is not None.
+        2. ``len(content) > self._chunk_threshold``.
+        3. *embedding_provider* is not None.
+
+        If *embedding_provider* is None (e.g. the caller hasn't wired one in)
+        this method is a no-op and returns 0 — the parent row retains whatever
+        embedding was provided (or the zero-vector sentinel).
+
+        Args:
+            source_id:          The ``id`` of the parent row just inserted/updated.
+            content:            The full content string to chunk.
+            embedding_provider: Any callable ``(text: str) -> list[float]``.
+                                Pass ``None`` to skip chunking.
+            scope:              Scope from the parent record (used to populate
+                                scope columns on each chunk row).
+
+        Returns:
+            Number of chunk rows written.
+        """
+        if self._chunk_repo is None or embedding_provider is None:
+            return 0
+        chunks = _split_chunks(content, self._chunk_size, self._chunk_overlap)
+        # Delete any stale chunks from a previous write of this source row
+        # before inserting fresh ones.  This is the update case: on create(),
+        # no stale chunks exist (new row), so delete_by_source is a no-op.
+        self._chunk_repo.delete_by_source(source_id, self._TABLE, scope)
+        written = 0
+        for idx, chunk_text in enumerate(chunks):
+            try:
+                emb = embedding_provider(chunk_text)
+            except Exception:
+                logger.exception(
+                    "_write_chunks: embedding_provider raised for source_id=%s chunk_index=%d; "
+                    "skipping this chunk.",
+                    source_id, idx,
+                )
+                continue
+            self._chunk_repo.insert_chunk(
+                source_table=self._TABLE,
+                source_id=source_id,
+                chunk_index=idx,
+                chunk_text=chunk_text,
+                embedding=emb,
+                scope=scope,
+            )
+            written += 1
+        logger.debug(
+            "_write_chunks %s source_id=%s chunks=%d", self._TABLE, source_id, written
+        )
+        return written
 
     # Column select list — ORDER must match _model_from_row index assumptions.
     # Index map (0-based):
@@ -355,7 +537,28 @@ class BaseRepository(ABC, Generic[M]):
         record.updated_at = now
         record.version = 1
 
-        vec_str = _vec_to_str(record.embedding) if record.embedding else self._zero_vec_str()
+        # --- ORC-2: chunking gate -------------------------------------------
+        # When the content exceeds the threshold AND a chunk_repo is wired in,
+        # replace the parent row's embedding with a zero-vector sentinel and
+        # delegate semantic content to per-chunk embeddings.  The actual chunk
+        # writes happen AFTER the parent INSERT so that the source_id FK
+        # (soft-reference; no DB-level foreign key) already exists.
+        should_chunk = (
+            self._chunk_repo is not None
+            and self._embedding_provider is not None
+            and len(record.content) > self._chunk_threshold
+        )
+        if should_chunk:
+            # Content is long enough and an embedding provider is available.
+            # Store a zero-vector sentinel on the parent row — the NOT NULL
+            # constraint is satisfied and it's clear that this row's semantic
+            # representation lives in the memory_chunks table, not here.
+            parent_vec_str = self._zero_vec_str()
+        else:
+            parent_vec_str = _vec_to_str(record.embedding) if record.embedding else self._zero_vec_str()
+        # --- end ORC-2 gate -------------------------------------------------
+
+        vec_str = parent_vec_str
         metadata_str = json.dumps(record.metadata)
 
         sql = f"""
@@ -392,6 +595,11 @@ class BaseRepository(ABC, Generic[M]):
             cur = conn.cursor()
             cur.execute(sql, params)
             conn.commit()
+
+        # --- ORC-2: write chunk rows after parent INSERT --------------------
+        if should_chunk:
+            self._write_chunks(record.id, record.content, self._embedding_provider, scope)
+        # --- end ORC-2 chunk write ------------------------------------------
 
         logger.debug("Created %s id=%s", self._TABLE, record.id)
         return record
@@ -610,13 +818,23 @@ class BaseRepository(ABC, Generic[M]):
         scope_sql, scope_params = _scope_predicates(scope)
 
         now = _now()
-        vec_str = _vec_to_str(record.embedding) if record.embedding else self._zero_vec_str()
-        metadata_str = json.dumps(record.metadata)
-        new_version = record.version + 1
-
         # Recompute content_hash so that update() keeps the hash consistent
         # with the new content value being persisted.
         new_hash = _content_hash(record.content)
+        metadata_str = json.dumps(record.metadata)
+        new_version = record.version + 1
+
+        # --- ORC-2: chunking gate (update path) --------------------------------
+        should_chunk = (
+            self._chunk_repo is not None
+            and self._embedding_provider is not None
+            and len(record.content) > self._chunk_threshold
+        )
+        if should_chunk:
+            vec_str = self._zero_vec_str()
+        else:
+            vec_str = _vec_to_str(record.embedding) if record.embedding else self._zero_vec_str()
+        # --- end ORC-2 gate -------------------------------------------------
 
         sql = f"""
             UPDATE {self._TABLE}
@@ -660,6 +878,12 @@ class BaseRepository(ABC, Generic[M]):
         record.version = new_version
         record.updated_at = now
         record.content_hash = new_hash
+
+        # --- ORC-2: rewrite chunk rows after UPDATE -------------------------
+        if should_chunk:
+            self._write_chunks(record.id, record.content, self._embedding_provider, scope)
+        # --- end ORC-2 chunk write ------------------------------------------
+
         logger.debug("update %s id=%s new_version=%d", self._TABLE, record.id, new_version)
         return record
 
@@ -794,12 +1018,13 @@ class BaseRepository(ABC, Generic[M]):
         mode: SearchMode = SearchMode.EXACT,
         include_expired: bool = False,
         min_confidence: float = 0.0,
+        search_chunks: bool = False,
     ) -> list[M]:
         """Semantic search via Db2 VECTOR_DISTANCE.
 
         Filters by scope first, then ranks by vector distance.
 
-        SQL shape (EXACT mode)::
+        SQL shape (EXACT mode, standard path)::
 
             SELECT ... FROM <table>
             WHERE <scope predicates>
@@ -807,7 +1032,7 @@ class BaseRepository(ABC, Generic[M]):
             ORDER BY VECTOR_DISTANCE(embedding, TO_VECTOR(?, FLOAT32), <metric>)
             FETCH FIRST <top_k> ROWS ONLY
 
-        SQL shape (APPROX mode)::
+        SQL shape (APPROX mode, standard path)::
 
             SELECT ... FROM <table>
             WHERE <scope predicates>
@@ -817,6 +1042,38 @@ class BaseRepository(ABC, Generic[M]):
 
         For APPROX to engage the DiskANN index, the metric MUST match the
         index's ``WITH DISTANCE COSINE`` clause (all tables use COSINE).
+
+        **ORC-2: chunk-based search (``search_chunks=True``)**
+
+        When ``search_chunks=True`` and a ``chunk_repo`` is wired in, the
+        search is routed through the ``memory_chunks`` table instead of the
+        parent table's embedding column.  This produces finer-grained semantic
+        matches because each chunk is a short, focused piece of text with its
+        own embedding — a much better semantic representation than one embedding
+        for a 64 KB CLOB.
+
+        The chunk-search path is a two-step ``search → resolve → dedup``
+        pattern parallel to the existing two-step ID-rank → full-row-fetch
+        pattern already used for the standard search path:
+
+        1. **Chunk search** — rank ``memory_chunks`` by distance to
+           *query_embedding*, filtered to ``agent_id`` scope and
+           ``source_table = <this table>``, returning up to ``top_k * 4``
+           rows (over-fetch to compensate for multiple chunks per parent).
+        2. **Resolve parents** — from the chunk results, collect unique
+           ``source_id`` values and fetch the corresponding parent rows via
+           ``IN (...)`` with the standard scope + deleted_at predicates.
+        3. **Dedup and re-rank** — deduplicate to one result per parent (keeping
+           the chunk with the smallest distance as that parent's representative
+           distance), then sort parents by that best-chunk distance and take
+           the top *top_k*.
+
+        This reuses the two-step reorder-after-fetch pattern from the standard
+        search path (Step 7 Db2 12.1.5 fp0 compatibility workaround).
+
+        Falls back to the standard search path when:
+        - ``search_chunks=False`` (default — backward-compatible).
+        - ``chunk_repo`` is not set on this repository instance.
 
         Args:
             query_embedding: The embedding to search against.
@@ -831,11 +1088,27 @@ class BaseRepository(ABC, Generic[M]):
                              low-confidence rows do not consume top_k slots.
                              Defaults to 0.0 (no confidence filter, full
                              backward compatibility).
+            search_chunks:   If True and a ``chunk_repo`` is wired in, search
+                             ``memory_chunks`` first then resolve back to parent
+                             records (ORC-2 chunk-based search path).  Falls back
+                             to the standard path when ``chunk_repo`` is None.
+                             Default False.
 
         Returns:
             A list of model instances ordered by ascending distance
             (nearest first).
         """
+        # ORC-2: route to chunk-based search when requested and available.
+        if search_chunks and self._chunk_repo is not None:
+            return self._search_via_chunks(
+                query_embedding=query_embedding,
+                scope=scope,
+                top_k=top_k,
+                metric=metric,
+                mode=mode,
+                include_expired=include_expired,
+                min_confidence=min_confidence,
+            )
         _require_agent_id(scope)
         if not query_embedding:
             raise ValueError("query_embedding must be a non-empty list of floats.")
@@ -905,5 +1178,108 @@ class BaseRepository(ABC, Generic[M]):
         return [
             self._model_from_row(row_map[id_])
             for id_ in ordered_ids
+            if id_ in row_map
+        ]
+
+    # ------------------------------------------------------------------
+    # ORC-2: chunk-based search helpers
+    # ------------------------------------------------------------------
+
+    def _search_via_chunks(
+        self,
+        query_embedding: list[float],
+        scope: MemoryScope,
+        top_k: int = 10,
+        metric: DistanceMetric = DistanceMetric.COSINE,
+        mode: SearchMode = SearchMode.EXACT,
+        include_expired: bool = False,
+        min_confidence: float = 0.0,
+    ) -> list[M]:
+        """Search via the ``memory_chunks`` table, then resolve to parent records.
+
+        Implements the three-step chunk → resolve → dedup pattern described in
+        :meth:`search`.  Only called when ``self._chunk_repo is not None`` and
+        ``search_chunks=True`` was passed to :meth:`search`.
+
+        Args:
+            (same as :meth:`search`, ``search_chunks`` excluded)
+
+        Returns:
+            A list of at most *top_k* parent-record model instances, ordered by
+            their best-matching chunk distance (ascending, nearest first).
+        """
+        if not query_embedding:
+            raise ValueError("query_embedding must be a non-empty list of floats.")
+        _require_agent_id(scope)
+
+        top_k = min(top_k, 200)
+
+        # Step 1 — rank memory_chunks by distance, over-fetch (×4) to ensure
+        # we see enough distinct parents after dedup.
+        overfetch = min(top_k * 4, 800)
+        chunk_hits = self._chunk_repo.search_chunks(  # type: ignore[union-attr]
+            query_embedding=query_embedding,
+            source_table=self._TABLE,
+            scope=scope,
+            top_n=overfetch,
+            metric=metric,
+            mode=mode,
+        )
+        # chunk_hits: list of (source_id, distance) tuples, ordered nearest-first.
+        if not chunk_hits:
+            return []
+
+        # Step 2 — dedup: keep the best (minimum) distance per source_id,
+        # preserving the chunk-rank order for stable tie-breaking.
+        seen: dict[str, float] = {}
+        for source_id, distance in chunk_hits:
+            if source_id not in seen or distance < seen[source_id]:
+                seen[source_id] = distance
+
+        # Sort by best-chunk distance, ascending (nearest first), take top_k.
+        ranked_ids: list[str] = [
+            sid for sid, _ in sorted(seen.items(), key=lambda x: x[1])
+        ][:top_k]
+
+        if not ranked_ids:
+            return []
+
+        # Step 3 — fetch full parent rows (with VECTOR_SERIALIZE) for the
+        # ranked IDs, applying scope + deleted_at + confidence filters.
+        scope_sql, scope_params = _scope_predicates(scope)
+        supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
+
+        extra = ""
+        if not include_expired:
+            extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP - CURRENT TIMEZONE)"
+
+        conf_sql = ""
+        conf_params: list[Any] = []
+        if min_confidence > 0.0:
+            conf_sql = " AND confidence >= ?"
+            conf_params = [min_confidence]
+
+        placeholders = ",".join("?" for _ in ranked_ids)
+        sql_rows = f"""
+            SELECT {self._SELECT_COLS}
+            FROM {self._TABLE}
+            WHERE id IN ({placeholders})
+              AND {scope_sql}
+              AND deleted_at IS NULL
+              {supersession_sql}
+              {extra}
+              {conf_sql}
+        """
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql_rows, [*ranked_ids, *scope_params, *conf_params])
+            raw_rows = cur.fetchall()
+
+        # Re-rank by the chunk-distance order from step 2, then apply
+        # any confidence filter that may have dropped rows.
+        row_map = {r[0]: r for r in raw_rows}
+        return [
+            self._model_from_row(row_map[id_])
+            for id_ in ranked_ids
             if id_ in row_map
         ]

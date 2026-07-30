@@ -94,6 +94,7 @@ from agent_memory_sdk.models import (
     WorkingMemory,
     _MemoryBase,
 )
+from agent_memory_sdk.repositories.chunks import ChunkRepository
 from agent_memory_sdk.repositories.episodic import EpisodicMemoryRepository
 from agent_memory_sdk.repositories.facts import SemanticFactRepository
 from agent_memory_sdk.repositories.procedural import ProceduralMemoryRepository
@@ -134,6 +135,8 @@ class MemoryStore:
         facts:      :class:`~agent_memory_sdk.repositories.SemanticFactRepository`
         profiles:   :class:`~agent_memory_sdk.repositories.EntityProfileRepository`
         procedures: :class:`~agent_memory_sdk.repositories.ProceduralMemoryRepository`
+        chunks:     :class:`~agent_memory_sdk.repositories.chunks.ChunkRepository`
+                    (ORC-2 — only populated when *enable_chunking* is True)
 
     Args:
         pool: A :class:`~agent_memory_sdk.db.connection.ConnectionPool`
@@ -142,6 +145,12 @@ class MemoryStore:
         embedding_dim: The vector dimension used by all tables (default
               1536, matching the DDL default in 0002_memory_tables.sql).
               Override if you change the schema to a different model.
+        embedding_provider: An :class:`~agent_memory_sdk.types.EmbeddingProvider`
+              callable (``text -> list[float]``).  When provided, it is
+              injected into every repository and used to produce per-chunk
+              embeddings for long content (ORC-2 chunking).  Also used by
+              the default ``recall()`` path for on-the-fly query embedding.
+              Defaults to ``None`` — no chunking, callers embed manually.
         consolidator: A :class:`~agent_memory_sdk.types.Consolidator`
               implementation (any callable matching the protocol).  Called
               synchronously after every ``remember()`` write to
@@ -183,25 +192,59 @@ class MemoryStore:
               (``scripts/consolidate_pending.py``) instead of the inline
               consolidator.  This limitation is recorded in DECISIONS.md
               ENH-4 entry.
+        enable_chunking: When True (default) and *embedding_provider* is
+              supplied, activate ORC-2 content chunking: records whose
+              content exceeds *chunk_threshold* are split into overlapping
+              chunks and embedded separately in ``memory_chunks``.  When
+              False, chunking is disabled regardless of *embedding_provider*.
+        chunk_threshold: Content-length threshold in characters above which
+              chunking is applied.  Default 2000.
+        chunk_size:    Maximum characters per chunk.  Default 800.
+        chunk_overlap: Overlap in characters between adjacent chunks.
+              Default 200.
     """
 
     def __init__(
         self,
         pool: Any,
         embedding_dim: int = 1536,
+        embedding_provider: Any | None = None,
         consolidator: Any | None = None,
         reconciler: Any | None = None,
         summarizer: Any | None = None,
         consolidate_every_n: int = 1,
+        enable_chunking: bool = True,
+        chunk_threshold: int = 2000,
+        chunk_size: int = 800,
+        chunk_overlap: int = 200,
     ) -> None:
-        self.working = WorkingMemoryRepository(pool)
-        self.episodic = EpisodicMemoryRepository(pool)
-        self.facts = SemanticFactRepository(pool)
-        self.profiles = EntityProfileRepository(pool)
-        self.procedures = ProceduralMemoryRepository(pool)
+        # Build the shared ChunkRepository when chunking is enabled and
+        # an embedding provider has been supplied — otherwise it stays None
+        # and the per-type repos fall back to the pre-ORC-2 single-embedding
+        # path automatically.
+        chunk_repo: ChunkRepository | None = None
+        if enable_chunking and embedding_provider is not None:
+            chunk_repo = ChunkRepository(pool, embedding_dim=embedding_dim)
 
-        # Propagate the embedding dimension to all repos so they can
-        # produce correctly-dimensioned zero-vector sentinels.
+        # Chunk kwargs forwarded to every per-type repository.
+        chunk_kwargs = dict(
+            chunk_repo=chunk_repo,
+            chunk_threshold=chunk_threshold,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+        self.working = WorkingMemoryRepository(pool, **chunk_kwargs)
+        self.episodic = EpisodicMemoryRepository(pool, **chunk_kwargs)
+        self.facts = SemanticFactRepository(pool, **chunk_kwargs)
+        self.profiles = EntityProfileRepository(pool, **chunk_kwargs)
+        self.procedures = ProceduralMemoryRepository(pool, **chunk_kwargs)
+
+        # Expose the chunk repo as a public attribute so callers can use it
+        # directly (e.g. maintenance scripts, integration tests).
+        self.chunks: ChunkRepository | None = chunk_repo
+
+        # Propagate the embedding dimension AND embedding provider to all repos.
         for repo in (
             self.working,
             self.episodic,
@@ -210,6 +253,7 @@ class MemoryStore:
             self.procedures,
         ):
             repo.EMBEDDING_DIM = embedding_dim
+            repo._embedding_provider = embedding_provider
 
         self._consolidator = consolidator if consolidator is not None else NoOpConsolidator()
         self._reconciler = reconciler if reconciler is not None else NoOpReconciler()

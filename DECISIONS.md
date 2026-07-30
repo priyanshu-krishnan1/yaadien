@@ -6,6 +6,22 @@ a dated entry before finishing. Do not silently deviate from an existing
 entry — if a later step needs to change one, add a new entry that
 explicitly supersedes it and say why.
 
+> **New entries go at the END of the file, after the last dated entry below — this
+> template just documents the format; copy it, don't insert next to it.**
+
+### Entry template (copy this for every new decision)
+
+```
+## YYYY-MM-DD — <short title>
+
+- **Decision:**
+- **Reason:**
+- **Made during:** Step N (<step name>)
+- **Supersedes:** (link to prior entry, if any — otherwise omit)
+```
+
+---
+
 ## 2026-07-29 — Foundational decisions (made before any code was written)
 
 - **Language:** Python only.
@@ -1573,90 +1589,6 @@ explicitly supersedes it and say why.
 
 ---
 
-## 2026-08-01 — ENH-4 audit: --dedup-every-n silent no-op fix + ARCHITECTURE.md ENH-4 gaps
-
-- **Decision:** Two related doc/correctness fixes identified in a post-ENH-4 audit.
-
-  **1. `--dedup-every-n` validation (Option B chosen)**
-
-  `scripts/consolidate_pending.py --dedup-every-n N` silently did nothing for
-  N >= 3.  The root cause: `batches_completed` starts at 0 on every fresh
-  invocation and can only reach a maximum of 2 within a single run (one
-  increment per memory type processed — exactly two types: "working" and
-  "episodic").  The modulo trigger `batches_completed % N == 0` can therefore
-  only ever fire for N = 1 or N = 2 within a single invocation.  Any value of
-  N >= 3 is permanently a no-op under normal cron-periodic usage.
-
-  **Option A** (persist a cross-run counter somewhere) was considered.  The
-  options were: (a) a new migration adding a counter table to Db2, or (b) a
-  local state file.  Option A with a Db2 counter table adds schema complexity
-  and a new migration for what is fundamentally a CLI cadence flag; a local
-  state file would carry an explicit multi-machine-cron limitation caveat and
-  would need a per-agent-scope key.  Neither is proportionate to the fix —
-  operators who want a longer cadence can simply schedule a dedicated reconciler
-  cron job directly, which is already supported by `store.reconcile()`.
-
-  **Option B was chosen**: reject `--dedup-every-n` values > 2 at
-  argument-parsing time with a clear error message explaining the two-type
-  constraint.  This turns a silent footgun into an immediate, actionable error
-  and does not add schema migrations or stateful files.  The help text and
-  module docstring were updated to document the hard limit (1 or 2) and why.
-
-  **Test fix:** `test_dedup_every_n_triggers_reconcile` was an arithmetic
-  assertion in a vacuum (`[b % 3 == 0 for b in [1..6]]`) that validated the
-  modulo formula but never exercised the real script.  It was replaced with
-  three tests that use the real `_fetch_pending` / `_process_record` functions
-  and the real trigger condition from `main()`'s batch loop:
-
-  - `test_dedup_every_n_1_triggers_reconcile_after_each_batch` — N=1, expects
-    reconcile called twice (once after "working", once after "episodic").
-  - `test_dedup_every_n_2_triggers_reconcile_once_after_both_batches` — N=2,
-    expects reconcile called exactly once (only after the second batch).
-  - `test_dedup_every_n_3_rejected_at_argparse` — N=3, expects the subprocess
-    to exit with code 2 and an error message containing "must be 1 or 2".
-
-  **2. ARCHITECTURE.md ENH-4 gaps**
-
-  Section 3 (`Schema`) had not been updated for ENH-4 at all: the prose column-type
-  legend had no entry for `consolidated_at`, and the Mermaid ER diagram for both
-  `working_memory` and `episodic_memory` was missing the column entirely.  Both
-  were updated (section-3 `_Last updated` line bumped to ENH-4; `consolidated_at`
-  added to the prose legend and to both table blocks in the ER diagram).
-
-  Section 4 (`remember()` flow) still said "Last updated: Step 4" and showed the
-  Consolidator being called directly after the INSERT with no throttle gate.  The
-  `_should_consolidate()` / `consolidate_every_n` mechanism introduced in ENH-4
-  was missing.  The sequence diagram was updated to show the throttle check as an
-  explicit decision node (`alt _should_consolidate returns True / else throttled`)
-  between the repository write and the Consolidator call.  The async note was also
-  updated from the old metadata-flag stand-in language to the production-grade
-  ENH-4 `consolidated_at IS NULL` / claim-based worker description.
-
-- **Reason:** The silent-no-op footgun in `--dedup-every-n` was the most
-  dangerous gap: an operator setting `--dedup-every-n 5` would see no error, no
-  warning, and no reconciler runs — ever — with no indication anything was wrong.
-  The architecture diagram gaps were a documentation correctness issue that would
-  mislead anyone reading the current-state design doc.
-- **Made during:** ENH-4 audit (post-merge correctness fixes)
-- **Supersedes:** Part of the `--dedup-every-n` behavior described in the
-  ENH-4 DECISIONS.md entry above (the N-batch cadence paragraph) — that entry
-  described the intent; this entry records that N >= 3 was silently broken and
-  documents the fix.
-
----
-
-### Entry template (copy this for every new decision)
-
-```
-## YYYY-MM-DD — <short title>
-
-- **Decision:**
-- **Reason:**
-- **Made during:** Step N (<step name>)
-- **Supersedes:** (link to prior entry, if any — otherwise omit)
-```
-
-
 ## 2026-08-01 — ENH-4: claim-based consolidation locking, consolidate_every_n cadence, --dedup-every-n worker option
 
 - **Decision:** Three related additions that together make the consolidation pipeline production-ready.
@@ -1754,6 +1686,77 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-08-01 — ENH-4 audit: --dedup-every-n silent no-op fix + ARCHITECTURE.md ENH-4 gaps
+
+- **Decision:** Two related doc/correctness fixes identified in a post-ENH-4 audit.
+
+  **1. `--dedup-every-n` validation (Option B chosen)**
+
+  `scripts/consolidate_pending.py --dedup-every-n N` silently did nothing for
+  N >= 3.  The root cause: `batches_completed` starts at 0 on every fresh
+  invocation and can only reach a maximum of 2 within a single run (one
+  increment per memory type processed — exactly two types: "working" and
+  "episodic").  The modulo trigger `batches_completed % N == 0` can therefore
+  only ever fire for N = 1 or N = 2 within a single invocation.  Any value of
+  N >= 3 is permanently a no-op under normal cron-periodic usage.
+
+  **Option A** (persist a cross-run counter somewhere) was considered.  The
+  options were: (a) a new migration adding a counter table to Db2, or (b) a
+  local state file.  Option A with a Db2 counter table adds schema complexity
+  and a new migration for what is fundamentally a CLI cadence flag; a local
+  state file would carry an explicit multi-machine-cron limitation caveat and
+  would need a per-agent-scope key.  Neither is proportionate to the fix —
+  operators who want a longer cadence can simply schedule a dedicated reconciler
+  cron job directly, which is already supported by `store.reconcile()`.
+
+  **Option B was chosen**: reject `--dedup-every-n` values > 2 at
+  argument-parsing time with a clear error message explaining the two-type
+  constraint.  This turns a silent footgun into an immediate, actionable error
+  and does not add schema migrations or stateful files.  The help text and
+  module docstring were updated to document the hard limit (1 or 2) and why.
+
+  **Test fix:** `test_dedup_every_n_triggers_reconcile` was an arithmetic
+  assertion in a vacuum (`[b % 3 == 0 for b in [1..6]]`) that validated the
+  modulo formula but never exercised the real script.  It was replaced with
+  three tests that use the real `_fetch_pending` / `_process_record` functions
+  and the real trigger condition from `main()`'s batch loop:
+
+  - `test_dedup_every_n_1_triggers_reconcile_after_each_batch` — N=1, expects
+    reconcile called twice (once after "working", once after "episodic").
+  - `test_dedup_every_n_2_triggers_reconcile_once_after_both_batches` — N=2,
+    expects reconcile called exactly once (only after the second batch).
+  - `test_dedup_every_n_3_rejected_at_argparse` — N=3, expects the subprocess
+    to exit with code 2 and an error message containing "must be 1 or 2".
+
+  **2. ARCHITECTURE.md ENH-4 gaps**
+
+  Section 3 (`Schema`) had not been updated for ENH-4 at all: the prose column-type
+  legend had no entry for `consolidated_at`, and the Mermaid ER diagram for both
+  `working_memory` and `episodic_memory` was missing the column entirely.  Both
+  were updated (section-3 `_Last updated` line bumped to ENH-4; `consolidated_at`
+  added to the prose legend and to both table blocks in the ER diagram).
+
+  Section 4 (`remember()` flow) still said "Last updated: Step 4" and showed the
+  Consolidator being called directly after the INSERT with no throttle gate.  The
+  `_should_consolidate()` / `consolidate_every_n` mechanism introduced in ENH-4
+  was missing.  The sequence diagram was updated to show the throttle check as an
+  explicit decision node (`alt _should_consolidate returns True / else throttled`)
+  between the repository write and the Consolidator call.  The async note was also
+  updated from the old metadata-flag stand-in language to the production-grade
+  ENH-4 `consolidated_at IS NULL` / claim-based worker description.
+
+- **Reason:** The silent-no-op footgun in `--dedup-every-n` was the most
+  dangerous gap: an operator setting `--dedup-every-n 5` would see no error, no
+  warning, and no reconciler runs — ever — with no indication anything was wrong.
+  The architecture diagram gaps were a documentation correctness issue that would
+  mislead anyone reading the current-state design doc.
+- **Made during:** ENH-4 audit (post-merge correctness fixes)
+- **Supersedes:** Part of the `--dedup-every-n` behavior described in the
+  ENH-4 entry above (the N-batch cadence paragraph) — that entry described the
+  intent; this entry records that N >= 3 was silently broken and documents the fix.
+
+---
+
 ## 2026-08-01 — ORC-1: context cards over working memory + optional summarizer
 
 - **Decision (context-card object shape):** `MemoryStore.get_context_card(scope, max_turns=20)` returns a `ContextCard` dataclass from [`src/agent_memory_sdk/types.py`](src/agent_memory_sdk/types.py) with the exact fields:
@@ -1774,3 +1777,31 @@ explicitly supersedes it and say why.
 - **ARCHITECTURE.md section 1:** Updated to include a `ContextCard / get_context_card()` box and `Summarizer` box in the core flowchart because ORC-1 adds a new first-class read-path capability on `MemoryStore`; this was substantial enough to warrant explicit representation rather than only a note here.
 
 - **Made during:** ORC-1 (EPIC-3)
+
+## 2026-08-01 — ORC-2: content chunking for long memories
+
+- **Decision (chunking threshold):** Content exceeding **2000 characters** (``CHUNK_THRESHOLD = 2000``) is split into overlapping chunks at write time.  Content at or below the threshold is stored exactly as before — a single embedding on the parent row, no chunk rows created — so all pre-ORC-2 behaviour is preserved for the typical short-to-medium content case.  2000 chars was chosen as a safe upper bound for text that fits comfortably in a single embedding context window (most embedding models have a token limit of 512–8192; 2000 English characters ≈ 400–500 tokens, well within the safe zone for any provider the SDK might be used with).  The threshold is configurable at ``MemoryStore`` construction time via ``chunk_threshold=``.
+
+- **Decision (chunk size and overlap strategy):** Chunks are fixed-size character windows of **800 characters** (``CHUNK_SIZE``) with **200 characters of overlap** (``CHUNK_OVERLAP``) between adjacent chunks (step = 600 chars).  The overlap strategy is a simple sliding window — ``_split_chunks(text, chunk_size, chunk_overlap)`` in ``repositories/base.py``.  Character-level splitting (not token-level) was chosen because: (a) the SDK is embedding-provider-agnostic and token boundaries differ per provider, and (b) character windows are reproducible and testable without a tokenizer dependency.  The 800/200 defaults give ≈25% overlap, which is a common practical default; both values are configurable at ``MemoryStore`` construction time via ``chunk_size=`` / ``chunk_overlap=``.  ``chunk_overlap`` must be strictly less than ``chunk_size`` (enforced with a ``ValueError``).
+
+- **Decision (shared table vs. per-type tables):** A single shared **``memory_chunks``** table was chosen over five per-type ``*_chunks`` tables.  Justification:
+  - All five memory types use the same ``VECTOR(1536, FLOAT32)/COSINE`` shape; there is no type-specific column that would justify five tables.
+  - One ``CREATE VECTOR INDEX`` services all chunk queries instead of five.
+  - DDL and migration surface is smaller (one table + three indexes, migration 0006, one repository class).
+  - The chunk-search → parent-resolution query path is cleanest with all chunk types together: the resolver groups by ``source_table`` and can fetch all parents of each type in a single ``IN (...)`` round-trip per table.
+  - A ``source_table VARCHAR(64)`` discriminator (e.g. ``"working_memory"``) is sufficient to route results back to the correct parent table.
+  - Per-type tables would only be preferable if memory types needed different vector dimensions or distance metrics; they do not.
+
+- **Decision (parent row embedding when chunked):** When a record is chunked, its own ``embedding`` column on the parent table is set to the **zero-vector sentinel** (the same sentinel used everywhere else in the SDK for "not yet embedded").  This satisfies the ``NOT NULL`` constraint while making it clear that this row's semantic representation lives in ``memory_chunks``, not in the parent column.  The parent's embedding is therefore intentionally useless for vector search on chunked records; callers must use ``search_chunks=True`` to reach those records semantically.
+
+- **Decision (chunk-to-parent resolution and dedup logic — ``search(search_chunks=True)``):** Chunk-based search is a three-step pattern, reusing the two-step ID-rank → full-row-fetch pattern already established for the standard ``search()`` in Step 7 (Db2 12.1.5 fp0 compatibility workaround):
+  1. **Chunk search** — ``ChunkRepository.search_chunks()`` ranks ``memory_chunks`` by ``VECTOR_DISTANCE`` (filtered to ``source_table = <this table>`` and scope), over-fetching ``top_k × 4`` rows to compensate for multiple chunks per parent.
+  2. **Dedup** — collect unique ``source_id`` values, keeping the **minimum distance** seen across all chunks for that parent as the parent's representative distance.
+  3. **Re-rank + resolve** — sort parents by best-chunk distance (ascending), take top ``top_k``, then fetch the full parent rows via ``IN (...)`` with the standard scope + ``deleted_at IS NULL`` + confidence predicates.  This reuses the existing reorder-after-fetch pattern so that ``VECTOR_SERIALIZE`` and ``VECTOR_DISTANCE`` are never in the same SQL statement (Db2 12.1.5 fp0 limitation).
+  The over-fetch factor of 4× is a conservative heuristic.  With ``CHUNK_SIZE = 800`` and ``CHUNK_THRESHOLD = 2000``, a maximally long 64KB CLOB yields ≈106 chunks; at ``top_k = 10``, over-fetching 40 chunk rows is sufficient to cover at least 10 distinct parents in all realistic cases.
+
+- **Decision (backward compatibility):** When no ``embedding_provider`` is passed to ``MemoryStore``, chunking is silently skipped on every write — ``_chunk_repo`` is ``None`` on all repositories and the code paths taken are identical to pre-ORC-2.  The ``search(search_chunks=True)`` flag also silently falls back to the standard path when ``_chunk_repo is None``.  Callers who construct repository objects directly (without ``MemoryStore``) are also unaffected: ``BaseRepository.__init__`` accepts ``chunk_repo=None`` as the default.
+
+- **Decision (chunk_repo as a class-level injectable vs. constructor argument):** The ``ChunkRepository`` is injected into each per-type repository as a constructor argument rather than a class attribute or global singleton.  This keeps the pattern consistent with the existing pool injection pattern and avoids any shared-state issues between test cases.
+
+- **Made during:** ORC-2 (EPIC-3)
