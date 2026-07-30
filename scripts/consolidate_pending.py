@@ -63,7 +63,21 @@ semantic facts.  This mirrors the Cosmos DB Agent Memory Toolkit's
         --consolidator-class LLMConsolidator \\
         --reconciler-module myapp.reconcilers \\
         --reconciler-class LLMReconciler \\
-        --dedup-every-n 5   # run reconciler after every 5th batch
+        --dedup-every-n 2   # run reconciler after every 2nd batch (maximum supported)
+
+**Hard limit — ``--dedup-every-n`` must be 1 or 2.**
+
+Each script invocation processes exactly two memory types (``working`` and
+``episodic``), so ``batches_completed`` starts at 0 and can reach at most 2
+per run.  A value of N >= 3 would never satisfy
+``batches_completed % N == 0`` within a single invocation and would silently
+do nothing — an argument value that appears valid but is permanently a no-op.
+
+To avoid that silent-no-op footgun, the script rejects ``--dedup-every-n``
+values > 2 at argument-parsing time with a clear error.  If you need
+deduplication on a longer cadence (e.g. every 10th run), schedule the
+Reconciler in a separate cron job rather than relying on this per-invocation
+counter.
 
 Db2 substitute for Cosmos change-feed
 --------------------------------------
@@ -219,10 +233,27 @@ def main() -> None:
         type=int,
         default=0,
         metavar="N",
-        help="Run the Reconciler (ENH-3 dedup) every N completed batches. "
-             "0 = disabled (default).  Requires --reconciler-module/class.",
+        help=(
+            "Run the Reconciler (ENH-3 dedup) every N completed batches. "
+            "0 = disabled (default).  Requires --reconciler-module/class.  "
+            "Must be 1 or 2: each invocation processes exactly two memory "
+            "types (working + episodic), so batches_completed can reach at "
+            "most 2 per run.  N >= 3 can never trigger within a single run "
+            "and is rejected to prevent a silent no-op."
+        ),
     )
     args = parser.parse_args()
+
+    if args.dedup_every_n > 2:
+        parser.error(
+            f"--dedup-every-n must be 1 or 2 (got {args.dedup_every_n}).  "
+            "Each script invocation processes exactly two memory types "
+            "(working + episodic), so the per-invocation batch counter "
+            "reaches at most 2.  A value of N >= 3 can never satisfy "
+            "batches_completed % N == 0 within a single run and would "
+            "silently do nothing.  To run the Reconciler on a longer "
+            "cadence, schedule a separate cron job instead."
+        )
 
     try:
         from dotenv import load_dotenv  # type: ignore[import]

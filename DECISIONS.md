@@ -1573,6 +1573,78 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-08-01 — ENH-4 audit: --dedup-every-n silent no-op fix + ARCHITECTURE.md ENH-4 gaps
+
+- **Decision:** Two related doc/correctness fixes identified in a post-ENH-4 audit.
+
+  **1. `--dedup-every-n` validation (Option B chosen)**
+
+  `scripts/consolidate_pending.py --dedup-every-n N` silently did nothing for
+  N >= 3.  The root cause: `batches_completed` starts at 0 on every fresh
+  invocation and can only reach a maximum of 2 within a single run (one
+  increment per memory type processed — exactly two types: "working" and
+  "episodic").  The modulo trigger `batches_completed % N == 0` can therefore
+  only ever fire for N = 1 or N = 2 within a single invocation.  Any value of
+  N >= 3 is permanently a no-op under normal cron-periodic usage.
+
+  **Option A** (persist a cross-run counter somewhere) was considered.  The
+  options were: (a) a new migration adding a counter table to Db2, or (b) a
+  local state file.  Option A with a Db2 counter table adds schema complexity
+  and a new migration for what is fundamentally a CLI cadence flag; a local
+  state file would carry an explicit multi-machine-cron limitation caveat and
+  would need a per-agent-scope key.  Neither is proportionate to the fix —
+  operators who want a longer cadence can simply schedule a dedicated reconciler
+  cron job directly, which is already supported by `store.reconcile()`.
+
+  **Option B was chosen**: reject `--dedup-every-n` values > 2 at
+  argument-parsing time with a clear error message explaining the two-type
+  constraint.  This turns a silent footgun into an immediate, actionable error
+  and does not add schema migrations or stateful files.  The help text and
+  module docstring were updated to document the hard limit (1 or 2) and why.
+
+  **Test fix:** `test_dedup_every_n_triggers_reconcile` was an arithmetic
+  assertion in a vacuum (`[b % 3 == 0 for b in [1..6]]`) that validated the
+  modulo formula but never exercised the real script.  It was replaced with
+  three tests that use the real `_fetch_pending` / `_process_record` functions
+  and the real trigger condition from `main()`'s batch loop:
+
+  - `test_dedup_every_n_1_triggers_reconcile_after_each_batch` — N=1, expects
+    reconcile called twice (once after "working", once after "episodic").
+  - `test_dedup_every_n_2_triggers_reconcile_once_after_both_batches` — N=2,
+    expects reconcile called exactly once (only after the second batch).
+  - `test_dedup_every_n_3_rejected_at_argparse` — N=3, expects the subprocess
+    to exit with code 2 and an error message containing "must be 1 or 2".
+
+  **2. ARCHITECTURE.md ENH-4 gaps**
+
+  Section 3 (`Schema`) had not been updated for ENH-4 at all: the prose column-type
+  legend had no entry for `consolidated_at`, and the Mermaid ER diagram for both
+  `working_memory` and `episodic_memory` was missing the column entirely.  Both
+  were updated (section-3 `_Last updated` line bumped to ENH-4; `consolidated_at`
+  added to the prose legend and to both table blocks in the ER diagram).
+
+  Section 4 (`remember()` flow) still said "Last updated: Step 4" and showed the
+  Consolidator being called directly after the INSERT with no throttle gate.  The
+  `_should_consolidate()` / `consolidate_every_n` mechanism introduced in ENH-4
+  was missing.  The sequence diagram was updated to show the throttle check as an
+  explicit decision node (`alt _should_consolidate returns True / else throttled`)
+  between the repository write and the Consolidator call.  The async note was also
+  updated from the old metadata-flag stand-in language to the production-grade
+  ENH-4 `consolidated_at IS NULL` / claim-based worker description.
+
+- **Reason:** The silent-no-op footgun in `--dedup-every-n` was the most
+  dangerous gap: an operator setting `--dedup-every-n 5` would see no error, no
+  warning, and no reconciler runs — ever — with no indication anything was wrong.
+  The architecture diagram gaps were a documentation correctness issue that would
+  mislead anyone reading the current-state design doc.
+- **Made during:** ENH-4 audit (post-merge correctness fixes)
+- **Supersedes:** Part of the `--dedup-every-n` behavior described in the
+  ENH-4 DECISIONS.md entry above (the N-batch cadence paragraph) — that entry
+  described the intent; this entry records that N >= 3 was silently broken and
+  documents the fix.
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```

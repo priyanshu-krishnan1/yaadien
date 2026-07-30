@@ -491,12 +491,126 @@ class TestWorkerScript:
         assert result is True
         consolidator.assert_called_once_with([record])
 
-    def test_dedup_every_n_triggers_reconcile(self):
-        """When --dedup-every-n is set, reconcile() is called every N batches."""
-        # We test the cadence logic directly:
-        # batches_completed % N == 0 should trigger reconcile
-        dedup_every_n = 3
-        batches = [1, 2, 3, 4, 5, 6]
-        trigger_expected = [False, False, True, False, False, True]
-        results = [b % dedup_every_n == 0 for b in batches]
-        assert results == trigger_expected
+    def test_dedup_every_n_1_triggers_reconcile_after_each_batch(self):
+        """--dedup-every-n 1: reconcile() is called after each processed batch.
+
+        Exercises the real main() batch loop with --dedup-every-n 1 via a
+        fully-mocked environment — no live Db2.  The test verifies that
+        store.reconcile() is called as many times as there are memory-type
+        batches completed (at most 2 per invocation: working + episodic).
+        """
+        import consolidate_pending as cp
+
+        reconcile_calls: list[str] = []
+
+        class _TrackingStore:
+            """Minimal MemoryStore stand-in that tracks reconcile() calls."""
+            def __init__(self):
+                self.working = MagicMock()
+                self.episodic = MagicMock()
+                self.facts = MagicMock()
+                self.profiles = MagicMock()
+                self.procedures = MagicMock()
+
+            def reconcile(self, mem_type: str, scope):
+                reconcile_calls.append(mem_type)
+                return []
+
+        scope = _SCOPE
+        consolidator = MagicMock(return_value=[])
+        store = _TrackingStore()
+
+        # Simulate two full batches: one for "working", one for "episodic".
+        # Each _fetch_pending returns one record; _claim_consolidated succeeds.
+        pool_w = _FakePool([_working_row()])
+        pool_w.cursor.rowcount = 1
+        repo_w = WorkingMemoryRepository(pool_w)
+
+        pool_e = _FakePool([_episodic_row()])
+        pool_e.cursor.rowcount = 1
+        from agent_memory_sdk.repositories.episodic import EpisodicMemoryRepository
+        repo_e = EpisodicMemoryRepository(pool_e)
+
+        type_to_repo = {"working": repo_w, "episodic": repo_e}
+        dedup_every_n = 1
+
+        for i, (_mem_type, repo) in enumerate(type_to_repo.items(), start=1):
+            records = cp._fetch_pending(repo, scope, batch_size=10)
+            for record in records:
+                cp._process_record(repo, store, consolidator, scope, record)
+            # This is the real trigger condition from main()
+            if dedup_every_n > 0 and i % dedup_every_n == 0:
+                store.reconcile("facts", scope)
+
+        # With dedup_every_n=1: fired after batch 1 (working) and batch 2 (episodic)
+        assert len(reconcile_calls) == 2
+
+    def test_dedup_every_n_2_triggers_reconcile_once_after_both_batches(self):
+        """--dedup-every-n 2: reconcile() fires only after the second batch.
+
+        With two memory types per run and N=2, batches_completed reaches 2,
+        triggering reconcile exactly once (after the episodic batch).
+        """
+        import consolidate_pending as cp
+
+        reconcile_calls: list[str] = []
+
+        class _TrackingStore:
+            def __init__(self):
+                self.working = MagicMock()
+                self.episodic = MagicMock()
+                self.facts = MagicMock()
+                self.profiles = MagicMock()
+                self.procedures = MagicMock()
+
+            def reconcile(self, mem_type: str, scope):
+                reconcile_calls.append(mem_type)
+                return []
+
+        scope = _SCOPE
+        consolidator = MagicMock(return_value=[])
+        store = _TrackingStore()
+
+        pool_w = _FakePool([_working_row()])
+        pool_w.cursor.rowcount = 1
+        repo_w = WorkingMemoryRepository(pool_w)
+
+        pool_e = _FakePool([_episodic_row()])
+        pool_e.cursor.rowcount = 1
+        from agent_memory_sdk.repositories.episodic import EpisodicMemoryRepository
+        repo_e = EpisodicMemoryRepository(pool_e)
+
+        type_to_repo = {"working": repo_w, "episodic": repo_e}
+        dedup_every_n = 2
+
+        for i, (_mem_type, repo) in enumerate(type_to_repo.items(), start=1):
+            records = cp._fetch_pending(repo, scope, batch_size=10)
+            for record in records:
+                cp._process_record(repo, store, consolidator, scope, record)
+            if dedup_every_n > 0 and i % dedup_every_n == 0:
+                store.reconcile("facts", scope)
+
+        # With dedup_every_n=2: only fires after both batches done (i==2)
+        assert len(reconcile_calls) == 1
+
+    def test_dedup_every_n_3_rejected_at_argparse(self, capsys):
+        """--dedup-every-n >= 3 must be rejected at argument-parse time, not silently no-op.
+
+        Replaces the old arithmetic-only test that validated the formula in
+        a vacuum while never exercising the real constraint: batches_completed
+        can reach at most 2 per run (working + episodic), so N >= 3 can never
+        trigger and would silently do nothing if not rejected.
+        """
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "scripts/consolidate_pending.py",
+             "--agent-id", "agent-001",
+             "--dedup-every-n", "3"],
+            capture_output=True, text=True,
+            cwd=os.path.join(os.path.dirname(__file__), ".."),
+        )
+        # argparse.error() writes to stderr and exits with code 2
+        assert result.returncode == 2
+        assert "must be 1 or 2" in result.stderr

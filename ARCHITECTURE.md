@@ -137,7 +137,7 @@ scope before ranking by vector distance. See `MemoryScope` (built in Step
 
 ## 3. Schema (entity-relationship)
 
-_Last updated: ENH-3 — supersession columns added to `semantic_facts` (migration 0004)_
+_Last updated: ENH-4 — `consolidated_at` column added to `working_memory` and `episodic_memory` (migration 0005)_
 
 Column type legend:
 - `id` → `VARCHAR(36)` (UUID)
@@ -150,6 +150,7 @@ Column type legend:
 - `created_at`, `updated_at` → `TIMESTAMP NOT NULL DEFAULT CURRENT TIMESTAMP`
 - `expires_at`, `deleted_at` → `TIMESTAMP` (nullable)
 - `version` → `INTEGER NOT NULL DEFAULT 1`
+- `consolidated_at` → `TIMESTAMP` nullable (`working_memory` and `episodic_memory` only; NULL = not yet processed by the background worker; set to current timestamp when the worker claims the row via `_claim_consolidated()`; see DECISIONS.md ENH-4 entry)
 - `superseded_by` → `VARCHAR(36)` nullable (id of the winning row; `semantic_facts` only; NULL = this fact is still live; see DECISIONS.md ENH-3 entry)
 - `superseded_at` → `TIMESTAMP` nullable (`semantic_facts` only; NULL = live)
 - `supersede_reason` → `VARCHAR(255)` nullable (`semantic_facts` only; human-readable reason set by the Reconciler)
@@ -188,6 +189,7 @@ erDiagram
         TIMESTAMP expires_at "nullable"
         INTEGER version "NOT NULL default 1"
         TIMESTAMP deleted_at "nullable"
+        TIMESTAMP consolidated_at "nullable, ENH-4"
     }
 
     episodic_memory {
@@ -206,6 +208,7 @@ erDiagram
         TIMESTAMP expires_at "nullable"
         INTEGER version "NOT NULL default 1"
         TIMESTAMP deleted_at "nullable"
+        TIMESTAMP consolidated_at "nullable, ENH-4"
     }
 
     semantic_facts {
@@ -270,7 +273,7 @@ erDiagram
 
 ## 4. Flow: `remember()`
 
-_Last updated: Step 4 — sync consolidation implemented; async pattern documented_
+_Last updated: ENH-4 — `_should_consolidate()` throttle gate added between write and Consolidator_
 
 ```mermaid
 sequenceDiagram
@@ -287,27 +290,34 @@ sequenceDiagram
     Repo-->>MemoryStore: stored record
 
     alt memory_type is working or episodic
-        MemoryStore->>Consolidator: __call__([stored record])
-        note over Consolidator: NoOpConsolidator (default): returns []
-        note over Consolidator: LLMConsolidator (custom): returns derived records
-        Consolidator-->>MemoryStore: [] or [SemanticFact, EntityProfile, ProceduralMemory, ...]
-        loop for each derived record
-            MemoryStore->>Repo: create(derived_record, scope)
-            Repo->>Db2: INSERT derived memory
+        note over MemoryStore: _should_consolidate(scope)<br/>increments per-scope counter<br/>(keyed by agent_id/user_id/thread_id)<br/>returns True only every consolidate_every_n calls<br/>(default n=1: always True)
+        alt _should_consolidate returns True
+            MemoryStore->>Consolidator: __call__([stored record])
+            note over Consolidator: NoOpConsolidator (default): returns []
+            note over Consolidator: LLMConsolidator (custom): returns derived records
+            Consolidator-->>MemoryStore: [] or [SemanticFact, EntityProfile, ProceduralMemory, ...]
+            loop for each derived record
+                MemoryStore->>Repo: create(derived_record, scope)
+                Repo->>Db2: INSERT derived memory
+            end
+            note over MemoryStore: Consolidator errors caught + logged
+            note over MemoryStore: never propagated to caller
+        else _should_consolidate returns False (throttled)
+            note over MemoryStore: Consolidator skipped this write<br/>counter < consolidate_every_n
         end
-        note over MemoryStore: Consolidator errors caught + logged
-        note over MemoryStore: never propagated to caller
     end
 
     MemoryStore-->>Agent: stored record
 ```
 
-**Async / out-of-band extension point (not yet implemented as schema):**
-When consolidation is too slow for the inline path, omit the consolidator,
-mark rows with `metadata={"consolidated": false}` at write time, and run
-`scripts/consolidate_pending.py` as a cron job.  See
-`src/agent_memory_sdk/types.py` (Consolidator docstring) and DECISIONS.md
-Step 4 entry for details.
+**Async / out-of-band path (ENH-4 — production-grade):**
+When consolidation is too slow for the inline path, leave the default
+`NoOpConsolidator` in place and run `scripts/consolidate_pending.py` as a
+cron job.  The worker scans for `consolidated_at IS NULL` rows (ENH-4
+migration 0005 column), claims each with a `SET consolidated_at = <now>`
+UPDATE (preventing double-processing by concurrent workers), runs the
+Consolidator off the hot path, and persists derived memories.  See
+DECISIONS.md ENH-4 entry for the full design rationale and known limitations.
 
 ## 5. Flow: `recall()` / semantic search
 
