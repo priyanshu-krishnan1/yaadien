@@ -2182,3 +2182,17 @@ explicitly supersedes it and say why.
 - **Found:** Nothing to fix.
 - **Made during:** VER-1 (EPIC-4 beta readiness verification)
 
+
+## 2026-08-02 — VER-2: Verified STEP-2 (Schema & migrations)
+
+- **Decision:** VER-2 verification PASS — no gaps, fixes, or open items found.
+- **Checked:**
+  - `0002_memory_tables.sql`: all 5 tables present (`working_memory`, `episodic_memory`, `semantic_facts`, `entity_profiles`, `procedural_memory`). Columns: `id VARCHAR(36)`, scope cols `VARCHAR(128)` with `agent_id NOT NULL`, `content CLOB(65536) NOT NULL`, `metadata VARCHAR(4096) NOT NULL DEFAULT '{}'`, `embedding VECTOR(1536, FLOAT32) NOT NULL` (no DEFAULT clause — correct; VECTOR columns cannot have a DEFAULT expression other than NULL per IBM Db2 12.1 docs), `created_at`/`updated_at TIMESTAMP NOT NULL DEFAULT CURRENT TIMESTAMP`, `expires_at TIMESTAMP` (nullable), `version INTEGER NOT NULL DEFAULT 1`, `deleted_at TIMESTAMP` (nullable), each with a `PRIMARY KEY` constraint.
+  - `CREATE VECTOR INDEX ix_<table>_embedding ON <table> (embedding) WITH DISTANCE COSINE` on all 5 tables. COSINE uniform across all — correct for L2-normalized text embeddings per IBM docs.
+  - Composite scope index `(agent_id, tenant_id, user_id, thread_id)`, agent-only index `(agent_id)`, and plain (unfiltered) expires_at index per table. Comment in the SQL explicitly documents removal of the partial `WHERE expires_at IS NOT NULL` predicate due to `SQL0104N` on Db2 12.1.5 fp0.
+  - `db/migrate.py`: `Migrator` reads `MIGRATIONS_DIR/*.sql` sorted lexicographically; tracks applied versions in `schema_migrations`; uses idempotent `CREATE TABLE IF NOT EXISTS` for the tracking table; splits SQL files on semicolons; applies each statement in sequence; inserts version record only after all statements succeed.
+  - Schema matches ARCHITECTURE.md section 3 ER diagram.
+  - Security: no user-controlled SQL; all DDL is static files.
+- **Found:** Nothing to fix.
+- **Made during:** VER-2 (EPIC-4 beta readiness verification)
+
