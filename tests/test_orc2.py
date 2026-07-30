@@ -423,7 +423,7 @@ class TestChunkSearch:
     """Verify search(search_chunks=True) routes correctly and resolves parents."""
 
     def test_search_chunks_false_does_not_call_chunk_repo(self):
-        """Default path (search_chunks=False) bypasses chunk_repo entirely."""
+        """Explicit search_chunks=False bypasses chunk_repo entirely."""
         pool = _FakePool(rows=[])
         chunk_repo = MagicMock()
         repo = WorkingMemoryRepository(pool)
@@ -784,3 +784,104 @@ class TestChunkDefaults:
     def test_overlap_less_than_size(self):
         """Invariant: default overlap is strictly less than default size."""
         assert CHUNK_OVERLAP < CHUNK_SIZE
+
+
+# ---------------------------------------------------------------------------
+# 8. search() search_chunks=None auto-detection (fix for silent unreachability)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchChunksAutoDetect:
+    """Tests for search() search_chunks=None (auto-detect) default behaviour.
+
+    Covers the three distinct states:
+    - chunk_repo is None  → standard path, unchanged from pre-fix behaviour
+    - chunk_repo set, search_chunks=None (default) → chunk path fires automatically
+    - explicit True/False override → wins over auto-detection in both directions
+    """
+
+    def test_auto_detect_no_chunk_repo_uses_standard_path(self):
+        """When chunk_repo is None, auto-detect falls back to standard search."""
+        pool = _FakePool(rows=[])
+        repo = WorkingMemoryRepository(pool)
+        assert repo._chunk_repo is None  # ensure no chunk repo
+
+        # Should execute without error and issue a standard SQL query
+        results = repo.search(query_embedding=[0.1] * 1536, scope=_SCOPE)
+
+        assert results == []
+        # Standard path: SQL touches working_memory directly, not memory_chunks
+        executed_sqls = pool.cursor.all_sqls
+        assert any("working_memory" in sql for sql in executed_sqls)
+        assert not any("memory_chunks" in sql for sql in executed_sqls)
+
+    def test_auto_detect_with_chunk_repo_uses_chunk_path(self):
+        """When chunk_repo is set and search_chunks=None, chunk path fires automatically."""
+        parent_row = _working_row(id_="parent-auto", content="long content here")
+        chunk_hits = [("parent-auto", 0.05)]
+
+        chunk_repo = MagicMock()
+        chunk_repo.search_chunks.return_value = chunk_hits
+
+        pool = _FakePool(rows=[parent_row])
+        repo = WorkingMemoryRepository(pool)
+        repo._chunk_repo = chunk_repo  # simulate chunking active
+
+        # search_chunks defaults to None → auto-detects chunk_repo is set
+        results = repo.search(query_embedding=[0.1] * 1536, scope=_SCOPE, top_k=5)
+
+        # Chunk path was used automatically — no explicit True needed
+        chunk_repo.search_chunks.assert_called_once()
+        assert len(results) == 1
+        assert results[0].id == "parent-auto"
+
+    def test_explicit_true_overrides_auto_when_chunk_repo_set(self):
+        """Explicit search_chunks=True with chunk_repo set → chunk path (same as auto here)."""
+        chunk_hits = [("parent-x", 0.1)]
+        parent_row = _working_row(id_="parent-x", content="some content")
+
+        chunk_repo = MagicMock()
+        chunk_repo.search_chunks.return_value = chunk_hits
+
+        pool = _FakePool(rows=[parent_row])
+        repo = WorkingMemoryRepository(pool)
+        repo._chunk_repo = chunk_repo
+
+        results = repo.search(
+            query_embedding=[0.1] * 1536, scope=_SCOPE, search_chunks=True
+        )
+
+        chunk_repo.search_chunks.assert_called_once()
+        assert len(results) == 1
+
+    def test_explicit_false_overrides_auto_when_chunk_repo_set(self):
+        """Explicit search_chunks=False with chunk_repo set → standard path (bypasses chunks)."""
+        chunk_repo = MagicMock()
+
+        pool = _FakePool(rows=[])
+        repo = WorkingMemoryRepository(pool)
+        repo._chunk_repo = chunk_repo  # chunk_repo is set …
+
+        # … but caller forces standard path
+        repo.search(
+            query_embedding=[0.1] * 1536, scope=_SCOPE, search_chunks=False
+        )
+
+        # Chunk repo must not have been consulted
+        chunk_repo.search_chunks.assert_not_called()
+        # Standard SQL path ran instead
+        assert any("working_memory" in sql for sql in pool.cursor.all_sqls)
+
+    def test_explicit_true_no_chunk_repo_falls_back_to_standard(self):
+        """Explicit search_chunks=True with no chunk_repo silently falls back to standard."""
+        pool = _FakePool(rows=[])
+        repo = WorkingMemoryRepository(pool)
+        assert repo._chunk_repo is None
+
+        # Must not raise; falls back to standard path
+        results = repo.search(
+            query_embedding=[0.1] * 1536, scope=_SCOPE, search_chunks=True
+        )
+
+        assert results == []
+        assert any("working_memory" in sql for sql in pool.cursor.all_sqls)

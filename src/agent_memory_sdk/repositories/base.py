@@ -468,8 +468,8 @@ class BaseRepository(ABC, Generic[M]):
         with no transaction or row lock between them.  Under concurrent writers
         to the same scope with identical content, both can pass the SELECT
         before either INSERT lands, resulting in duplicate rows.  There is no
-        DB-level uniqueness backstop (no UNIQUE constraint — see DECISIONS.md
-        ENH-2 entry for the reasoning).  This is safe for the common
+        DB-level uniqueness backstop (no UNIQUE constraint — see
+        project-management/DECISIONS.md ENH-2 entry for the reasoning).  This is safe for the common
         single-writer or low-concurrency case; it is not a uniqueness guarantee
         under high-concurrency writers to the same scope.
 
@@ -1018,7 +1018,7 @@ class BaseRepository(ABC, Generic[M]):
         mode: SearchMode = SearchMode.EXACT,
         include_expired: bool = False,
         min_confidence: float = 0.0,
-        search_chunks: bool = False,
+        search_chunks: bool | None = None,
     ) -> list[M]:
         """Semantic search via Db2 VECTOR_DISTANCE.
 
@@ -1043,14 +1043,26 @@ class BaseRepository(ABC, Generic[M]):
         For APPROX to engage the DiskANN index, the metric MUST match the
         index's ``WITH DISTANCE COSINE`` clause (all tables use COSINE).
 
-        **ORC-2: chunk-based search (``search_chunks=True``)**
+        **ORC-2: chunk-based search (``search_chunks`` parameter)**
 
-        When ``search_chunks=True`` and a ``chunk_repo`` is wired in, the
-        search is routed through the ``memory_chunks`` table instead of the
-        parent table's embedding column.  This produces finer-grained semantic
-        matches because each chunk is a short, focused piece of text with its
-        own embedding — a much better semantic representation than one embedding
-        for a 64 KB CLOB.
+        When chunking is active on this repository (``self._chunk_repo is not
+        None``), records whose content exceeded the threshold at write time have
+        a zero-vector sentinel on the parent row — they cannot be found via the
+        standard parent-embedding search path.  The ``search_chunks`` parameter
+        controls how this is handled:
+
+        - ``None`` (**default**) — *auto-detect*: use chunk-aware search
+          automatically when ``self._chunk_repo is not None`` (i.e. chunking is
+          actually active for this store); otherwise use the standard path.
+          This is the recommended default — callers do not need to know whether
+          chunking is configured.
+        - ``True`` — always use chunk-aware search, even if ``chunk_repo`` is
+          ``None`` (in that case the call silently falls back to the standard
+          path — the same safe fallback as before).  Use this to force the chunk
+          path, e.g. when you know all content is long.
+        - ``False`` — always use the standard parent-embedding path.  Use this
+          to bypass chunk search, e.g. to avoid the extra round-trip when you
+          know all stored content is short.
 
         The chunk-search path is a two-step ``search → resolve → dedup``
         pattern parallel to the existing two-step ID-rank → full-row-fetch
@@ -1071,10 +1083,6 @@ class BaseRepository(ABC, Generic[M]):
         This reuses the two-step reorder-after-fetch pattern from the standard
         search path (Step 7 Db2 12.1.5 fp0 compatibility workaround).
 
-        Falls back to the standard search path when:
-        - ``search_chunks=False`` (default — backward-compatible).
-        - ``chunk_repo`` is not set on this repository instance.
-
         Args:
             query_embedding: The embedding to search against.
             scope:           Must include at minimum agent_id.
@@ -1088,18 +1096,28 @@ class BaseRepository(ABC, Generic[M]):
                              low-confidence rows do not consume top_k slots.
                              Defaults to 0.0 (no confidence filter, full
                              backward compatibility).
-            search_chunks:   If True and a ``chunk_repo`` is wired in, search
-                             ``memory_chunks`` first then resolve back to parent
-                             records (ORC-2 chunk-based search path).  Falls back
-                             to the standard path when ``chunk_repo`` is None.
-                             Default False.
+            search_chunks:   Controls chunk-aware search (ORC-2).
+                             ``None`` (default) auto-detects: chunk path is used
+                             when ``self._chunk_repo is not None``, standard path
+                             otherwise.  ``True`` forces the chunk path (safe
+                             fallback to standard when chunk_repo is None).
+                             ``False`` forces the standard parent-embedding path.
 
         Returns:
             A list of model instances ordered by ascending distance
             (nearest first).
         """
-        # ORC-2: route to chunk-based search when requested and available.
-        if search_chunks and self._chunk_repo is not None:
+        # ORC-2: resolve the effective search_chunks flag.
+        # None → auto-detect based on whether chunk_repo is wired in.
+        effective_search_chunks: bool
+        if search_chunks is None:
+            effective_search_chunks = self._chunk_repo is not None
+        else:
+            effective_search_chunks = search_chunks
+
+        # Route to chunk-based search when the effective flag is True and
+        # a chunk_repo is actually available.
+        if effective_search_chunks and self._chunk_repo is not None:
             return self._search_via_chunks(
                 query_embedding=query_embedding,
                 scope=scope,

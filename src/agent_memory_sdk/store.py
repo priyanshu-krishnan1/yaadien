@@ -190,8 +190,8 @@ class MemoryStore:
               not globally every 5th write across all workers.  For
               cross-process cadence, use the background worker
               (``scripts/consolidate_pending.py``) instead of the inline
-              consolidator.  This limitation is recorded in DECISIONS.md
-              ENH-4 entry.
+              consolidator.  This limitation is recorded in
+              project-management/DECISIONS.md ENH-4 entry.
         enable_chunking: When True (default) and *embedding_provider* is
               supplied, activate ORC-2 content chunking: records whose
               content exceeds *chunk_threshold* are split into overlapping
@@ -226,19 +226,41 @@ class MemoryStore:
         if enable_chunking and embedding_provider is not None:
             chunk_repo = ChunkRepository(pool, embedding_dim=embedding_dim)
 
-        # Chunk kwargs forwarded to every per-type repository.
-        chunk_kwargs = dict(
+        self.working = WorkingMemoryRepository(
+            pool,
             chunk_repo=chunk_repo,
             chunk_threshold=chunk_threshold,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-
-        self.working = WorkingMemoryRepository(pool, **chunk_kwargs)
-        self.episodic = EpisodicMemoryRepository(pool, **chunk_kwargs)
-        self.facts = SemanticFactRepository(pool, **chunk_kwargs)
-        self.profiles = EntityProfileRepository(pool, **chunk_kwargs)
-        self.procedures = ProceduralMemoryRepository(pool, **chunk_kwargs)
+        self.episodic = EpisodicMemoryRepository(
+            pool,
+            chunk_repo=chunk_repo,
+            chunk_threshold=chunk_threshold,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        self.facts = SemanticFactRepository(
+            pool,
+            chunk_repo=chunk_repo,
+            chunk_threshold=chunk_threshold,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        self.profiles = EntityProfileRepository(
+            pool,
+            chunk_repo=chunk_repo,
+            chunk_threshold=chunk_threshold,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        self.procedures = ProceduralMemoryRepository(
+            pool,
+            chunk_repo=chunk_repo,
+            chunk_threshold=chunk_threshold,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
 
         # Expose the chunk repo as a public attribute so callers can use it
         # directly (e.g. maintenance scripts, integration tests).
@@ -500,7 +522,7 @@ class MemoryStore:
             raise ValueError(
                 f"reconcile() only supports memory_type='facts' / 'semantic_facts'; "
                 f"got {memory_type!r}.  entity_profiles and procedural_memory do not "
-                f"carry supersession columns (see DECISIONS.md ENH-3 entry)."
+                f"carry supersession columns (see project-management/DECISIONS.md ENH-3 entry)."
             )
 
         candidates = self.facts.list_all(scope, limit=min(limit, 1000))

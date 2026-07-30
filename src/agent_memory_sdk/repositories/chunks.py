@@ -42,12 +42,11 @@ from typing import Any
 
 from agent_memory_sdk.models import MemoryScope
 from agent_memory_sdk.repositories.base import (
-    DistanceMetric,
-    SearchMode,
     _require_agent_id,
     _scope_predicates,
     _vec_to_str,
 )
+from agent_memory_sdk.types import DistanceMetric, SearchMode
 
 logger = logging.getLogger(__name__)
 

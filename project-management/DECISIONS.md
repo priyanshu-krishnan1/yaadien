@@ -1847,3 +1847,60 @@ explicitly supersedes it and say why.
   matter.
 - **Made during:** Step 0 setup (repo-hygiene pass, not tied to any single
   build step).
+
+## 2026-08-02 — Fix: chunked content silently unreachable + mypy strict errors
+
+- **Decision (search_chunks auto-detect):** Changed
+  [`BaseRepository.search()`](../src/agent_memory_sdk/repositories/base.py)'s
+  `search_chunks` parameter from `bool = False` to `bool | None = None`.
+  When `None` (the new default), the method auto-detects: chunk-aware search
+  is used if and only if `self._chunk_repo is not None` (i.e. chunking is
+  actually active for this store instance); otherwise the standard
+  parent-embedding path is taken, identical to pre-fix behaviour.
+  Explicit `True` or `False` still override the auto-detection, so callers
+  who need to force one path or the other are unaffected.
+
+- **Reason (Issue 1 — silent unreachability):** With the pre-fix default of
+  `False`, any record stored as a chunked record (content > `chunk_threshold`
+  when an `embedding_provider` is configured — the normal setup, since
+  chunking requires a provider) had its parent-row embedding replaced with a
+  zero-vector sentinel at write time (documented behaviour, ORC-2 entry above).
+  That sentinel is intentionally useless for vector search.  The only way to
+  find such a record semantically was `search(search_chunks=True)`, but none
+  of the three adapters (`langchain.py`, `openai_agents.py`, `mcp_server.py`),
+  nor any other caller, was ever updated to pass it — meaning any content
+  exceeding ~2000 characters stored by a normally-configured store was silently
+  unreachable through every existing search path.  The auto-detect default
+  closes this gap for all current and future callers with a single change,
+  rather than requiring each adapter to be individually patched and every
+  future caller to remember the opt-in.
+
+- **Decision (mypy fix a — chunks.py import):**
+  [`repositories/chunks.py`](../src/agent_memory_sdk/repositories/chunks.py)
+  was importing `DistanceMetric` and `SearchMode` from
+  `agent_memory_sdk.repositories.base` (a re-export).  mypy strict flagged
+  this as an unexported re-import.  Fixed by importing both directly from
+  their canonical home, `agent_memory_sdk.types`.
+
+- **Decision (mypy fix b — store.py splatted dict):**
+  [`store.py`](../src/agent_memory_sdk/store.py) was building a plain dict
+  `chunk_kwargs = dict(chunk_repo=..., chunk_threshold=..., chunk_size=...,
+  chunk_overlap=...)` and forwarding it via `**chunk_kwargs` to all five
+  repository constructors.  The dict's inferred value type is
+  `int | ChunkRepository | None`, which mypy strict cannot verify against
+  each repository's individually-typed `__init__` parameters, producing 10
+  errors of the form `Argument "chunk_repo" to "WorkingMemoryRepository" has
+  incompatible type "int | ChunkRepository | None"; expected ...`.
+  Fixed by passing the four arguments as explicit keyword arguments to each
+  of the five constructor calls — consistent with every other constructor
+  call in this codebase and what mypy can actually check.
+
+- **Validation:** After both fixes, `mypy src` reports zero errors (was 12).
+  `ruff check .` reports no issues.  `pytest` passes 450 tests (77 skipped —
+  integration tests require a live Db2 instance).  New test class
+  `TestSearchChunksAutoDetect` in `tests/test_orc2.py` covers all three
+  `search_chunks` states: `None` with no chunk_repo (standard path, unchanged),
+  `None` with chunk_repo set (chunk path fires automatically), and explicit
+  `True`/`False` overriding auto-detection in both directions.
+
+- **Made during:** audit-prompt-11 bug-fix pass.
