@@ -100,13 +100,14 @@ def _row(
     version: int = 1,
     confidence: float = 1.0,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching _SELECT_COLS order.
+    """Build a fake DB row matching _SELECT_COLS order for working_memory rows.
 
     Index map (0-based):
       0  id           1  tenant_id   2  agent_id    3  user_id     4  thread_id
       5  content      6  metadata    7  embedding
       8  confidence   9  content_hash
       10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
+      15 consolidated_at  (ENH-4 — None = not yet consolidated)
     """
     import hashlib
     import re as _re
@@ -120,6 +121,7 @@ def _row(
         confidence,        # 8 — confidence (ENH-1)
         h,                 # 9 — content_hash (ENH-2)
         _NOW, _NOW, None, version, None,
+        None,              # 15 — consolidated_at (ENH-4)
     )
 
 

@@ -153,6 +153,29 @@ class MemoryStore:
               :meth:`reconcile` to detect contradictions among live semantic
               facts.  Defaults to
               :class:`~agent_memory_sdk.types.NoOpReconciler` (does nothing).
+        consolidate_every_n: Throttle the inline synchronous consolidator
+              so it only fires every *N*-th ``remember()`` call for
+              working/episodic writes **per scope** (keyed by
+              ``(agent_id, user_id, thread_id)``).  Default is ``1``
+              (fire on every write — existing behaviour).  Set to a value
+              greater than 1 to reduce LLM-call cost on hot write paths::
+
+                  # Consolidate every 5th turn per scope
+                  store = MemoryStore(pool, consolidator=llm_consolidator,
+                                      consolidate_every_n=5)
+
+              **Known limitation:** the per-scope counter is stored in-memory
+              on the ``MemoryStore`` instance.  It resets to zero on process
+              restart and is **not shared across multiple application
+              instances** (e.g. multiple gunicorn workers or Kubernetes
+              replicas) — each process maintains its own independent counter.
+              This means that with N workers and ``consolidate_every_n=5``,
+              each worker consolidates every 5th write it handles personally,
+              not globally every 5th write across all workers.  For
+              cross-process cadence, use the background worker
+              (``scripts/consolidate_pending.py``) instead of the inline
+              consolidator.  This limitation is recorded in DECISIONS.md
+              ENH-4 entry.
     """
 
     def __init__(
@@ -161,6 +184,7 @@ class MemoryStore:
         embedding_dim: int = 1536,
         consolidator: Any | None = None,
         reconciler: Any | None = None,
+        consolidate_every_n: int = 1,
     ) -> None:
         self.working = WorkingMemoryRepository(pool)
         self.episodic = EpisodicMemoryRepository(pool)
@@ -181,6 +205,16 @@ class MemoryStore:
 
         self._consolidator = consolidator if consolidator is not None else NoOpConsolidator()
         self._reconciler = reconciler if reconciler is not None else NoOpReconciler()
+
+        if consolidate_every_n < 1:
+            raise ValueError(
+                f"consolidate_every_n must be >= 1; got {consolidate_every_n!r}."
+            )
+        self._consolidate_every_n: int = consolidate_every_n
+        # Per-scope call counter (key: (agent_id, user_id, thread_id) tuple).
+        # In-memory; resets on process restart and is not shared across
+        # multiple app instances — see the class docstring for the implication.
+        self._consolidate_counters: dict[tuple[str | None, ...], int] = {}
 
     # ------------------------------------------------------------------
     # remember() — primary write entry point
@@ -223,10 +257,32 @@ class MemoryStore:
         stored: _MemoryBase = repo.create(record, scope)
 
         # Run consolidation only for working / episodic writes.
-        if repo_attr in ("working", "episodic"):
+        if repo_attr in ("working", "episodic") and self._should_consolidate(scope):
             self._run_consolidator([stored], scope)
 
         return stored
+
+    def _should_consolidate(self, scope: MemoryScope) -> bool:
+        """Return True if the inline consolidator should fire for this write.
+
+        Implements the ``consolidate_every_n`` throttle.  The counter is
+        keyed by ``(agent_id, user_id, thread_id)`` so each distinct
+        conversational scope gets its own independent cadence — a burst of
+        writes from one user does not delay consolidation for another user
+        in a multi-user deployment.
+
+        When ``consolidate_every_n == 1`` (the default), this always returns
+        True with no dict lookup overhead.
+        """
+        if self._consolidate_every_n == 1:
+            return True
+        key = (scope.agent_id, scope.user_id, scope.thread_id)
+        count = self._consolidate_counters.get(key, 0) + 1
+        self._consolidate_counters[key] = count
+        if count >= self._consolidate_every_n:
+            self._consolidate_counters[key] = 0
+            return True
+        return False
 
     def _run_consolidator(
         self, raw_memories: list[_MemoryBase], scope: MemoryScope

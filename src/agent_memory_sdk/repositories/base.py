@@ -184,6 +184,13 @@ class BaseRepository(ABC, Generic[M]):
             that their SQL never references a column that doesn't exist in
             their schema — referencing a missing column is a compile-time
             SQL error (Db2 SQLCODE -206), not a vacuous truth.
+        _HAS_CONSOLIDATED_AT: bool — When True, the SELECT column list
+            includes ``consolidated_at`` and ``_claim_consolidated()`` is
+            available.  Only ``WorkingMemoryRepository`` and
+            ``EpisodicMemoryRepository`` set this to True because only
+            ``working_memory`` and ``episodic_memory`` have this column
+            (added by migration 0005 / ENH-4).  All other repositories leave
+            this as False so their SQL never references a missing column.
     """
 
     _TABLE: str
@@ -205,6 +212,12 @@ class BaseRepository(ABC, Generic[M]):
     # to True.  When False (all other repos), the "AND superseded_at IS NULL"
     # fragment is never added to SQL so queries never reference a missing column.
     _HAS_SUPERSESSION: bool = False
+
+    # consolidated_at gate (ENH-4).  Only working_memory and episodic_memory
+    # have this column (migration 0005).  WorkingMemoryRepository and
+    # EpisodicMemoryRepository override this to True; all others leave it
+    # False so their SQL never references a missing column (Db2 SQLCODE -206).
+    _HAS_CONSOLIDATED_AT: bool = False
 
     def __init__(self, pool: Any) -> None:
         """
@@ -234,6 +247,10 @@ class BaseRepository(ABC, Generic[M]):
     #   5  content     6  metadata    7  embedding
     #   8  confidence  9  content_hash
     #   10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
+    #
+    # Repos with _HAS_CONSOLIDATED_AT=True (working_memory, episodic_memory)
+    # override _SELECT_COLS to append:
+    #   15 consolidated_at
     _SELECT_COLS = (
         "id, tenant_id, agent_id, user_id, thread_id, "
         "content, metadata, "
@@ -686,6 +703,83 @@ class BaseRepository(ABC, Generic[M]):
 
         logger.info("purge_expired %s scope=%s deleted=%d", self._TABLE, scope, deleted)
         return int(deleted)
+
+    # ------------------------------------------------------------------
+    # Claim-based consolidation locking (ENH-4)
+    # ------------------------------------------------------------------
+
+    def _claim_consolidated(self, record_id: str, scope: MemoryScope) -> bool:
+        """Atomically claim a row for consolidation processing.
+
+        Issues::
+
+            UPDATE <table>
+            SET consolidated_at = <now>
+            WHERE id = ? AND <scope> AND consolidated_at IS NULL
+
+        and checks the rowcount.  A rowcount of 1 means this worker
+        successfully claimed the row.  A rowcount of 0 means another
+        concurrent worker already claimed it — the row should be skipped.
+
+        This implements the basic idempotency/claim lock described in the
+        original ``consolidate_pending.py`` docstring: the claim is
+        **best-effort, not transactional**.  Under normal conditions (one
+        worker, or low-concurrency workers with a small batch size) this
+        prevents double-processing reliably.  Under extreme concurrency
+        (many workers, very large batch, unusually slow worker) two workers
+        could in theory call ``_claim_consolidated`` on the same row before
+        either UPDATE lands; only the first UPDATE to arrive at Db2 will
+        match ``consolidated_at IS NULL`` and get rowcount=1.  The second
+        will get rowcount=0 and skip the row.  Db2's row-level locking
+        ensures the two UPDATEs are serialized at the engine level.
+
+        Only available on repositories where ``_HAS_CONSOLIDATED_AT`` is
+        True (``working_memory``, ``episodic_memory``).  Raises
+        ``NotImplementedError`` on other repositories so callers get an
+        actionable error rather than a silent SQL failure referencing a
+        nonexistent column.
+
+        Args:
+            record_id: UUID of the row to claim.
+            scope:     Must include at minimum agent_id.
+
+        Returns:
+            True if this worker successfully claimed the row (rowcount == 1).
+            False if another worker already claimed it (rowcount == 0).
+
+        Raises:
+            NotImplementedError: if ``_HAS_CONSOLIDATED_AT`` is False.
+            ValueError:          if scope.agent_id is missing.
+        """
+        if not self._HAS_CONSOLIDATED_AT:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not have a consolidated_at "
+                f"column (table={self._TABLE!r}).  Only WorkingMemoryRepository "
+                f"and EpisodicMemoryRepository support _claim_consolidated()."
+            )
+
+        _require_agent_id(scope)
+        scope_sql, scope_params = _scope_predicates(scope)
+        now = _now()
+
+        sql = f"""
+            UPDATE {self._TABLE}
+            SET consolidated_at = ?
+            WHERE id = ?
+              AND {scope_sql}
+              AND consolidated_at IS NULL
+        """
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, [now, record_id, *scope_params])
+            conn.commit()
+            claimed = cur.rowcount
+
+        logger.debug(
+            "_claim_consolidated %s id=%s claimed=%s",
+            self._TABLE, record_id, bool(claimed),
+        )
+        return bool(claimed)
 
     # ------------------------------------------------------------------
     # Vector search

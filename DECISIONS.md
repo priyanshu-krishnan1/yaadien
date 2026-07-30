@@ -1583,3 +1583,101 @@ explicitly supersedes it and say why.
 - **Made during:** Step N (<step name>)
 - **Supersedes:** (link to prior entry, if any — otherwise omit)
 ```
+
+
+## 2026-08-01 — ENH-4: claim-based consolidation locking, consolidate_every_n cadence, --dedup-every-n worker option
+
+- **Decision:** Three related additions that together make the consolidation pipeline production-ready.
+
+  **1. Migration 0005 — `consolidated_at TIMESTAMP` column**
+
+  Added a nullable `consolidated_at TIMESTAMP` column to `working_memory` and `episodic_memory`
+  (migration `0005_consolidated_at.sql`).  This replaces the `metadata.consolidated: false` JSON-flag
+  approach that `scripts/consolidate_pending.py`'s own docstring flagged as a stand-in unsuitable for
+  production.  The column is NULL by default (not yet consolidated); the background worker sets it to
+  the current timestamp when it claims a row for processing.
+
+  A composite index `(agent_id, consolidated_at)` on both tables allows the worker's eligibility scan
+  (`WHERE agent_id = ? AND consolidated_at IS NULL`) to use an index range scan rather than a full
+  table scan — critical at production row counts.
+
+  The column is only added to `working_memory` and `episodic_memory` because those are the only
+  consolidation *inputs*; the other three tables (semantic_facts, entity_profiles, procedural_memory)
+  are consolidation *outputs* and the concept does not apply to them.
+
+  The `_HAS_CONSOLIDATED_AT` class attribute gate on `BaseRepository` (mirroring the existing
+  `_HAS_SUPERSESSION` pattern from ENH-3) ensures that no SQL referencing this column is ever
+  emitted for tables that do not have it — Db2 SQLCODE -206 (column not found) is a hard runtime
+  error, not a vacuous truth.
+
+  **2. Claim-based locking in `BaseRepository._claim_consolidated()`**
+
+  The worker claims a row before processing it by issuing::
+
+      UPDATE <table>
+      SET consolidated_at = <now>
+      WHERE id = ? AND <scope> AND consolidated_at IS NULL
+
+  and checking the rowcount.  Rowcount 1 = this worker owns the row.  Rowcount 0 = another worker
+  already claimed it; skip.
+
+  This is best-effort optimistic concurrency, not a hard transaction.  The two UPDATEs from competing
+  workers are serialized at Db2's row-level locking layer, so only one will see `consolidated_at IS NULL`
+  and get rowcount 1.  Under pathological conditions (many workers, very slow processing, no heartbeat
+  reset) a crashed worker could leave a row claimed but unprocessed indefinitely — this is a known
+  limitation acceptable for v1 (the operator can reset stuck rows manually with
+  `UPDATE ... SET consolidated_at = NULL WHERE id = ?`).
+
+  **3. `MemoryStore.consolidate_every_n` — inline consolidation cadence throttle**
+
+  Added an optional `consolidate_every_n: int = 1` parameter to `MemoryStore.__init__`.  Default is 1
+  (fire on every write — existing behaviour, fully backward-compatible).  When set to N > 1, the
+  inline synchronous consolidator fires only every Nth `remember()` call for working/episodic writes
+  **per scope** (keyed by `(agent_id, user_id, thread_id)`).  This mirrors the Agent Memory Toolkit's
+  `FACT_EXTRACTION_EVERY_N` / `THREAD_SUMMARY_EVERY_N` / `DEDUP_EVERY_N` env-var pattern.
+
+  **Known limitation (documented in class docstring):** the per-scope counter is stored in-memory on
+  the `MemoryStore` instance.  It resets to zero on process restart and is **not shared across multiple
+  application instances** (e.g. multiple gunicorn workers or Kubernetes replicas).  Each process
+  maintains its own independent counter: with N workers and `consolidate_every_n=5`, each worker
+  fires every 5th write *it handles personally*, not globally every 5th write across all workers.
+  This is a real production limitation worth being upfront about — not a hidden gotcha.  For
+  cross-process cadence the correct tool is the background worker, not the inline consolidator.
+
+  **4. Worker script — `--dedup-every-n` Reconciler cadence**
+
+  `scripts/consolidate_pending.py` now accepts `--reconciler-module`, `--reconciler-class`, and
+  `--dedup-every-n N` arguments.  When configured, the worker invokes the ENH-3 Reconciler
+  (`store.reconcile("facts", scope)`) every N completed batches.  This mirrors the Agent Memory
+  Toolkit's `DEDUP_EVERY_N` pattern: reconciliation is expensive (an LLM call) and does not need
+  to run on every batch; running it periodically amortises the cost.
+
+  **5. This worker is the Db2-appropriate substitute for Cosmos DB's change-feed tier**
+
+  The Cosmos DB Agent Memory Toolkit uses change-feed-triggered Azure Durable Functions to process
+  memories off the hot write path asynchronously.  Db2 LUW has no native change-feed mechanism.
+  This polling worker (periodic scheduler + a `consolidated_at` claim column) is the
+  Db2-appropriate substitute — same underlying goal (async, off-the-hot-path processing), different
+  mechanism.  It builds entirely on existing infrastructure (the DB connection pool, MemoryStore,
+  the Consolidator and Reconciler protocols) and introduces no new external service dependency —
+  keeping the Step 0 "zero mandatory external services" principle intact.
+
+  **Tests added:** `tests/test_enh4.py` — 35 unit tests covering the
+  `_HAS_CONSOLIDATED_AT` class-attribute gate on all five repos, `_model_from_row` with the
+  new column, `_claim_consolidated()` SQL shape and claim/skip logic, `consolidate_every_n` counter
+  per-scope independence, counter reset-after-firing, fast-path bypass for n=1, invalid-n
+  ValueError, and worker script `_fetch_pending` SQL + `_process_record` claim-gate behaviour.
+  395 total unit tests pass; ruff clean.
+
+- **Reason:** The original `consolidate_pending.py` explicitly documented itself as a stand-in
+  unsuitable for production due to lack of locking, idempotency keys, and the fragile JSON-flag
+  approach.  ENH-4 addresses all three gaps.  The `consolidate_every_n` throttle closes a real
+  cost-efficiency gap on hot write paths (an LLM-backed Consolidator firing on every write is
+  prohibitively expensive at production throughput).  The `--dedup-every-n` flag gives operators
+  control over Reconciler cost in the worker, consistent with the toolkit's own cadence philosophy.
+- **Made during:** ENH-4 (async worker hardening and EVERY_N cadence)
+- **Supersedes:** The metadata-flag approach in the original `consolidate_pending.py` docstring
+  (which explicitly said a real implementation would use `consolidated_at IS NULL` — this is that
+  real implementation).
+
+---

@@ -128,13 +128,14 @@ def _row(
     confidence: float = 1.0,
     content_hash: str | None = None,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching _SELECT_COLS order.
+    """Build a fake DB row matching _SELECT_COLS order for working/episodic repos.
 
     Index map (0-based):
       0  id            1  tenant_id   2  agent_id    3  user_id     4  thread_id
       5  content       6  metadata    7  embedding
       8  confidence    9  content_hash
       10 created_at   11 updated_at  12 expires_at  13 version     14 deleted_at
+      15 consolidated_at  (ENH-4 / migration 0005 — None = not yet consolidated)
     """
     meta = metadata or {}
     vec = embedding or _VEC
@@ -156,6 +157,7 @@ def _row(
         None,                 # 12 expires_at
         1,                    # 13 version
         None,                 # 14 deleted_at
+        None,                 # 15 consolidated_at (ENH-4)
     )
 
 

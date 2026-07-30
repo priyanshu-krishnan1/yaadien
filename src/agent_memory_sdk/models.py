@@ -102,6 +102,14 @@ class _MemoryBase(BaseModel):
     version: int = 1
     deleted_at: datetime | None = None
 
+    # consolidated_at: timestamp set by the background consolidation worker
+    # (scripts/consolidate_pending.py) when a row is claimed for processing.
+    # NULL means "not yet consolidated."  Only used on working_memory /
+    # episodic_memory — present on _MemoryBase so the worker can read it back
+    # uniformly from _model_from_row; ignored/None for all other memory types.
+    # Added by migration 0005. (ENH-4)
+    consolidated_at: datetime | None = None
+
     model_config = {"frozen": False}
 
 

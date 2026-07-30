@@ -101,13 +101,14 @@ def _row(
     version: int = 1,
     deleted_at: Any = None,
 ) -> tuple[Any, ...]:
-    """Minimal fake DB row matching _SELECT_COLS order.
+    """Minimal fake DB row matching WorkingMemoryRepository._SELECT_COLS order.
 
     Index map (0-based):
       0  id           1  tenant_id   2  agent_id    3  user_id     4  thread_id
       5  content      6  metadata    7  embedding
       8  confidence   9  content_hash
       10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
+      15 consolidated_at  (ENH-4 — None = not yet consolidated)
     """
     import hashlib
     import re as _re
@@ -120,6 +121,7 @@ def _row(
         1.0,               # 8 — confidence (ENH-1)
         h,                 # 9 — content_hash (ENH-2)
         _NOW, _NOW, None, version, deleted_at,
+        None,              # 15 — consolidated_at (ENH-4)
     )
 
 
