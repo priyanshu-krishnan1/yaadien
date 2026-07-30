@@ -1044,6 +1044,93 @@ explicitly supersedes it and say why.
   rather than a blind port of Cosmos-specific mechanics.
 - **Made during:** Backlog planning (not tied to a PROMPTS.md step)
 
+## 2026-08-01 — EPIC-3 backlog: Oracle AI Agent Memory features adapted for Db2
+
+- **Decision:** Researched Oracle AI Agent Memory
+  (blogs.oracle.com/developers/oracle-ai-agent-memory-a-governed-unified-memory-core-for-enterprise-ai-agents,
+  the `oracleagentmemory` PyPI package, and docs.oracle.com's Agent Memory
+  guide — the blog itself 403'd on direct fetch both times it was tried;
+  the PyPI package page and docs site gave real class/method-level detail
+  instead) and added a third Epic, "Oracle-inspired memory enhancements
+  (Db2-adapted)" (`EPIC-3`), to `BOARD.html` with four Stories (`ORC-1`
+  through `ORC-4`), all in To Do. **No source code was changed** and no
+  existing epic/story/prompt content was modified — purely additive, per
+  explicit instruction, same as EPIC-2. `BOARD.html`'s epic-badge CSS/JS
+  (added when EPIC-2 landed) was hardcoded for exactly two epics
+  (`epicIdx === 1 ? 'v1' : 'v2'`); generalized it to `v${epicIdx}` plus a
+  third color (`#c2410c`, orange) so it scales to N epics rather than
+  needing another one-off fix for a fourth.
+
+  **What Oracle's SDK actually does** (verified from the real PyPI page,
+  not assumed): a two-pillar design — short-term memory (`Thread` +
+  `Context Card` + conversation summaries, scoped to the active session)
+  and long-term memory (durable `Memory` records via an add/search
+  workflow, either explicit or LLM-extracted). Core classes:
+  `OracleAgentMemory` (client; takes a DB connection, `Embedder`, `LLM`,
+  `SchemaPolicy`, `SearchStrategy`), `Thread` (`add_messages()`,
+  `add_memory()`, `get_context_card()`), `SearchScope` (retrieval scoping
+  by user/agent/thread — functionally equivalent to this SDK's
+  `MemoryScope`, which validates that design choice rather than exposing a
+  gap). `SearchStrategy`: VECTOR / KEYWORD / HYBRID (an Oracle-managed
+  combined vector+keyword index). `SchemaPolicy`:
+  `CREATE_IF_NECESSARY` vs `REQUIRE_EXISTING`. Managed tables include
+  `APP_MEMORY_THREAD`, `APP_MEMORY_MESSAGE`, `APP_MEMORY_MEMORY`,
+  `APP_MEMORY_ACTOR_PROFILE`, and `APP_MEMORY_RECORD_CHUNKS` — the last
+  one chunks long content for retrieval rather than embedding one giant
+  blob as a single vector. Metadata filtering supports `$array_contains`,
+  `$array_contains_any`, and `$not` operators.
+
+  **The four Stories chosen** (small set, matching EPIC-2's precedent —
+  not exhaustive):
+  - `ORC-1` — `get_context_card()`-equivalent: a structured recent-turns
+    view for the active thread, with an optional pluggable summarizer
+    hook (same shape as the existing Consolidator/Reconciler pattern).
+  - `ORC-2` — content chunking for long memories: a new `memory_chunks`
+    table, chunking logic in `create()`/`update()` above a length
+    threshold, and a chunk-aware `search()` mode that resolves hits back
+    to parent records. The largest-scope item in this epic.
+  - `ORC-3` — a small structured metadata-filter operator DSL
+    (`$not`, `$array_contains`, `$array_contains_any`, exact match) on
+    `search()`/`list_all()`, backed by Db2's `JSON_VALUE`/`JSON_EXISTS` on
+    the existing `metadata VARCHAR(4096)` column — no schema change.
+  - `ORC-4` — a `REQUIRE_EXISTING` schema policy for `Migrator`: validate
+    the expected schema via `SYSCAT` catalog queries and refuse to run any
+    DDL, for deployments where application code must never touch DDL in
+    production.
+
+  **Deliberately excluded / not yet resolved:**
+  - Oracle's `SearchStrategy.HYBRID` (managed vector+keyword index) is the
+    *second* independent source in this project's research pointing at
+    hybrid vector+full-text search (the first was Cosmos DB's
+    `search_cosmos()`, deferred in the EPIC-2 entry above for the same
+    reason). Db2 LUW does have a native text-search feature
+    (`CONTAINS`/`SCORE`/`CONTAINS_ANY`/`CONTAINS_ALL`), confirmed via web
+    research in the EPIC-2 entry, but current-version (12.1) setup and
+    status still isn't confidently verified. Not committing to a story
+    until that's actually resolved — flagging it here a second time so it
+    doesn't get lost, and so whoever picks this up knows two different
+    reference implementations independently justify it.
+  - Oracle's `IndexSynchronization` policy (`ON_COMMIT` / `AUTO` /
+    `MANUAL` — controls when a vector/hybrid index refreshes relative to
+    writes) was not turned into a story. Whether Db2's `CREATE VECTOR
+    INDEX` (DiskANN) needs explicit `REORG`/`RUNSTATS` after bulk inserts
+    to stay performant was not researched here — a candidate for a future
+    story once that's actually checked, not assumed either way.
+  - Oracle's security-requirements list (encrypted connections, secret
+    management outside source code, end-user auth before memory
+    operations, "usage bounds for messages and provider calls") is mostly
+    already this SDK's existing posture (scoping/governance from Step 5)
+    or squarely the *integrating application's* responsibility per
+    Oracle's own docs, not something a story here would add — noted, not
+    turned into backlog items.
+
+- **Reason:** Same rationale as EPIC-2 — bring in genuinely differentiated
+  capabilities (chunked retrieval for long content, structured metadata
+  querying, a schema-attach mode for regulated/DBA-gated deployments)
+  filtered through actual Db2 feasibility, rather than assuming everything
+  a reference implementation does is portable or worth porting.
+- **Made during:** Backlog planning (not tied to a PROMPTS.md step)
+
 ---
 
 ### Entry template (copy this for every new decision)

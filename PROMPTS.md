@@ -551,3 +551,143 @@ principle intact). In BOARD.html, set ENH-4's status to "Done" and add a
 comment summarizing what you built. Then
 `git add -A && git commit -m "enh-4: async worker hardening and EVERY_N cadence"`.
 ```
+
+---
+
+# Epic 3 — Oracle-inspired memory enhancements (Db2-adapted)
+
+A third phase, tracked as `EPIC-3` in [`BOARD.html`](BOARD.html) (Stories
+`ORC-1` through `ORC-4`), independent of Epic 1 and Epic 2 above — none of
+these four depend on Epic 2 having been done, only on Steps 1-5 (schema,
+repositories, scoping) from Epic 1. Same working agreement as the sections
+above (read `DECISIONS.md` first, update it + `ARCHITECTURE.md` where
+noted + `BOARD.html` before finishing, commit each one separately). `ORC-1`,
+`ORC-3`, and `ORC-4` are independent of each other and can be done in any
+order; `ORC-2` (content chunking) is the largest and most self-contained —
+do it on its own, not interleaved with the others.
+
+These four were chosen after researching Oracle AI Agent Memory
+(blogs.oracle.com/developers/oracle-ai-agent-memory-a-governed-unified-memory-core-for-enterprise-ai-agents
+and the `oracleagentmemory` PyPI package) and filtering its feature set
+through what's actually Db2-native-feasible — see the "2026-08-01 —
+EPIC-3 backlog" entry in `DECISIONS.md` for the full research writeup,
+what else Oracle's SDK does that was deliberately left out of this set,
+and why (including a second, independent case for the hybrid-search
+question already deferred in the EPIC-2 entry).
+
+---
+
+## ORC-1 — Context card: condensed working-memory view for the active thread
+
+```
+Before starting: in BOARD.html, set ORC-1's status to "In Progress".
+
+Add `MemoryStore.get_context_card(scope, max_turns=20)` returning a small
+structured object (not just a raw list): recent working-memory turns in
+chronological order, a turn count, and the timestamp of the most recent
+turn. This is a convenience/formatting layer over `store.working.list_all()`
+— no new schema, no LLM call required by default.
+
+Add an optional `summarizer` hook (same pluggable-callback shape as
+`Consolidator`/`Reconciler` — a single `__call__` protocol, ship a no-op
+default) so a caller who wants an actual condensed narrative (not just the
+raw recent turns) can supply one. Default behavior with no summarizer
+configured is the raw-turns view.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the context-card object's exact shape (fields) and
+the summarizer protocol signature. Update section 1 (system overview) of
+ARCHITECTURE.md if this warrants a new box, or note in the entry why it
+doesn't. In BOARD.html, set ORC-1's status to "Done" and add a comment
+summarizing what you built. Then
+`git add -A && git commit -m "orc-1: context card"`.
+```
+
+---
+
+## ORC-2 — Content chunking for long memories
+
+```
+Before starting: in BOARD.html, set ORC-2's status to "In Progress".
+
+For content exceeding a configurable threshold (e.g. > 2000 characters),
+split it into overlapping chunks at write time and embed each chunk
+separately, instead of today's one-embedding-per-row approach regardless
+of length (a 64KB CLOB currently gets a single embedding, a poor semantic
+representation of the whole text).
+
+Add a new companion table via a new migration — either one shared
+`memory_chunks` table (`id`, `source_table`, `source_id`, `chunk_index`,
+`chunk_text`, `embedding VECTOR(...) NOT NULL`, scope columns for
+isolation, `CREATE VECTOR INDEX`) or a `_chunks` table per existing type;
+pick one and justify the choice in DECISIONS.md. `create()`/`update()` in
+`repositories/base.py` gain chunking logic gated by the length threshold —
+content under the threshold behaves exactly as today (single embedding on
+the parent row, no chunk rows created).
+
+Add a `search(..., search_chunks=True)` mode that searches the chunks
+table first (finer-grained semantic match against chunk text) then
+resolves and dedupes back to parent records, ranked by each parent's
+best-matching chunk distance — the same reorder-after-fetch pattern
+already used for the two-step search() workaround from Step 7, so reuse
+that logic rather than reinventing it.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the chunking threshold, the chunk-overlap strategy,
+the shared-vs-per-type table decision and why, and the chunk-to-parent
+resolution/dedup logic. Update section 3 (schema) of ARCHITECTURE.md for
+the new table. In BOARD.html, set ORC-2's status to "Done" and add a
+comment summarizing what you built. Then
+`git add -A && git commit -m "orc-2: content chunking"`.
+```
+
+---
+
+## ORC-3 — Structured metadata filter operators for search()/list_all()
+
+```
+Before starting: in BOARD.html, set ORC-3's status to "In Progress".
+
+Add a `metadata_filter: dict | None = None` parameter to `search()` and
+`list_all()` supporting a small operator set: exact match
+(`{"source": "support"}`), `$not` (`{"status": {"$not": "archived"}}`),
+`$array_contains` and `$array_contains_any` for list-valued metadata
+fields (e.g. tags). Translate the filter dict into
+`JSON_VALUE(metadata, '$.field')` / `JSON_EXISTS(metadata, ...)`
+predicates appended to the existing WHERE clause, alongside the scope and
+deleted_at/expires_at predicates already there. No schema change —
+`metadata` is already `VARCHAR(4096)` JSON text.
+
+Keep the operator set small and well-tested rather than building a
+general query language. Reject unrecognized operator keys with a clear
+error rather than silently ignoring them.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the exact operator set implemented and the
+JSON_VALUE/JSON_EXISTS translation for each. In BOARD.html, set ORC-3's
+status to "Done" and add a comment summarizing what you built. Then
+`git add -A && git commit -m "orc-3: structured metadata filters"`.
+```
+
+---
+
+## ORC-4 — Schema attach mode: REQUIRE_EXISTING policy for the migration runner
+
+```
+Before starting: in BOARD.html, set ORC-4's status to "In Progress".
+
+Add a schema-policy concept to `Migrator`: `CREATE_IF_NECESSARY` (today's
+only behavior — run pending migrations, create tables/indexes) vs
+`REQUIRE_EXISTING` (validate that every expected table, column, and
+vector index already exists via `SYSCAT.TABLES` / `SYSCAT.COLUMNS` /
+`SYSCAT.INDEXES` catalog queries; raise one clear, actionable error
+listing everything missing, and never attempt any DDL). Wire this as a
+constructor argument on `Migrator`, defaulting to `CREATE_IF_NECESSARY` so
+existing behavior is unchanged unless a caller opts in.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the exact SYSCAT queries used for validation and
+the error-message format. In BOARD.html, set ORC-4's status to "Done" and
+add a comment summarizing what you built. Then
+`git add -A && git commit -m "orc-4: schema attach mode"`.
+```

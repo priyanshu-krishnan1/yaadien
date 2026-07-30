@@ -16,12 +16,15 @@
   .epic-banner { background: #fff; border-left: 4px solid #7c5cd8; margin: 20px 24px 0; padding: 14px 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.07); display: flex; align-items: flex-start; gap: 12px; }
   .epic-banner + .epic-banner { margin-top: 10px; }
   .epic-banner.epic-2 { border-left-color: #0d9488; }
+  .epic-banner.epic-3 { border-left-color: #c2410c; }
   .epic-tag { background: #7c5cd8; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px; letter-spacing: .04em; flex-shrink: 0; margin-top: 3px; }
   .epic-tag.epic-2 { background: #0d9488; }
+  .epic-tag.epic-3 { background: #c2410c; }
   .story-tag { background: #3b82d4; }
   .card-epic-badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; letter-spacing: .03em; color: #fff; }
   .card-epic-badge.epic-1 { background: #7c5cd8; }
   .card-epic-badge.epic-2 { background: #0d9488; }
+  .card-epic-badge.epic-3 { background: #c2410c; }
   .epic-info h2 { font-size: 15px; font-weight: 600; }
   .epic-info p { font-size: 12px; color: #57606a; margin-top: 2px; }
   .epic-meta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
@@ -130,6 +133,12 @@
       "id": "EPIC-2",
       "title": "Cosmos-inspired memory enhancements (Db2-adapted)",
       "description": "Features studied from Azure Cosmos DB's Agent Memory Toolkit (github.com/AzureCosmosDB/AgentMemoryToolkit), reworked for what's actually feasible on Db2 LUW with no new mandatory infrastructure. See DECISIONS.md for the full research + what was deliberately excluded.",
+      "comments": []
+    },
+    {
+      "id": "EPIC-3",
+      "title": "Oracle-inspired memory enhancements (Db2-adapted)",
+      "description": "Features studied from Oracle AI Agent Memory (blogs.oracle.com/developers/oracle-ai-agent-memory-a-governed-unified-memory-core-for-enterprise-ai-agents and the oracleagentmemory PyPI package), reworked for what's actually feasible on Db2 LUW. See DECISIONS.md for the full research + what was deliberately excluded.",
       "comments": []
     }
   ],
@@ -275,6 +284,42 @@
       "summary": "Replace the metadata-flag polling hack with a real consolidated_at column + claim-based locking; throttle inline consolidation to every Nth write.",
       "status": "To Do",
       "description": "Two related changes to the existing consolidation pipeline. (1) `scripts/consolidate_pending.py` currently finds pending rows via a `metadata.consolidated: false` JSON flag — its own docstring already flags this as a stand-in, not a production implementation. Add a `consolidated_at TIMESTAMP` (nullable) column to `working_memory`/`episodic_memory` via a new migration, switch the eligibility filter to `WHERE consolidated_at IS NULL`, and add a claim-based update (`UPDATE ... SET consolidated_at = ? WHERE id = ? AND consolidated_at IS NULL`, checking rowcount) so two concurrent worker instances can't double-process the same row — the basic idempotency/locking the script's own docstring says a real implementation needs. (2) Add an optional `consolidate_every_n: int = 1` setting on `MemoryStore` (default 1 = today's behavior — consolidate on every write) so the *inline* synchronous consolidator only fires every Nth `remember()` call per scope, reducing LLM-call cost on the hot write path. Also have the worker script optionally invoke the new Reconciler (ENH-3) every `--dedup-every-n` batches.\n\nInspired by: the Agent Memory Toolkit's `FACT_EXTRACTION_EVERY_N`/`THREAD_SUMMARY_EVERY_N`/`DEDUP_EVERY_N` env-var-driven cadence, and its change-feed-triggered Durable Functions tier for offloading processing off the write path.\n\nDb2 feasibility — this is the \"adapt, don't skip\" item: Db2 LUW has no native change-feed mechanism equivalent to Cosmos DB's, so the Durable Functions tier can't be ported directly. This worker (polling + a claim column) is the Db2-appropriate substitute — same underlying goal (async, off-the-hot-path processing), different mechanism. Builds entirely on the existing script and existing MemoryStore/Consolidator machinery — no new infrastructure, no new external service dependency, keeping the Step 0 \"zero mandatory external services\" principle intact. Depends on ENH-3 for the Reconciler-integration half; the consolidated_at/locking half can ship independently.",
+      "comments": []
+    },
+    {
+      "id": "ORC-1",
+      "epic_id": "EPIC-3",
+      "title": "Context card: condensed working-memory view for the active thread",
+      "summary": "MemoryStore.get_context_card(scope) returns a structured recent-turns view instead of making callers assemble raw WorkingMemory rows themselves.",
+      "status": "To Do",
+      "description": "Add `MemoryStore.get_context_card(scope, max_turns=20)` returning a small structured object (not just a raw list): recent working-memory turns in chronological order, a turn count, and the timestamp of the most recent turn. This is a convenience/formatting layer over `store.working.list_all()` — no new schema, no LLM call required by default. Add an optional `summarizer` hook (same pluggable-callback shape as `Consolidator`/`Reconciler`) so a caller who wants an actual condensed narrative (not just the raw recent turns) can supply one; default behavior with no summarizer configured is the raw-turns view.\n\nInspired by: Oracle AI Agent Memory's `Thread.get_context_card()` — part of its \"short-term memory\" pillar (thread context cards + conversation summaries), distinct from long-term durable memory search.\n\nDb2 feasibility: trivial — a new read-only convenience method composing existing `list_all()` calls, plus an optional pluggable hook following a pattern already established twice in this codebase (Consolidator, Reconciler). No new infrastructure, no mandatory LLM dependency.",
+      "comments": []
+    },
+    {
+      "id": "ORC-2",
+      "epic_id": "EPIC-3",
+      "title": "Content chunking for long memories",
+      "summary": "Split long content into embedded chunks at write time so a 64KB memory gets more than one (diluted) embedding; search resolves chunk hits back to parent records.",
+      "status": "To Do",
+      "description": "For content exceeding a configurable threshold (e.g. > 2000 characters), split it into overlapping chunks at write time and embed each chunk separately, instead of the current one-embedding-per-row-no-matter-how-long-the-content approach (a 64KB CLOB today gets a single embedding, which is a poor semantic representation of the whole text). Add a new companion table (e.g. `memory_chunks`: `id`, `source_table`, `source_id`, `chunk_index`, `chunk_text`, `embedding VECTOR(...) NOT NULL`, scope columns for isolation, `CREATE VECTOR INDEX`) via a new migration. `create()`/`update()` in `repositories/base.py` gain chunking logic gated by the length threshold — short content behaves exactly as today (single embedding on the parent row; no chunk rows created). Add a `search(..., search_chunks=True)` mode that searches `memory_chunks` first (finer-grained semantic match against chunk text) then resolves and dedupes back to parent records, ranked by each parent's best-matching chunk distance.\n\nInspired by: Oracle AI Agent Memory's `APP_MEMORY_RECORD_CHUNKS` table — content is chunked for retrieval rather than embedding one giant blob as a single vector.\n\nDb2 feasibility: feasible, but the largest-scope item in this epic — a new table + index per existing table (or one shared chunks table, your call, justify whichever in DECISIONS.md), new chunking utility code, and search() branching logic. No new infrastructure beyond what Step 2 already established (another VECTOR NOT NULL column + CREATE VECTOR INDEX, same pattern).",
+      "comments": []
+    },
+    {
+      "id": "ORC-3",
+      "epic_id": "EPIC-3",
+      "title": "Structured metadata filter operators for search()/list_all()",
+      "summary": "A small operator DSL ($not, $array_contains, $array_contains_any, exact match) over the existing metadata JSON column, backed by Db2's JSON_VALUE/JSON_EXISTS.",
+      "status": "To Do",
+      "description": "Add a `metadata_filter: dict | None = None` parameter to `search()` and `list_all()` supporting a small operator set: exact match (`{\"source\": \"support\"}`), `$not` (`{\"status\": {\"$not\": \"archived\"}}`), `$array_contains` and `$array_contains_any` for list-valued metadata fields (e.g. tags). Translate the filter dict into `JSON_VALUE(metadata, '$.field')` / `JSON_EXISTS(metadata, ...)` predicates appended to the existing WHERE clause, alongside the scope and deleted_at/expires_at predicates that are already there. No schema change — `metadata` is already `VARCHAR(4096)` JSON text (a decision made in Step 2 specifically because it supports `JSON_VALUE`/`JSON_EXISTS` natively). Keep the operator set small and well-tested rather than building a general query language; document exactly which operators are supported and reject unrecognized ones with a clear error rather than silently ignoring them.\n\nInspired by: Oracle AI Agent Memory's metadata filtering (`$array_contains`, `$array_contains_any`, `$not`, exact match) on `memory.search(..., metadata_filter=...)`.\n\nDb2 feasibility: fully feasible with the existing column type — pure query-building logic, no new infrastructure, no migration needed.",
+      "comments": []
+    },
+    {
+      "id": "ORC-4",
+      "epic_id": "EPIC-3",
+      "title": "Schema attach mode: REQUIRE_EXISTING policy for the migration runner",
+      "summary": "Let the SDK validate against a pre-provisioned schema instead of always running DDL itself, for deployments where app code must never run DDL in production.",
+      "status": "To Do",
+      "description": "Add a schema-policy concept to `Migrator`: `CREATE_IF_NECESSARY` (today's only behavior — run pending migrations, create tables/indexes) vs `REQUIRE_EXISTING` (validate that every expected table, column, and vector index already exists via `SYSCAT.TABLES`/`SYSCAT.COLUMNS`/`SYSCAT.INDEXES` catalog queries; raise one clear, actionable error listing everything missing, and never attempt any DDL). Wire this as a constructor argument on `Migrator` (and expose it through `MemoryStore`/`ConnectionPool` setup wherever schema initialization currently happens), defaulting to `CREATE_IF_NECESSARY` so existing behavior is unchanged unless a caller opts in.\n\nInspired by: Oracle AI Agent Memory's `SchemaPolicy.CREATE_IF_NECESSARY` / `SchemaPolicy.REQUIRE_EXISTING` — for enterprise deployments where DBAs provision schema through their own change-management process and application code is not permitted to run DDL against production databases.\n\nDb2 feasibility: fully feasible — read-only catalog queries against `SYSCAT`, no new infrastructure. Directly reinforces this project's own \"governed\" framing (the same word used to justify the Step 0 architecture choice against Oracle's and Microsoft's approaches in the first place).",
       "comments": []
     }
   ]
@@ -446,7 +491,7 @@ function render() {
         <div class="card-summary">${s.summary}</div>
         <div class="card-footer">
           <span class="badge-type">Story</span>
-          <span class="card-epic-badge epic-${epicIdx}" title="${epicShort}">${epicIdx === 1 ? 'v1' : 'v2'}</span>
+          <span class="card-epic-badge epic-${epicIdx}" title="${epicShort}">v${epicIdx}</span>
           ${nc ? `<span class="badge-comments">&#128172; ${nc}</span>` : ''}
           ${btn}
         </div>`;
