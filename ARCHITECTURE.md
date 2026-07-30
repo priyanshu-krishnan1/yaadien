@@ -137,7 +137,7 @@ scope before ranking by vector distance. See `MemoryScope` (built in Step
 
 ## 3. Schema (entity-relationship)
 
-_Last updated: Step 7 — `expires_at` indexes changed from partial to plain (Db2 12.1.5 fp0 does not support filtered indexes)_
+_Last updated: ENH-1 — `confidence` column added to all five tables (migration 0003)_
 
 Column type legend:
 - `id` → `VARCHAR(36)` (UUID)
@@ -145,6 +145,7 @@ Column type legend:
 - `content` → `CLOB(65536)` (64 KB; see DECISIONS.md Step 2 entry)
 - `metadata` → `VARCHAR(4096)` (JSON text; see DECISIONS.md Step 2 entry)
 - `embedding` → `VECTOR(1536, FLOAT32) NOT NULL` (no DB-side default; application layer always supplies an explicit vector — real embedding or zero-vector sentinel — on every INSERT)
+- `confidence` → `DOUBLE NOT NULL DEFAULT 1.0` (grounding-certainty score 0.0–1.0; see DECISIONS.md ENH-1 entry)
 - `created_at`, `updated_at` → `TIMESTAMP NOT NULL DEFAULT CURRENT TIMESTAMP`
 - `expires_at`, `deleted_at` → `TIMESTAMP` (nullable)
 - `version` → `INTEGER NOT NULL DEFAULT 1`
@@ -176,6 +177,7 @@ erDiagram
         CLOB_65536 content "NOT NULL"
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
+        DOUBLE confidence "NOT NULL default 1.0"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -192,6 +194,7 @@ erDiagram
         CLOB_65536 content "NOT NULL"
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
+        DOUBLE confidence "NOT NULL default 1.0"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -208,6 +211,7 @@ erDiagram
         CLOB_65536 content "NOT NULL"
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
+        DOUBLE confidence "NOT NULL default 1.0"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -224,6 +228,7 @@ erDiagram
         CLOB_65536 content "NOT NULL"
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
+        DOUBLE confidence "NOT NULL default 1.0"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"
@@ -240,6 +245,7 @@ erDiagram
         CLOB_65536 content "NOT NULL"
         VARCHAR_4096 metadata "NOT NULL default {}"
         VECTOR_1536_FLOAT32 embedding "NOT NULL, app-supplied"
+        DOUBLE confidence "NOT NULL default 1.0"
         TIMESTAMP created_at "NOT NULL"
         TIMESTAMP updated_at "NOT NULL"
         TIMESTAMP expires_at "nullable"

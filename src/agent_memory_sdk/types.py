@@ -145,15 +145,24 @@ class Consolidator(Protocol):
                     ],
                 )
                 facts_text = resp.choices[0].message.content or ""
-                return [
-                    SemanticFact(
-                        agent_id=self._agent_id,
-                        content=line.strip(),
-                        metadata={"source": "llm_consolidator"},
+                lines = [l.strip() for l in facts_text.splitlines() if l.strip()]
+                facts = []
+                for line in lines:
+                    # Prefix "TENTATIVE:" signals lower certainty; any other
+                    # line is treated as a confident, explicit fact.
+                    is_tentative = line.upper().startswith("TENTATIVE:")
+                    facts.append(
+                        SemanticFact(
+                            agent_id=self._agent_id,
+                            content=line.removeprefix("TENTATIVE:").strip(),
+                            # confidence reflects grounding certainty:
+                            #   0.6 → LLM inferred this tentatively
+                            #   0.95 → user stated this explicitly
+                            confidence=0.6 if is_tentative else 0.95,
+                            metadata={"source": "llm_consolidator"},
+                        )
                     )
-                    for line in facts_text.splitlines()
-                    if line.strip()
-                ]
+                return facts
 
         # Wire in at store construction:
         store = MemoryStore(

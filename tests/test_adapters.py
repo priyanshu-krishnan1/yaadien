@@ -98,14 +98,16 @@ def _row(
     content: str = '{"role": "user", "content": "hello"}',
     metadata: dict[str, Any] | None = None,
     version: int = 1,
+    confidence: float = 1.0,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching _SELECT_COLS order."""
+    """Build a fake DB row matching _SELECT_COLS order (confidence at index 8)."""
     meta = metadata or {}
     vec_str = "[" + ",".join("0.1" for _ in range(1536)) + "]"
     return (
         id_, "tenant-x", "test-agent", None, "sess-1",
         content, json.dumps(meta),
         vec_str,
+        confidence,        # 8 — confidence (ENH-1)
         _NOW, _NOW, None, version, None,
     )
 

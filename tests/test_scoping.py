@@ -138,12 +138,13 @@ def _db_row(
     version: int = 1,
     deleted_at: Any = None,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching BaseRepository._SELECT_COLS order."""
+    """Build a fake DB row matching BaseRepository._SELECT_COLS order (confidence at index 8)."""
     vec_str = "[" + ",".join("0.1" for _ in range(1536)) + "]"
     return (
         id_, tenant_id, agent_id, user_id, thread_id,
         content, json.dumps({"key": "val"}),
         vec_str,
+        1.0,               # 8 — confidence (ENH-1)
         _NOW, _NOW, None, version, deleted_at,
     )
 

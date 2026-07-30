@@ -79,6 +79,13 @@ class _MemoryBase(BaseModel):
     # or a zero-vector sentinel) — NOT NULL, no DB-side default in the DDL.
     embedding: list[float] = Field(default_factory=list)
 
+    # confidence: grounding-certainty score for this memory record.
+    # 1.0 (default) = fully certain / directly observed.
+    # Values below 1.0 indicate derived or inferred records — an LLM-based
+    # Consolidator can set 0.6 for a tentative inference vs 0.95 for an
+    # explicit user statement.  Persisted as DOUBLE in Db2 (see migration 0003).
+    confidence: float = 1.0
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
     expires_at: datetime | None = None

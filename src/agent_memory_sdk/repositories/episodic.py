@@ -27,6 +27,7 @@ class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
             id_, tenant_id, agent_id, user_id, thread_id,
             content, metadata_str,
             embedding_str,
+            confidence,
             created_at, updated_at, expires_at, version, deleted_at,
         ) = row
 
@@ -39,6 +40,7 @@ class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
             content=content,
             metadata=json.loads(metadata_str) if metadata_str else {},
             embedding=_parse_vector(embedding_str),
+            confidence=float(confidence) if confidence is not None else 1.0,
             created_at=_parse_dt(created_at),
             updated_at=_parse_dt(updated_at),
             expires_at=_parse_dt(expires_at),

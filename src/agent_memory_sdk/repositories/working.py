@@ -35,16 +35,18 @@ class WorkingMemoryRepository(BaseRepository[WorkingMemory]):
           5  content
           6  metadata      (JSON string)
           7  embedding     (serialized vector string from VECTOR_SERIALIZE)
-          8  created_at
-          9  updated_at
-          10 expires_at
-          11 version
-          12 deleted_at
+          8  confidence
+          9  created_at
+          10 updated_at
+          11 expires_at
+          12 version
+          13 deleted_at
         """
         (
             id_, tenant_id, agent_id, user_id, thread_id,
             content, metadata_str,
             embedding_str,
+            confidence,
             created_at, updated_at, expires_at, version, deleted_at,
         ) = row
 
@@ -57,6 +59,7 @@ class WorkingMemoryRepository(BaseRepository[WorkingMemory]):
             content=content,
             metadata=json.loads(metadata_str) if metadata_str else {},
             embedding=_parse_vector(embedding_str),
+            confidence=float(confidence) if confidence is not None else 1.0,
             created_at=_parse_dt(created_at),
             updated_at=_parse_dt(updated_at),
             expires_at=_parse_dt(expires_at),

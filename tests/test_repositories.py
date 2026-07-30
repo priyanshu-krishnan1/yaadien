@@ -121,25 +121,27 @@ def _row(
     content: str = "hello",
     metadata: dict | None = None,
     embedding: list[float] | None = None,
+    confidence: float = 1.0,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching _SELECT_COLS order."""
+    """Build a fake DB row matching _SELECT_COLS order (includes confidence at index 8)."""
     meta = metadata or {}
     vec = embedding or _VEC
     vec_str = "[" + ",".join(str(f) for f in vec) + "]"
     return (
-        id_,           # id
-        "t1",          # tenant_id
-        "agent-001",   # agent_id
-        "user-42",     # user_id
-        None,          # thread_id
-        content,       # content
-        json.dumps(meta),  # metadata (JSON string)
-        vec_str,       # embedding (VECTOR_SERIALIZE output)
-        _NOW,          # created_at
-        _NOW,          # updated_at
-        None,          # expires_at
-        1,             # version
-        None,          # deleted_at
+        id_,           # 0  id
+        "t1",          # 1  tenant_id
+        "agent-001",   # 2  agent_id
+        "user-42",     # 3  user_id
+        None,          # 4  thread_id
+        content,       # 5  content
+        json.dumps(meta),  # 6  metadata (JSON string)
+        vec_str,       # 7  embedding (VECTOR_SERIALIZE output)
+        confidence,    # 8  confidence
+        _NOW,          # 9  created_at
+        _NOW,          # 10 updated_at
+        None,          # 11 expires_at
+        1,             # 12 version
+        None,          # 13 deleted_at
     )
 
 
@@ -391,6 +393,107 @@ class TestWorkingMemoryRepository:
         sql = pool.cursor.last_sql
         assert "agent_id = ?" in sql
         assert "user_id = ?" in sql
+
+
+# ---------------------------------------------------------------------------
+# Confidence scoring (ENH-1)
+# ---------------------------------------------------------------------------
+
+class TestConfidenceScoring:
+    """Tests for ENH-1: confidence field on all memory types."""
+
+    def test_default_confidence_is_1(self):
+        from agent_memory_sdk.models import WorkingMemory
+        wm = WorkingMemory(agent_id="a", content="c")
+        assert wm.confidence == 1.0
+
+    def test_custom_confidence_set_on_model(self):
+        from agent_memory_sdk.models import SemanticFact
+        fact = SemanticFact(agent_id="a", content="c", confidence=0.7)
+        assert fact.confidence == 0.7
+
+    def test_confidence_persisted_in_create_sql(self):
+        pool = _FakePool()
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="test", confidence=0.8)
+        repo.create(wm, _SCOPE_AGENT_ONLY)
+        sql = pool.cursor.last_sql
+        params = pool.cursor.last_params
+        assert "confidence" in sql
+        # confidence must appear in params
+        assert 0.8 in params
+
+    def test_confidence_persisted_in_update_sql(self):
+        pool = _FakePool()
+        pool.cursor.rowcount = 1
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="test", version=1, confidence=0.6)
+        wm.id = "some-id"
+        repo.update(wm, _SCOPE_AGENT_ONLY)
+        sql = pool.cursor.last_sql
+        params = pool.cursor.last_params
+        assert "confidence" in sql
+        assert 0.6 in params
+
+    def test_confidence_read_back_from_row(self):
+        row = _row(confidence=0.75)
+        repo = WorkingMemoryRepository(_FakePool([row]))
+        result = repo.get_by_id("row-uuid", _SCOPE)
+        assert result is not None
+        assert abs(result.confidence - 0.75) < 1e-9
+
+    def test_confidence_none_in_db_defaults_to_1(self):
+        """Pre-migration rows that return NULL confidence must map to 1.0."""
+        row = _row(confidence=None)
+        repo = WorkingMemoryRepository(_FakePool([row]))
+        result = repo.get_by_id("row-uuid", _SCOPE)
+        assert result is not None
+        assert result.confidence == 1.0
+
+    def test_list_all_min_confidence_appends_predicate(self):
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.list_all(_SCOPE, min_confidence=0.7)
+        sql = pool.cursor.last_sql
+        params = pool.cursor.last_params
+        assert "confidence >= ?" in sql
+        assert 0.7 in params
+
+    def test_list_all_min_confidence_zero_no_predicate(self):
+        """Default (0.0) must NOT add a confidence >= ? WHERE predicate (backward compat)."""
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.list_all(_SCOPE, min_confidence=0.0)
+        sql = pool.cursor.last_sql
+        assert "confidence >= ?" not in sql
+
+    def test_search_min_confidence_appends_predicate(self):
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.search(_VEC, _SCOPE, top_k=5, min_confidence=0.9)
+        sql = pool.cursor.last_sql
+        params = pool.cursor.last_params
+        assert "confidence >= ?" in sql
+        assert 0.9 in params
+
+    def test_search_min_confidence_zero_no_predicate(self):
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.search(_VEC, _SCOPE, top_k=5, min_confidence=0.0)
+        sql = pool.cursor.last_sql
+        assert "confidence >= ?" not in sql
+
+    def test_list_all_min_confidence_with_offset_uses_row_number(self):
+        """With offset > 0 and min_confidence, the ROW_NUMBER path must also
+        include the confidence predicate inside the subquery."""
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        repo.list_all(_SCOPE, limit=5, offset=3, min_confidence=0.8)
+        sql = pool.cursor.last_sql
+        assert "ROW_NUMBER" in sql
+        assert "confidence >= ?" in sql
+        params = pool.cursor.last_params
+        assert 0.8 in params
 
 
 # ---------------------------------------------------------------------------

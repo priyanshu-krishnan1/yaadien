@@ -1133,6 +1133,77 @@ explicitly supersedes it and say why.
 
 ---
 
+## 2026-08-01 — ENH-1: confidence scoring on memory records
+
+- **Decision:** Added a `confidence` column (`DOUBLE NOT NULL DEFAULT 1.0`,
+  range 0.0–1.0) to all five memory tables via a new migration file
+  (`0003_confidence_and_content_hash.sql`).  The same migration also includes
+  the `content_hash VARCHAR(64)` column for ENH-2, bundled together to
+  minimise ALTER TABLE passes per table.
+
+  **Migration file:** `src/agent_memory_sdk/db/migrations/0003_confidence_and_content_hash.sql`
+
+  **Column type and default:**  `DOUBLE NOT NULL DEFAULT 1.0`
+  - `DOUBLE` chosen over `DECIMAL(3,2)` or `REAL`: Python floats are IEEE 754
+    doubles; no precision loss on the Python ↔ Db2 round-trip.  The application
+    enforces the 0.0–1.0 range; no `CHECK` constraint is needed at the DB level.
+  - `NOT NULL DEFAULT 1.0` means all rows written before the migration (and any
+    row written without an explicit `confidence` value) are automatically treated
+    as fully certain, preserving backward compatibility with no backfill step
+    required.
+
+  **Python model:** `_MemoryBase.confidence: float = 1.0` — default 1.0, no
+  validator constraint at the Pydantic layer (application-level convention).
+
+  **Repository layer changes:**
+  - `_SELECT_COLS` in `BaseRepository` now includes `confidence` at index 8
+    (after `embedding`; before `created_at`).
+  - `create()` persists `record.confidence` as a bound parameter.
+  - `update()` persists `record.confidence` in the SET clause (confidence is
+    a mutable field — a consolidator may revise a record's certainty score
+    on update).
+  - `_model_from_row()` in all five concrete repositories reads index 8 back as
+    `float(confidence) if confidence is not None else 1.0` — the `None` guard
+    protects against rows written before migration 0003 if a Db2 instance was
+    not yet migrated but a code upgrade has been deployed.
+
+  **Filter parameters:**
+  - `list_all(..., min_confidence: float = 0.0)` — appends
+    `AND confidence >= ?` to the WHERE clause when `min_confidence > 0.0`;
+    no predicate added at 0.0 so existing callers incur zero overhead.
+  - `search(..., min_confidence: float = 0.0)` — same predicate, added to
+    the *first SQL step* (ID-ranking pass) so low-confidence rows are excluded
+    before they consume `top_k` slots, not as a post-filter.
+
+  **Interaction with other WHERE predicates:**
+  The `confidence >= ?` predicate is appended after — and in addition to —
+  the existing `deleted_at IS NULL` and `expires_at` filters.  The full
+  effective WHERE clause in `list_all()` with all filters active is:
+  ```
+  WHERE <scope predicates>
+    AND deleted_at IS NULL
+    AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP - CURRENT TIMEZONE)
+    AND confidence >= ?
+  ```
+  In `search()`, the confidence predicate is in the ID-ranking subquery (step 1)
+  only; the step-2 full-row fetch does NOT re-apply the filter (it fetches by
+  PK from the already-filtered ID list, so no double-filtering occurs).
+
+  **Consolidator docstring updated:** The `LLMConsolidator` example in
+  `types.py` now shows `confidence=0.6` for tentative inferences vs
+  `confidence=0.95` for facts derived from explicit user statements, replacing
+  the implicit default-1.0-for-everything approach.
+
+- **Reason:** Brings genuine grounding-certainty semantics to the SDK,
+  matching the capability that Azure Cosmos DB's Agent Memory Toolkit uses to
+  grade every extracted memory 0.0–1.0.  Enables `search(min_confidence=0.7)`
+  to filter tentative inferences out of retrieval — a real-world governance
+  requirement for production agents that should not re-surface uncertain
+  inferences at the same confidence level as directly observed facts.
+- **Made during:** ENH-1 (EPIC-2 backlog, first story implemented)
+
+---
+
 ### Entry template (copy this for every new decision)
 
 ```

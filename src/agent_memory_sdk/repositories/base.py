@@ -180,10 +180,16 @@ class BaseRepository(ABC, Generic[M]):
         return "[" + ",".join("0.0" for _ in range(self.EMBEDDING_DIM)) + "]"
 
     # Column select list — ORDER must match _model_from_row index assumptions.
+    # Index map (0-based):
+    #   0  id          1  tenant_id   2  agent_id    3  user_id     4  thread_id
+    #   5  content     6  metadata    7  embedding
+    #   8  confidence
+    #   9  created_at  10 updated_at  11 expires_at  12 version     13 deleted_at
     _SELECT_COLS = (
         "id, tenant_id, agent_id, user_id, thread_id, "
         "content, metadata, "
         "VECTOR_SERIALIZE(embedding) AS embedding, "
+        "confidence, "
         "created_at, updated_at, expires_at, version, deleted_at"
     )
 
@@ -227,10 +233,12 @@ class BaseRepository(ABC, Generic[M]):
             INSERT INTO {self._TABLE} (
                 id, tenant_id, agent_id, user_id, thread_id,
                 content, metadata, embedding,
+                confidence,
                 created_at, updated_at, expires_at, version, deleted_at
             ) VALUES (
                 ?, ?, ?, ?, ?,
                 ?, ?, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
+                ?,
                 ?, ?, ?, ?, ?
             )
         """
@@ -242,6 +250,7 @@ class BaseRepository(ABC, Generic[M]):
             record.thread_id,
             record.content,
             metadata_str,
+            record.confidence,
             record.created_at,
             record.updated_at,
             record.expires_at,
@@ -295,6 +304,7 @@ class BaseRepository(ABC, Generic[M]):
         limit: int = 50,
         offset: int = 0,
         include_expired: bool = False,
+        min_confidence: float = 0.0,
     ) -> list[M]:
         """List non-deleted rows within scope, ordered by created_at DESC.
 
@@ -304,6 +314,13 @@ class BaseRepository(ABC, Generic[M]):
             offset:          Rows to skip (for pagination).
             include_expired: If False (default), rows where
                              ``expires_at < NOW()`` are excluded.
+            min_confidence:  If > 0.0, only rows with ``confidence >=
+                             min_confidence`` are returned.  Applied after
+                             the ``deleted_at IS NULL`` and ``expires_at``
+                             filters; rows below the threshold are excluded
+                             regardless of their freshness or scope.
+                             Defaults to 0.0 (no confidence filter, full
+                             backward compatibility).
 
         Returns:
             A list of model instances.
@@ -318,12 +335,19 @@ class BaseRepository(ABC, Generic[M]):
         if not include_expired:
             extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP - CURRENT TIMEZONE)"
 
+        conf_sql = ""
+        conf_params: list[Any] = []
+        if min_confidence > 0.0:
+            conf_sql = " AND confidence >= ?"
+            conf_params = [min_confidence]
+
         sql = f"""
             SELECT {self._SELECT_COLS}
             FROM {self._TABLE}
             WHERE {scope_sql}
               AND deleted_at IS NULL
               {extra}
+              {conf_sql}
             ORDER BY created_at DESC
             FETCH FIRST ? ROWS ONLY
         """
@@ -339,11 +363,12 @@ class BaseRepository(ABC, Generic[M]):
                     WHERE {scope_sql}
                       AND deleted_at IS NULL
                       {extra}
+                      {conf_sql}
                 ) WHERE rn > ? AND rn <= ?
             """
-            params = [*scope_params, offset, offset + limit]
+            params = [*scope_params, *conf_params, offset, offset + limit]
         else:
-            params = [*scope_params, limit]
+            params = [*scope_params, *conf_params, limit]
 
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
@@ -457,6 +482,7 @@ class BaseRepository(ABC, Generic[M]):
             SET content = ?,
                 metadata = ?,
                 embedding = CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
+                confidence = ?,
                 updated_at = ?,
                 version = ?
             WHERE id = ?
@@ -467,6 +493,7 @@ class BaseRepository(ABC, Generic[M]):
         params = [
             record.content,
             metadata_str,
+            record.confidence,
             now,
             new_version,
             record.id,
@@ -545,6 +572,7 @@ class BaseRepository(ABC, Generic[M]):
         metric: DistanceMetric = DistanceMetric.COSINE,
         mode: SearchMode = SearchMode.EXACT,
         include_expired: bool = False,
+        min_confidence: float = 0.0,
     ) -> list[M]:
         """Semantic search via Db2 VECTOR_DISTANCE.
 
@@ -576,6 +604,12 @@ class BaseRepository(ABC, Generic[M]):
             metric:          Distance metric (should be COSINE to use the index).
             mode:            EXACT (default), APPROX, or DEFAULT.
             include_expired: If False, expired rows are excluded.
+            min_confidence:  If > 0.0, only rows with ``confidence >=
+                             min_confidence`` are returned.  The predicate is
+                             applied in the first SQL step (ID-ranking pass) so
+                             low-confidence rows do not consume top_k slots.
+                             Defaults to 0.0 (no confidence filter, full
+                             backward compatibility).
 
         Returns:
             A list of model instances ordered by ascending distance
@@ -592,6 +626,12 @@ class BaseRepository(ABC, Generic[M]):
         extra = ""
         if not include_expired:
             extra = " AND (expires_at IS NULL OR expires_at > CURRENT TIMESTAMP - CURRENT TIMEZONE)"
+
+        conf_sql = ""
+        conf_params: list[Any] = []
+        if min_confidence > 0.0:
+            conf_sql = " AND confidence >= ?"
+            conf_params = [min_confidence]
 
         # Build the FETCH clause suffix.
         fetch_suffix = "APPROX" if mode == SearchMode.APPROX else ""  # EXACT/DEFAULT: plain FETCH FIRST
@@ -610,10 +650,11 @@ class BaseRepository(ABC, Generic[M]):
             WHERE {scope_sql}
               AND deleted_at IS NULL
               {extra}
+              {conf_sql}
             ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})
             FETCH FIRST ? ROWS ONLY{approx_clause}
         """
-        id_params = [*scope_params, top_k]
+        id_params = [*scope_params, *conf_params, top_k]
 
         with self._pool.get_connection() as conn:
             cur = conn.cursor()

@@ -101,12 +101,13 @@ def _row(
     version: int = 1,
     deleted_at: Any = None,
 ) -> tuple[Any, ...]:
-    """Minimal fake DB row matching _SELECT_COLS order."""
+    """Minimal fake DB row matching _SELECT_COLS order (confidence at index 8)."""
     vec_str = "[" + ",".join("0.1" for _ in range(1536)) + "]"
     return (
         id_, "t1", "agent-001", None, None,
         content, json.dumps({}),
         vec_str,
+        1.0,               # 8 — confidence (ENH-1)
         _NOW, _NOW, None, version, deleted_at,
     )
 
