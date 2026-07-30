@@ -140,6 +140,12 @@
       "title": "Oracle-inspired memory enhancements (Db2-adapted)",
       "description": "Features studied from Oracle AI Agent Memory (blogs.oracle.com/developers/oracle-ai-agent-memory-a-governed-unified-memory-core-for-enterprise-ai-agents and the oracleagentmemory PyPI package), reworked for what's actually feasible on Db2 LUW. See DECISIONS.md for the full research + what was deliberately excluded.",
       "comments": []
+    },
+    {
+      "id": "EPIC-4",
+      "title": "Beta release readiness — worldwide public beta verification",
+      "description": "Independent re-verification of every Done story against the actual source code (not DECISIONS.md intent), plus a market-fit gap check against the competitive-analysis study, gating the worldwide public beta go/no-go decision.",
+      "comments": []
     }
   ],
   "stories": [
@@ -356,13 +362,117 @@
       "status": "Done",
       "description": "Add a schema-policy concept to `Migrator`: `CREATE_IF_NECESSARY` (today's only behavior — run pending migrations, create tables/indexes) vs `REQUIRE_EXISTING` (validate that every expected table, column, and vector index already exists via `SYSCAT.TABLES`/`SYSCAT.COLUMNS`/`SYSCAT.INDEXES` catalog queries; raise one clear, actionable error listing everything missing, and never attempt any DDL). Wire this as a constructor argument on `Migrator` (and expose it through `MemoryStore`/`ConnectionPool` setup wherever schema initialization currently happens), defaulting to `CREATE_IF_NECESSARY` so existing behavior is unchanged unless a caller opts in.\n\nInspired by: Oracle AI Agent Memory's `SchemaPolicy.CREATE_IF_NECESSARY` / `SchemaPolicy.REQUIRE_EXISTING` — for enterprise deployments where DBAs provision schema through their own change-management process and application code is not permitted to run DDL against production databases.\n\nDb2 feasibility: fully feasible — read-only catalog queries against `SYSCAT`, no new infrastructure. Directly reinforces this project's own \"governed\" framing (the same word used to justify the Step 0 architecture choice against Oracle's and Microsoft's approaches in the first place).",
       "comments": [
-        {
-          "date": "2026-08-02",
-          "text": "Done. Added SchemaPolicy enum (CREATE_IF_NECESSARY / REQUIRE_EXISTING) to db/migrate.py. REQUIRE_EXISTING runs three read-only SYSCAT catalog queries — SYSCAT.TABLES (TYPE='T', scoped to CURRENT SCHEMA), SYSCAT.COLUMNS (IN-list of present tables only), SYSCAT.INDEXES (same IN-list guard) — and raises SchemaPolicyError with a single actionable message listing every missing table, column, and index. No DDL is ever executed under REQUIRE_EXISTING. Migrator constructor default remains CREATE_IF_NECESSARY so all existing callers are unaffected. SchemaPolicyError added to exceptions.py and re-exported from package root alongside new SchemaPolicy. 10 new TestSchemaPolicy tests using a _SyscatPool SQLite fake with a _RewritingCursor that redirects SYSCAT queries to in-memory stub tables. 517 total tests pass; ruff clean; mypy strict clean. DECISIONS.md entry appended."
-        }
-      ]
-    }
-  ]
+      {
+        "date": "2026-08-02",
+        "text": "Done. Added SchemaPolicy enum (CREATE_IF_NECESSARY / REQUIRE_EXISTING) to db/migrate.py. REQUIRE_EXISTING runs three read-only SYSCAT catalog queries — SYSCAT.TABLES (TYPE='T', scoped to CURRENT SCHEMA), SYSCAT.COLUMNS (IN-list of present tables only), SYSCAT.INDEXES (same IN-list guard) — and raises SchemaPolicyError with a single actionable message listing every missing table, column, and index. No DDL is ever executed under REQUIRE_EXISTING. Migrator constructor default remains CREATE_IF_NECESSARY so all existing callers are unaffected. SchemaPolicyError added to exceptions.py and re-exported from package root alongside new SchemaPolicy. 10 new TestSchemaPolicy tests using a _SyscatPool SQLite fake with a _RewritingCursor that redirects SYSCAT queries to in-memory stub tables. 517 total tests pass; ruff clean; mypy strict clean. DECISIONS.md entry appended."
+      }
+    ]
+  },
+  {
+    "id": "VER-1",
+    "epic_id": "EPIC-4",
+    "title": "Verify: Step 1: Scaffold",
+    "summary": "Re-verify ConnectionPool, connection string, ibm_db_dbi packaging, scripts/check_connection.py against STEP-1 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-2",
+    "epic_id": "EPIC-4",
+    "title": "Verify: Step 2: Schema & migrations",
+    "summary": "Re-verify DDL column types, VECTOR indexes, partial-index removal, migration runner idempotency against STEP-2 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-3",
+    "epic_id": "EPIC-4",
+    "title": "Verify: Step 3: Core models & repositories",
+    "summary": "Re-verify Pydantic models, per-type repos, scope enforcement on every SQL path, MemoryStore facade against STEP-3 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-4",
+    "epic_id": "EPIC-4",
+    "title": "Verify: Step 4: Lifecycle — TTL, versioning, forget, consolidation",
+    "summary": "Re-verify forget/purge_expired semantics, optimistic concurrency, Consolidator protocol, remember() flow against STEP-4 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-5",
+    "epic_id": "EPIC-4",
+    "title": "Verify: Step 5: Governance / scoping enforcement",
+    "summary": "Re-verify MemoryScope, every SQL path has scope predicates, cross-scope isolation tests, multi-tenant boundary correctness against STEP-5 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-6",
+    "epic_id": "EPIC-4",
+    "title": "Verify: Step 6: Framework adapters",
+    "summary": "Re-verify LangChain, OpenAI Agents SDK, and MCP adapters — duck-typing, optional extras, correct protocol methods against STEP-6 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-7",
+    "epic_id": "EPIC-4",
+    "title": "Verify: Step 7: Integration tests",
+    "summary": "Re-verify integration suite coverage, skip mechanism, fixture isolation, and adapter round-trip tests against STEP-7 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-8",
+    "epic_id": "EPIC-4",
+    "title": "Verify: ENH-1: Confidence scoring on memory records",
+    "summary": "Re-verify confidence field, Pydantic range enforcement, min_confidence filtering in list_all/search against ENH-1 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-9",
+    "epic_id": "EPIC-4",
+    "title": "Verify: ENH-2: Write-time exact-duplicate rejection via content hash",
+    "summary": "Re-verify SHA-256 dedup, WorkingMemory opt-out, idempotent write, race-condition documentation against ENH-2 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-10",
+    "epic_id": "EPIC-4",
+    "title": "Verify: ENH-3: Reconciliation — contradiction detection with supersession",
+    "summary": "Re-verify Reconciler protocol, supersession columns on semantic_facts only, _HAS_SUPERSESSION gate, reconcile() sanity guards against ENH-3 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-11",
+    "epic_id": "EPIC-4",
+    "title": "Verify: ENH-4: Async consolidation worker + EVERY_N cadence",
+    "summary": "Re-verify consolidated_at column, claim-based locking, consolidate_every_n throttle, --dedup-every-n 1-or-2 constraint against ENH-4 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-12",
+    "epic_id": "EPIC-4",
+    "title": "Verify: ORC-1: Context card over working memory",
+    "summary": "Re-verify get_context_card(), ContextCard shape, Summarizer protocol, ordering and failure semantics against ORC-1 acceptance criteria.",
+    "status": "To Do",
+    "comments": []
+  },
+  {
+    "id": "VER-13",
+    "epic_id": "EPIC-4",
+    "title": "Market-fit gap check against ai-agent-platform-competitive-analysis.md",
+    "summary": "Cross-check implemented features against the market study; flag gaps as beta blockers, documented limitations, or out of scope.",
+    "status": "To Do",
+    "comments": []
+  }
+]
 }
 </script>
 
