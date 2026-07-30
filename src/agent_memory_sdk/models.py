@@ -87,6 +87,15 @@ class _MemoryBase(BaseModel):
     # Range [0.0, 1.0] enforced by Pydantic at construction time.
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
+    # content_hash: hex SHA-256 of normalized content (lowercase + whitespace-
+    # collapsed).  Computed at write time by BaseRepository.create(); None for
+    # rows written before migration 0003.  Used for write-time dedup: if a
+    # non-deleted row with the same (agent_id scope, content_hash) already
+    # exists, create() returns that row instead of inserting a duplicate.
+    # ENH-3 note: once superseded_at lands, the dedup check will also exclude
+    # superseded rows; for now only deleted_at IS NULL is checked.
+    content_hash: str | None = None
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
     expires_at: datetime | None = None

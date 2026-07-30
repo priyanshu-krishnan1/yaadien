@@ -138,13 +138,24 @@ def _db_row(
     version: int = 1,
     deleted_at: Any = None,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching BaseRepository._SELECT_COLS order (confidence at index 8)."""
+    """Build a fake DB row matching BaseRepository._SELECT_COLS order.
+
+    Index map (0-based):
+      0  id           1  tenant_id   2  agent_id    3  user_id     4  thread_id
+      5  content      6  metadata    7  embedding
+      8  confidence   9  content_hash
+      10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
+    """
+    import hashlib
+    import re as _re
     vec_str = "[" + ",".join("0.1" for _ in range(1536)) + "]"
+    h = hashlib.sha256(_re.sub(r"\s+", " ", content.lower()).strip().encode()).hexdigest()
     return (
         id_, tenant_id, agent_id, user_id, thread_id,
         content, json.dumps({"key": "val"}),
         vec_str,
         1.0,               # 8 — confidence (ENH-1)
+        h,                 # 9 — content_hash (ENH-2)
         _NOW, _NOW, None, version, deleted_at,
     )
 

@@ -11,11 +11,14 @@ cursor records every ``execute()`` call and returns configurable rows on
   - Model round-trips (create → _model_from_row → field values)
   - Scope enforcement (missing agent_id raises ValueError)
   - soft_delete semantics
+  - ENH-2: write-time content-hash dedup
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -31,6 +34,7 @@ from agent_memory_sdk.models import (
     WorkingMemory,
 )
 from agent_memory_sdk.repositories.base import (
+    _content_hash,
     _parse_vector,
     _scope_predicates,
     _vec_to_str,
@@ -122,26 +126,36 @@ def _row(
     metadata: dict | None = None,
     embedding: list[float] | None = None,
     confidence: float = 1.0,
+    content_hash: str | None = None,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching _SELECT_COLS order (includes confidence at index 8)."""
+    """Build a fake DB row matching _SELECT_COLS order.
+
+    Index map (0-based):
+      0  id            1  tenant_id   2  agent_id    3  user_id     4  thread_id
+      5  content       6  metadata    7  embedding
+      8  confidence    9  content_hash
+      10 created_at   11 updated_at  12 expires_at  13 version     14 deleted_at
+    """
     meta = metadata or {}
     vec = embedding or _VEC
     vec_str = "[" + ",".join(str(f) for f in vec) + "]"
+    h = content_hash if content_hash is not None else _content_hash(content)
     return (
-        id_,           # 0  id
-        "t1",          # 1  tenant_id
-        "agent-001",   # 2  agent_id
-        "user-42",     # 3  user_id
-        None,          # 4  thread_id
-        content,       # 5  content
-        json.dumps(meta),  # 6  metadata (JSON string)
-        vec_str,       # 7  embedding (VECTOR_SERIALIZE output)
-        confidence,    # 8  confidence
-        _NOW,          # 9  created_at
-        _NOW,          # 10 updated_at
-        None,          # 11 expires_at
-        1,             # 12 version
-        None,          # 13 deleted_at
+        id_,                  # 0  id
+        "t1",                 # 1  tenant_id
+        "agent-001",          # 2  agent_id
+        "user-42",            # 3  user_id
+        None,                 # 4  thread_id
+        content,              # 5  content
+        json.dumps(meta),     # 6  metadata (JSON string)
+        vec_str,              # 7  embedding (VECTOR_SERIALIZE output)
+        confidence,           # 8  confidence
+        h,                    # 9  content_hash
+        _NOW,                 # 10 created_at
+        _NOW,                 # 11 updated_at
+        None,                 # 12 expires_at
+        1,                    # 13 version
+        None,                 # 14 deleted_at
     )
 
 
@@ -694,3 +708,224 @@ class TestScopeIsolation:
         repo.search(_VEC, scope)
         sql = pool.cursor.last_sql
         assert "agent_id = ?" in sql
+
+
+# ---------------------------------------------------------------------------
+# ENH-2: content_hash normalization and write-time deduplication
+# ---------------------------------------------------------------------------
+
+class TestContentHash:
+    """Unit tests for _content_hash() normalization and dedup logic in create()."""
+
+    # ------------------------------------------------------------------
+    # _content_hash() normalization
+    # ------------------------------------------------------------------
+
+    def test_lowercase(self):
+        """Uppercase and mixed-case content must produce the same hash."""
+        assert _content_hash("HELLO WORLD") == _content_hash("hello world")
+        assert _content_hash("Hello") == _content_hash("hello")
+
+    def test_whitespace_collapse_spaces(self):
+        """Multiple consecutive spaces must be collapsed to one."""
+        assert _content_hash("hello   world") == _content_hash("hello world")
+
+    def test_whitespace_collapse_tabs_newlines(self):
+        """Tabs, newlines, and mixed whitespace must collapse to a single space."""
+        assert _content_hash("hello\t\tworld") == _content_hash("hello world")
+        assert _content_hash("hello\nworld") == _content_hash("hello world")
+        assert _content_hash("hello\r\nworld") == _content_hash("hello world")
+
+    def test_leading_trailing_whitespace_stripped(self):
+        """Leading/trailing whitespace must not affect the hash."""
+        assert _content_hash("  hello world  ") == _content_hash("hello world")
+        assert _content_hash("\nhello world\n") == _content_hash("hello world")
+
+    def test_case_and_whitespace_combined(self):
+        """Both normalization steps together must produce the same hash."""
+        assert _content_hash("  Hello   WORLD\n") == _content_hash("hello world")
+
+    def test_returns_64_hex_chars(self):
+        """Result must be a 64-character lowercase hex string (SHA-256)."""
+        h = _content_hash("some content")
+        assert len(h) == 64
+        assert h == h.lower()
+        assert all(c in "0123456789abcdef" for c in h)
+
+    def test_different_content_different_hash(self):
+        """Distinct normalized contents must produce distinct hashes."""
+        assert _content_hash("apple") != _content_hash("orange")
+
+    def test_known_value(self):
+        """Cross-check against a direct hashlib computation."""
+        content = "  User  prefers   Python.\n"
+        normalized = re.sub(r"\s+", " ", content.lower()).strip()
+        expected = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        assert _content_hash(content) == expected
+
+    # ------------------------------------------------------------------
+    # create() — dedup check fires when duplicate exists
+    # ------------------------------------------------------------------
+
+    def test_create_dedup_returns_existing_when_hit(self):
+        """If a row with the same content_hash exists, create() returns it."""
+        existing = _row(id_="existing-id", content="hello world")
+        pool = _FakePool([existing])  # fetchone returns the existing row
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="hello world")
+        result = repo.create(wm, _SCOPE_AGENT_ONLY)
+        # Must return the existing row, not insert a new one
+        assert result.id == "existing-id"
+        # No INSERT should have been issued
+        assert "INSERT" not in pool.cursor.last_sql
+
+    def test_create_dedup_issues_select_before_insert(self):
+        """create() must issue a SELECT … content_hash = ? before INSERT."""
+        pool = _FakePool([])  # no existing row → proceeds to INSERT
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="unique content xyz")
+        repo.create(wm, _SCOPE_AGENT_ONLY)
+        # After a miss the last SQL should be the INSERT (dedup SELECT was first)
+        assert "INSERT INTO working_memory" in pool.cursor.last_sql
+
+    def test_create_dedup_select_contains_content_hash_predicate(self):
+        """The dedup SELECT must include content_hash = ? and deleted_at IS NULL."""
+        # Use a multi-cursor-tracking pool variant
+        class _MultiCursorPool:
+            """Records ALL executed SQL strings across all cursor() calls."""
+            def __init__(self):
+                self.sqls: list[str] = []
+                self._conn = None
+
+            @contextmanager
+            def get_connection(self):
+                conn = _MultiCursorConn(self.sqls)
+                yield conn
+
+        class _MultiCursorConn:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.committed = False
+            def cursor(self):
+                return _MultiCursorCursor(self._sqls)
+            def commit(self):
+                self.committed = True
+
+        class _MultiCursorCursor:
+            def __init__(self, sqls):
+                self._sqls = sqls
+                self.rowcount = 0
+            def execute(self, sql, params=None):
+                self._sqls.append(sql)
+            def fetchone(self):
+                return None
+            def fetchall(self):
+                return []
+
+        pool = _MultiCursorPool()
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="test content")
+        repo.create(wm, _SCOPE_AGENT_ONLY)
+        # First SQL must be the dedup SELECT
+        assert len(pool.sqls) >= 2
+        dedup_sql = pool.sqls[0]
+        assert "content_hash = ?" in dedup_sql
+        assert "deleted_at IS NULL" in dedup_sql
+        assert "FETCH FIRST 1 ROWS ONLY" in dedup_sql
+        insert_sql = pool.sqls[1]
+        assert "INSERT INTO working_memory" in insert_sql
+
+    def test_create_content_hash_in_insert_params(self):
+        """The computed hash must be included in the INSERT params."""
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="Test Content")
+        repo.create(wm, _SCOPE_AGENT_ONLY)
+        params = pool.cursor.last_params
+        expected_hash = _content_hash("Test Content")
+        assert expected_hash in params
+
+    def test_create_content_hash_on_returned_model(self):
+        """create() must set content_hash on the returned model."""
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="My Memory")
+        result = repo.create(wm, _SCOPE_AGENT_ONLY)
+        assert result.content_hash == _content_hash("My Memory")
+
+    def test_create_dedup_normalized_equivalents_hit(self):
+        """Different whitespace/case variants of same content must dedup."""
+        # "  HELLO  WORLD  " normalizes to "hello world" — same hash
+        normalized_content = "hello world"
+        existing = _row(
+            id_="norm-id",
+            content=normalized_content,
+            content_hash=_content_hash("  HELLO  WORLD  "),
+        )
+        pool = _FakePool([existing])
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="  HELLO  WORLD  ")
+        result = repo.create(wm, _SCOPE_AGENT_ONLY)
+        assert result.id == "norm-id"
+
+    def test_content_hash_read_back_from_row(self):
+        """_model_from_row() must populate content_hash from column index 9."""
+        h = _content_hash("hello")
+        row = _row(id_="r1", content="hello", content_hash=h)
+        repo = WorkingMemoryRepository(_FakePool([row]))
+        result = repo.get_by_id("r1", _SCOPE)
+        assert result is not None
+        assert result.content_hash == h
+
+    def test_content_hash_none_preserved_for_premigration_rows(self):
+        """Rows written before migration 0003 may have NULL content_hash; must survive."""
+        row = _row(id_="r2", content="old content", content_hash=None)
+        # Manually override index 9 to None (the helper sets it by default)
+        row_list = list(row)
+        row_list[9] = None
+        repo = WorkingMemoryRepository(_FakePool([tuple(row_list)]))
+        result = repo.get_by_id("r2", _SCOPE)
+        assert result is not None
+        assert result.content_hash is None
+
+    def test_update_recomputes_content_hash(self):
+        """update() must persist the recomputed hash for the new content."""
+        pool = _FakePool([])
+        pool.cursor.rowcount = 1
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="New Content", version=1)
+        wm.id = "update-id"
+        repo.update(wm, _SCOPE_AGENT_ONLY)
+        params = pool.cursor.last_params
+        expected_hash = _content_hash("New Content")
+        assert expected_hash in params
+
+    def test_update_sets_content_hash_on_model(self):
+        """update() must set content_hash on the returned (mutated) model."""
+        pool = _FakePool([])
+        pool.cursor.rowcount = 1
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="Updated text", version=1)
+        wm.id = "update-id-2"
+        result = repo.update(wm, _SCOPE_AGENT_ONLY)
+        assert result.content_hash == _content_hash("Updated text")
+
+    def test_update_sql_includes_content_hash_column(self):
+        """The UPDATE SQL must SET content_hash = ?."""
+        pool = _FakePool([])
+        pool.cursor.rowcount = 1
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="c", version=1)
+        wm.id = "u-id"
+        repo.update(wm, _SCOPE_AGENT_ONLY)
+        sql = pool.cursor.last_sql
+        assert "content_hash = ?" in sql
+
+    def test_create_insert_sql_includes_content_hash_column(self):
+        """The INSERT SQL must list content_hash in the column list and VALUES."""
+        pool = _FakePool([])
+        repo = WorkingMemoryRepository(pool)
+        wm = WorkingMemory(agent_id="agent-001", content="some text")
+        repo.create(wm, _SCOPE_AGENT_ONLY)
+        sql = pool.cursor.last_sql
+        assert "content_hash" in sql

@@ -1253,3 +1253,73 @@ explicitly supersedes it and say why.
 - **Made during:** Step N (<step name>)
 - **Supersedes:** (link to prior entry, if any — otherwise omit)
 ```
+
+## 2026-08-01 — ENH-2: write-time dedup via content hash
+
+- **Decision:** Added write-time idempotent-write logic to all five memory tables
+  using a `content_hash VARCHAR(64)` column that already exists in migration
+  `0003_confidence_and_content_hash.sql` (bundled with ENH-1's `confidence` column).
+
+  **Hash normalization rule — exact steps, applied consistently everywhere:**
+
+  1. **Lowercase** — `content.lower()`
+  2. **Whitespace-collapse** — `re.sub(r"\s+", " ", lowercased).strip()`
+     (collapses every run of whitespace — spaces, tabs, newlines, CR, FF — to a
+     single ASCII space, then strips leading/trailing whitespace)
+  3. **SHA-256** — `hashlib.sha256(normalized.encode("utf-8")).hexdigest()`
+     (returns a 64-character lowercase hex string)
+
+  These three steps are implemented in `_content_hash(content: str) -> str` in
+  `repositories/base.py` and must be used every time a `content_hash` is
+  computed or compared — in `create()`, in `update()`, and in any future code
+  path that needs to match hashes.  The normalization is case- and
+  whitespace-insensitive, which means two writes whose content differs only in
+  capitalization or whitespace are treated as exact duplicates.
+
+  **`_MemoryBase.content_hash: str | None = None`** — added to `models.py`
+  at the same position in the field list.  `None` is valid (pre-migration rows
+  written before 0003 was applied); the field is never constrained by Pydantic.
+
+  **`BaseRepository._SELECT_COLS`** updated to include `content_hash` at
+  index 9 (between `confidence` at 8 and `created_at` at 10).  All five
+  `_model_from_row()` implementations updated to unpack the new column.
+
+  **`BaseRepository.create()` changes:**
+  - Computes `_content_hash(record.content)` and sets `record.content_hash`.
+  - Issues a dedup SELECT:
+    ```sql
+    SELECT ... FROM <table>
+    WHERE <scope predicates>
+      AND content_hash = ?
+      AND deleted_at IS NULL
+    FETCH FIRST 1 ROWS ONLY
+    ```
+    using the `ix_*_content_hash (agent_id, content_hash)` index.
+  - If a row is found, returns `_model_from_row(existing_row)` without
+    inserting — idempotent write, no duplicate created.
+  - If no row is found, proceeds to INSERT with `content_hash` in the column
+    list and bound params.
+  - The dedup check deliberately uses **only `deleted_at IS NULL`** for now.
+    Once ENH-3 lands and `superseded_at` exists, the check should also add
+    `AND superseded_at IS NULL` to exclude superseded rows from the duplicate
+    detection scope.  A `# ENH-3 note` comment in `create()` marks this
+    revisit point.
+
+  **`BaseRepository.update()` changes:**
+  - Recomputes `_content_hash(record.content)` into `new_hash` and includes
+    `content_hash = ?` in the SET clause so the hash stays in sync with the
+    content value after every update.
+  - Sets `record.content_hash = new_hash` on the returned model.
+
+  **No UNIQUE constraint in the schema** — uniqueness is enforced in application
+  code because dedup is scoped to `(agent_id scope, content_hash)` and must allow
+  a deleted or (future) superseded row to share a hash with a live row.
+
+- **Reason:** Catches the common "agent re-stores the same fact twice" case
+  cheaply and deterministically at write time, before any LLM reconciliation
+  pass runs.  Inspired by Azure Cosmos DB Agent Memory Toolkit's SHA-256
+  content_hash dedup.
+
+- **Made during:** ENH-2 (EPIC-2 backlog, second story)
+
+---

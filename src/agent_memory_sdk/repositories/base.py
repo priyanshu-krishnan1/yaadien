@@ -48,8 +48,10 @@ DB-API usage notes
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
@@ -65,6 +67,25 @@ M = TypeVar("M", bound=_MemoryBase)
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _content_hash(content: str) -> str:
+    """Compute the hex SHA-256 of *normalized* content.
+
+    Normalization steps (must be applied in this exact order, consistently
+    everywhere a content_hash is computed or compared):
+
+    1. **Lowercase** — ``content.lower()``
+    2. **Whitespace-collapse** — replace every run of one-or-more whitespace
+       characters (space, tab, newline, carriage-return, form-feed, etc.) with
+       a single ASCII space, then strip leading/trailing whitespace.
+    3. **SHA-256** — hash the UTF-8 encoding of the normalized string and
+       return the hex digest (64 lowercase hex characters).
+
+    The result is stored in ``content_hash VARCHAR(64)`` in Db2.
+    """
+    normalized = re.sub(r"\s+", " ", content.lower()).strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _require_agent_id(scope: MemoryScope) -> None:
@@ -183,13 +204,13 @@ class BaseRepository(ABC, Generic[M]):
     # Index map (0-based):
     #   0  id          1  tenant_id   2  agent_id    3  user_id     4  thread_id
     #   5  content     6  metadata    7  embedding
-    #   8  confidence
-    #   9  created_at  10 updated_at  11 expires_at  12 version     13 deleted_at
+    #   8  confidence  9  content_hash
+    #   10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
     _SELECT_COLS = (
         "id, tenant_id, agent_id, user_id, thread_id, "
         "content, metadata, "
         "VECTOR_SERIALIZE(embedding) AS embedding, "
-        "confidence, "
+        "confidence, content_hash, "
         "created_at, updated_at, expires_at, version, deleted_at"
     )
 
@@ -199,6 +220,17 @@ class BaseRepository(ABC, Generic[M]):
 
     def create(self, record: M, scope: MemoryScope) -> M:
         """Insert a new row and return the record with server-assigned timestamps.
+
+        **Write-time deduplication (ENH-2):** before inserting, the method
+        computes the hex SHA-256 of the normalized content (lowercased, then
+        whitespace-collapsed) and checks whether a non-deleted row with the
+        same ``(agent_id scope, content_hash)`` already exists.  If one is
+        found, that existing row is returned immediately — no new row is
+        inserted.  This makes repeated writes of the same content idempotent.
+
+        The dedup check uses ``deleted_at IS NULL``.  Once ENH-3 lands and
+        ``superseded_at`` exists, the check should also add
+        ``AND superseded_at IS NULL``; revisit at that point.
 
         The record's ``agent_id`` is overwritten with ``scope.agent_id``
         to ensure consistency.  The ``id`` is generated on the Python side
@@ -210,7 +242,8 @@ class BaseRepository(ABC, Generic[M]):
             scope:   The caller's scope; agent_id is required.
 
         Returns:
-            The record as stored, with created_at / updated_at set.
+            The record as stored, with created_at / updated_at set.  If a
+            duplicate was detected the *existing* row is returned instead.
 
         Raises:
             ValueError: if scope.agent_id is missing.
@@ -222,6 +255,33 @@ class BaseRepository(ABC, Generic[M]):
         record.tenant_id = scope.tenant_id
         record.user_id = scope.user_id
         record.thread_id = scope.thread_id
+
+        # --- ENH-2: compute content_hash and dedup check -------------------
+        h = _content_hash(record.content)
+        record.content_hash = h
+
+        scope_sql, scope_params = _scope_predicates(scope)
+        dedup_sql = f"""
+            SELECT {self._SELECT_COLS}
+            FROM {self._TABLE}
+            WHERE {scope_sql}
+              AND content_hash = ?
+              AND deleted_at IS NULL
+            FETCH FIRST 1 ROWS ONLY
+        """
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(dedup_sql, [*scope_params, h])
+            existing_row = cur.fetchone()
+
+        if existing_row is not None:
+            logger.debug(
+                "Dedup hit on %s content_hash=%s — returning existing id=%s",
+                self._TABLE, h[:8], existing_row[0],
+            )
+            return self._model_from_row(existing_row)
+        # --- end dedup check ------------------------------------------------
+
         record.created_at = now
         record.updated_at = now
         record.version = 1
@@ -233,12 +293,12 @@ class BaseRepository(ABC, Generic[M]):
             INSERT INTO {self._TABLE} (
                 id, tenant_id, agent_id, user_id, thread_id,
                 content, metadata, embedding,
-                confidence,
+                confidence, content_hash,
                 created_at, updated_at, expires_at, version, deleted_at
             ) VALUES (
                 ?, ?, ?, ?, ?,
                 ?, ?, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
-                ?,
+                ?, ?,
                 ?, ?, ?, ?, ?
             )
         """
@@ -251,6 +311,7 @@ class BaseRepository(ABC, Generic[M]):
             record.content,
             metadata_str,
             record.confidence,
+            record.content_hash,
             record.created_at,
             record.updated_at,
             record.expires_at,
@@ -477,12 +538,17 @@ class BaseRepository(ABC, Generic[M]):
         metadata_str = json.dumps(record.metadata)
         new_version = record.version + 1
 
+        # Recompute content_hash so that update() keeps the hash consistent
+        # with the new content value being persisted.
+        new_hash = _content_hash(record.content)
+
         sql = f"""
             UPDATE {self._TABLE}
             SET content = ?,
                 metadata = ?,
                 embedding = CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
                 confidence = ?,
+                content_hash = ?,
                 updated_at = ?,
                 version = ?
             WHERE id = ?
@@ -494,6 +560,7 @@ class BaseRepository(ABC, Generic[M]):
             record.content,
             metadata_str,
             record.confidence,
+            new_hash,
             now,
             new_version,
             record.id,
@@ -516,6 +583,7 @@ class BaseRepository(ABC, Generic[M]):
 
         record.version = new_version
         record.updated_at = now
+        record.content_hash = new_hash
         logger.debug("update %s id=%s new_version=%d", self._TABLE, record.id, new_version)
         return record
 
