@@ -26,10 +26,10 @@ docker run -d \
   -e DBNAME=TESTDB \
   -p 50000:50000 \
   --privileged \
-  icr.io/db2_community/db2:12.1.2.0
+  icr.io/db2_community/db2:12.1.5.0
 ```
 
-> **Image tag:** `12.1.2.0` is pinned here (and in `.github/workflows/ci.yml`) because `CREATE VECTOR INDEX` requires **Db2 12.1.2+** and untagged `:latest` is not reproducible in unattended CI.  Update both places together when upgrading.
+> **Image tag:** `12.1.5.0` is pinned here (and in `.github/workflows/ci.yml`) because `CREATE VECTOR INDEX` became GA in **Db2 12.1.5** and untagged `:latest` is not reproducible in unattended CI.  Update both places together when upgrading.
 
 > **Note:** The `icr.io/db2_community/db2` image requires `--privileged` (or at minimum
 > `--cap-add IPC_OWNER`) to start the DB2 instance inside the container.
@@ -203,7 +203,7 @@ docker stop db2-dev && docker rm db2-dev
 |---------|-----|
 | `ModuleNotFoundError: ibm_db` | `pip install ibm_db` — the clidriver is bundled |
 | `Failed to connect to Db2` | Check `DB2_HOSTNAME`, port `50000`, and that the container is ready (`docker logs db2-dev`) |
-| `CREATE VECTOR INDEX` fails | Requires **Db2 12.1.2+** with the VECTOR feature enabled.  The `icr.io/db2_community/db2` image ships 12.1. |
+| `CREATE VECTOR INDEX` fails | Requires **Db2 12.1.5+** (GA release of the VECTOR feature).  The `icr.io/db2_community/db2:12.1.5.0` image ships this version. |
 | Tests skip silently | `DB2_DATABASE` env var not exported in this shell session |
 | `ConnectionPoolExhausted` | Increase `DB2_POOL_SIZE` (default 5) or check for connection leaks |
 | `SQLSTATE 42613` on migration | Invalid VECTOR column DDL — confirm no `DEFAULT VECTOR_FILL` clause in `0002_memory_tables.sql` (already removed) |

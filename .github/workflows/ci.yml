@@ -92,7 +92,7 @@ jobs:
             -e DBNAME=TESTDB \
             -p 50000:50000 \
             --privileged \
-            icr.io/db2_community/db2:12.1.2.0
+            icr.io/db2_community/db2:12.1.5.0
 
       - name: Wait for Db2 to be ready
         # Db2 community container takes 3–5 minutes to initialise on first

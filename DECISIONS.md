@@ -68,14 +68,13 @@ to the existing file.
 Coupling it to the lint/type-check/unit matrix would block fast feedback on every
 PR.  A parallel job lets the two concerns run concurrently and both gate the merge.
 
-**Container image:** `icr.io/db2_community/db2:12.1.2.0`
+**Container image:** `icr.io/db2_community/db2:12.1.5.0`
 
 - Tag is pinned (not `:latest`) so CI is reproducible across runner refreshes.
-- 12.1.2.0 is the minimum required for `CREATE VECTOR INDEX` (flagged in
-  `INTEGRATION_TESTING.md` troubleshooting table: "Requires Db2 12.1.2+ with the
-  VECTOR feature enabled").
+- `CREATE VECTOR INDEX` became GA in Db2 12.1.5; 12.1.5.0 is therefore the
+  correct minimum image for this project.
 - The same tag is recorded in `project-management/INTEGRATION_TESTING.md`
-  (updated in this commit) so the two never drift.
+  so the two never drift.
 
 **Why `docker run --privileged` (not a GitHub Actions service container):**
 GitHub Actions service containers do not expose a `--privileged` flag in the
@@ -109,7 +108,7 @@ already-slow Db2 boot cost for negligible additional signal — the unit matrix
 already covers Python compatibility.
 
 **INTEGRATION_TESTING.md alignment (updated in this commit):**
-- Pinned image tag from `:latest` → `12.1.2.0` with a note explaining why.
+- Pinned image tag from `:latest` → `12.1.5.0` with a note explaining why.
 - Added CI polling loop to section 1 so the wait strategy is documented in one
   place and the workflow file references it rather than reimplementing it
   independently.
