@@ -1192,3 +1192,287 @@ partially confirmed, or refuted. In BOARD.html, set BENCH-5's status to
 "Done" with a comment. Then
 `git add -A && git commit -m "bench-5: validate SDK-vs-baseline behavior at larger session scale"`.
 ```
+
+---
+
+# Epic 7 — Next-gen memory pipeline features: fresh 2026 research on Mem0, Microsoft Agent Framework, and Oracle AI Agent Memory
+
+Everything below is tracked as `EPIC-7` in [`BOARD.html`](BOARD.html)
+(Stories `PIPE-1` through `PIPE-6`). Distinct from `EPIC-2`
+(Cosmos-inspired, Done) and `EPIC-3` (Oracle-inspired, Done) — those two
+were scoped from the July 2026 snapshot in
+`ai-agent-platform-competitive-analysis.md`. This epic is grounded in
+dedicated follow-up research (2026-07-31 — see the matching dated
+`DECISIONS.md` entry for the full writeup) into the exact pipeline
+mechanics of three platforms that survey only summarized at a high level:
+Mem0's real-time per-write `ADD`/`UPDATE`/`DELETE`/`NOOP` classification
+(a candidate fact compared via cosine similarity to top-k existing
+memories, with an LLM policy routing the outcome — distinct from this
+SDK's existing `ENH-3` Reconciler, which only batch-scans already-written
+facts for contradictions); Microsoft Agent Framework's `ContextProvider`/
+`HistoryProvider` lifecycle-hook adapter shape (`before_run`/`after_run`,
+GA as of April 2026, confirmed via current Microsoft Learn docs dated
+2026-07-10) — a fundamentally different integration pattern than the
+`Step 6` LangChain/OpenAI-Agents/MCP adapters; and Oracle AI Agent
+Memory's 26.6 release (hybrid semantic+keyword search now GA, context-card
+per-type minimum-result balancing, `MemoryExtractionConfig`), which
+shipped after `EPIC-3` was originally scoped. This epic also closes two
+items `VER-13`'s market-fit check left as documented PARTIAL/open: hybrid
+retrieval (`PIPE-1`) and ergonomic GDPR-style erasure (`PIPE-5`).
+
+Same working agreement as every other epic (read `DECISIONS.md` first,
+update it + `BOARD.html` before finishing, commit each story separately),
+and the same Step 0 philosophy: Db2-only, zero mandatory new
+infrastructure, developer-controlled writes by default. Every new hook
+introduced here (`IngestResolver`, `hybrid=True`, the new adapter) is
+opt-in and must leave today's default behavior unchanged — do not make
+this epic's stories the default path.
+
+Suggested order: `PIPE-1`, `PIPE-2`, `PIPE-5`, and `PIPE-6` are each fully
+independent and can be done in any order or in parallel. `PIPE-3` is also
+independent (a new adapter, touching nothing else). `PIPE-4` depends on
+`ORC-1`'s `ContextCard`/`get_context_card()` (Done, `EPIC-3`) as the base
+it extends — do that one last if you want the smallest possible diff to
+review against a stable base, though nothing blocks starting it earlier.
+
+---
+
+## PIPE-1 — Hybrid retrieval: keyword scoring fused with vector search via reciprocal rank fusion
+
+```
+Before starting: in BOARD.html, set PIPE-1's status to "In Progress".
+
+Add an optional `hybrid: bool = False` parameter to `search()` (and
+`_search_via_chunks()`). When enabled, compute a keyword-overlap score per
+candidate row (token-set overlap against the query string, computed in
+Python over the same candidate set already fetched — no new query)
+alongside the existing `VECTOR_DISTANCE` ranking, then fuse the two
+ranked lists via Reciprocal Rank Fusion (RRF: score = sum(1/(k+rank))
+across both rankings, k=60 as the standard RRF default) into the final
+result order, rather than a hand-tuned weighted average.
+
+Do NOT depend on Db2's Text Search Extender (`CONTAINS`/`SCORE`/
+`CONTAINS_ANY`/`CONTAINS_ALL`) for this. The 2026-07-31 EPIC-2 research
+entry already flagged that current-version (12.1) documentation for that
+extender couldn't be confidently confirmed at the time; a fresh check for
+this epic still couldn't confirm whether it ships enabled-by-default
+versus requiring separate DBA-run enablement (IBM's own "How to enable
+TEXT SEARCH for a DB2 database" support article describes it as an
+installable extender, historically opt-in, not a core SQL feature). A
+Python-side fusion keeps this zero-mandatory-infrastructure, matching the
+Step 0 principle, and is directly comparable in spirit to how both Oracle
+and Mem0 describe "hybrid = semantic + keyword in the same search flow"
+without requiring callers to provision a separate search engine.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the RRF formula/constant used and confirming the
+keyword-scoring approach taken, plus a note that Db2 Text Search Extender
+remains an unconfirmed future upgrade path rather than something this
+story depends on. In BOARD.html, set PIPE-1's status to "Done" and add a
+comment summarizing what you built. Then
+`git add -A && git commit -m "pipe-1: hybrid retrieval via RRF-fused keyword+vector search"`.
+```
+
+---
+
+## PIPE-2 — Ingest resolution: pluggable ADD/UPDATE/DELETE/NOOP classifier at write time
+
+```
+Before starting: in BOARD.html, set PIPE-2's status to "In Progress".
+
+Add an `IngestResolver` protocol to `types.py`, parallel in shape to
+`Consolidator`/`Reconciler`: `(candidate, similar: list[tuple[model,
+distance]]) -> IngestDecision`, where `IngestDecision` names one of
+`ADD`/`UPDATE`/`DELETE`/`NOOP` plus, for `UPDATE`/`DELETE`, the target
+record id. Ship a `NoOpIngestResolver` default (always `ADD` — today's
+unchanged behavior). Wire it as an optional `ingest_resolver=` constructor
+arg on `MemoryStore`; when configured, `remember()` first runs `search()`
+against the same-type table (scoped, `top_k=resolver_k`) to find similar
+existing records, passes the candidate plus those results to the
+resolver, and acts on the decision: `ADD` inserts as today, `UPDATE`
+calls the existing optimistic-concurrency `update()` on the target id,
+`DELETE` calls `forget()` on the target id, `NOOP` skips the write
+entirely.
+
+This is a pipeline stage the SDK doesn't have today: `ENH-3`'s Reconciler
+runs later, in batches, over already-written non-superseded facts,
+looking specifically for contradictions between them. This new resolver
+runs once, at write time, against the top-k most-similar candidates by
+cosine distance (not a batch scan), and can choose to merge/update/
+discard/no-op the incoming write itself — the real-time
+classify-against-existing-similar-memories step Mem0's pipeline is
+actually built around.
+
+Keep this strictly opt-in (`ingest_resolver=None` default) — the
+"developer-controlled writes, not mandatory passive extraction"
+positioning is a deliberate differentiator called out in
+ai-agent-platform-competitive-analysis.md's SWOT, and this story must not
+make the default write path any heavier.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry describing the protocol shape and confirming the default
+path is unchanged when no resolver is configured. In BOARD.html, set
+PIPE-2's status to "Done" and add a comment summarizing what you built.
+Then
+`git add -A && git commit -m "pipe-2: pluggable ingest resolver (ADD/UPDATE/DELETE/NOOP)"`.
+```
+
+---
+
+## PIPE-3 — Framework adapter: Microsoft Agent Framework ContextProvider/HistoryProvider
+
+```
+Before starting: in BOARD.html, set PIPE-3's status to "In Progress".
+
+Microsoft Agent Framework (GA April 3, 2026, unifying AutoGen + Semantic
+Kernel) uses a fundamentally different adapter shape than the three
+frameworks this SDK already integrates with (Step 6: LangChain, OpenAI
+Agents SDK's Session protocol, MCP) — a lifecycle-hook pattern rather
+than a store/session interface. Its Python `ContextProvider` base class
+exposes `async before_run(*, agent, session, context: SessionContext,
+state: dict)` (called before the model is invoked — inject retrieved
+memory via `context.extend_instructions(source_id, text)`) and `async
+after_run(*, agent, session, context, state)` (called after the response
+— extract/persist new memory). A specialized `HistoryProvider` subclass
+instead implements `async get_messages(session_id, *, state, **kwargs)
+-> list[Message]` and `async save_messages(session_id, messages, *,
+state, **kwargs)`.
+
+Add `src/agent_memory_sdk/adapters/agent_framework.py` (new
+`[agent-framework]` optional extra, following the exact pattern of the
+existing `[langchain]`/`[openai-agents]`/`[mcp]` extras) with two
+classes: `MemoryStoreContextProvider(ContextProvider)` whose `before_run`
+calls `store.search()`/`store.get_context_card()` for the current scope
+and injects results via `context.extend_instructions()`, and whose
+`after_run` calls `store.remember()` on the turn's request/response
+messages; and `MemoryStoreHistoryProvider(HistoryProvider)` whose
+`get_messages()`/`save_messages()` map directly onto
+`store.working.list_all()`/`store.remember()`. Session-specific state
+(e.g. a memory-scope identifier) must live in the `AgentSession`/`state`
+dict passed to each call, never on the provider instance itself — the
+same provider instance is shared across all sessions, a constraint
+Microsoft's own docs call out explicitly.
+
+Add adapter tests in `tests/test_adapters.py` following the existing
+per-adapter structure (mock the framework's `ContextProvider`/
+`HistoryProvider` base classes the same way the existing
+LangChain/OpenAI-Agents/MCP tests mock theirs).
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the exact classes/methods implemented and confirm
+the new `[agent-framework]` extra installs cleanly. In BOARD.html, set
+PIPE-3's status to "Done" and add a comment summarizing what you built.
+Then
+`git add -A && git commit -m "pipe-3: Microsoft Agent Framework ContextProvider/HistoryProvider adapter"`.
+```
+
+---
+
+## PIPE-4 — Context card v2: blend durable long-term memory into the short-term card, with per-type minimum balancing
+
+```
+Before starting: in BOARD.html, set PIPE-4's status to "In Progress".
+
+ORC-1's `get_context_card()` (Done, EPIC-3) returns only a raw
+chronological slice of recent working-memory turns plus an optional
+summarizer hook — it does not pull in any long-term memory. Oracle AI
+Agent Memory's `get_context_card()` returns a richer bundle: a summary,
+relevant durable records (facts/profiles retrieved by relevance to the
+current thread, not just recency), retrieval topics, and recent messages
+— and its 26.6 release added the ability to set a minimum result count
+per record type so context assembly doesn't get dominated by one memory
+type (e.g. all recent turns, zero relevant facts).
+
+Extend `ContextCard` with optional `relevant_facts: list[SemanticFact]`
+and `relevant_profiles: list[EntityProfile]` fields, populated when
+`get_context_card(scope, query=..., include_long_term=True,
+min_results_by_type={'facts': 2, 'profiles': 1})` is called with a query
+string: run `store.facts.search()`/`store.profiles.search()` for that
+scope/query, and if a type falls below its configured minimum, backfill
+with its most-recent (not just most-relevant) records for that type so a
+thin/early-scope conversation doesn't return an empty section. Default
+behavior (no `query` passed) must stay exactly as ORC-1 left it — this is
+purely additive.
+
+Before starting: read DECISIONS.md in full, including ORC-1's entry.
+Before finishing: append a dated entry describing the new fields/
+parameters and confirming the no-query default path is byte-for-byte
+unchanged. In BOARD.html, set PIPE-4's status to "Done" and add a comment
+summarizing what you built. Then
+`git add -A && git commit -m "pipe-4: context card v2 with blended long-term memory and per-type minimums"`.
+```
+
+---
+
+## PIPE-5 — Ergonomic erasure: erase_all(scope) with an ErasureReport
+
+```
+Before starting: in BOARD.html, set PIPE-5's status to "In Progress".
+
+VER-13's market-fit check documented this SDK's erasure story as PARTIAL:
+the `forget()` primitive exists (per-record soft-delete tombstone) but
+there's no single user-scoped "erase everything for this person" API or
+erasure report — a real GDPR-style workflow gap. Oracle AI Agent Memory's
+own erasure story, per current documentation, is not a single magic API
+either — it's search, list, and per-record delete operations across
+memories, threads, and messages, so callers can locate records for a
+subject and remove them on request, with Oracle Database's native
+auditing covering the storage layer underneath. This SDK can still do
+meaningfully better ergonomically without inventing something no vendor
+actually ships.
+
+Add `MemoryStore.erase_all(scope: MemoryScope) -> ErasureReport`: unlike
+`forget()` (soft-delete, reversible, used for routine memory lifecycle),
+this is a genuine hard-delete across all five repositories plus
+`memory_chunks` for every row matching the given scope — appropriate
+specifically for a compliance erasure request, not everyday forgetting.
+Return an `ErasureReport` dataclass: a per-table `rows_deleted` count, a
+total, and a timestamp, so the caller has an auditable record of what was
+actually erased. Document clearly in the docstring that this bypasses
+the tombstone/`deleted_at` lifecycle entirely and is irreversible — a
+deliberately different guarantee from `forget()`.
+
+Before starting: read DECISIONS.md in full, including the VER-13 entry.
+Before finishing: append a dated entry recording the ErasureReport shape
+and confirming which tables are covered. In BOARD.html, set PIPE-5's
+status to "Done" and add a comment summarizing what you built. Then
+`git add -A && git commit -m "pipe-5: erase_all(scope) with ErasureReport for GDPR-style erasure"`.
+```
+
+---
+
+## PIPE-6 — Memory export/import for portability and backup
+
+```
+Before starting: in BOARD.html, set PIPE-6's status to "In Progress".
+
+ai-agent-platform-competitive-analysis.md's gap analysis (#3) notes no
+standard export/interchange format exists anywhere in the industry —
+migrating between vendors means rewriting, and even the feature-matrix's
+"Import/export" entries for Mem0/Oracle are each proprietary to that
+vendor, not interoperable with each other. This story does not attempt
+to solve the unsolved cross-vendor problem; it solves this SDK's own,
+narrower gap — there is currently no way to back up or migrate a
+tenant/agent's memory out of Db2 at all.
+
+Add `MemoryStore.export_scope(scope: MemoryScope) -> Iterator[dict]`
+yielding one JSON-serializable record per row across all five memory
+tables plus `memory_chunks` matching the scope (tagged with a `_type`
+discriminator field), and `MemoryStore.import_scope(records:
+Iterable[dict], scope: MemoryScope)` that re-inserts them via the
+existing per-type `create()` methods (re-validating scope match on every
+record — reject with a clear error if an imported record's scope doesn't
+match the target scope, rather than silently rewriting it). Provide a
+`scripts/export_memory.py`/`scripts/import_memory.py` pair (JSONL on
+disk) as the reference CLI usage, matching the existing
+`scripts/purge_expired.py`/`scripts/consolidate_pending.py` pattern.
+Document explicitly that this is this SDK's own proprietary format
+(embedding vectors included as raw float lists), not a cross-vendor
+interchange standard — none exists industry-wide per the market study.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the exported record shape and the reference
+CLI scripts added. In BOARD.html, set PIPE-6's status to "Done" and add a
+comment summarizing what you built. Then
+`git add -A && git commit -m "pipe-6: memory export/import for portability and backup"`.
+```

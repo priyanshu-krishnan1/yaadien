@@ -764,6 +764,24 @@ class BaseRepository(ABC, Generic[M]):
             # constraint is satisfied and it's clear that this row's semantic
             # representation lives in the memory_chunks table, not here.
             parent_vec_str = self._zero_vec_str()
+        elif self._embedding_provider is not None and not record.embedding:
+            # No chunking (content below threshold or chunking disabled), but
+            # an embedding provider is wired in and the caller did not
+            # pre-compute an embedding.  Compute it now so that the parent row
+            # carries a real semantic vector and search() can rank it correctly.
+            # This is the normal path when enable_chunking=False is set on the
+            # MemoryStore (e.g. the benchmark's consolidator-wired local store)
+            # or when the caller writes a WorkingMemory without pre-embedding.
+            try:
+                computed_vec = self._embedding_provider(record.content)
+                parent_vec_str = _vec_to_str(computed_vec)
+            except Exception:
+                logger.exception(
+                    "create: embedding_provider raised for %s id=%s; "
+                    "falling back to zero-vector sentinel.",
+                    self._TABLE, record.id,
+                )
+                parent_vec_str = self._zero_vec_str()
         else:
             parent_vec_str = _vec_to_str(record.embedding) if record.embedding else self._zero_vec_str()
         # --- end ORC-2 gate -------------------------------------------------
@@ -1067,6 +1085,19 @@ class BaseRepository(ABC, Generic[M]):
         )
         if should_chunk:
             vec_str = self._zero_vec_str()
+        elif self._embedding_provider is not None and not record.embedding:
+            # Same logic as create(): compute the embedding for short content
+            # when a provider is wired in and no pre-computed vector is present.
+            try:
+                computed_vec = self._embedding_provider(record.content)
+                vec_str = _vec_to_str(computed_vec)
+            except Exception:
+                logger.exception(
+                    "update: embedding_provider raised for %s id=%s; "
+                    "falling back to zero-vector sentinel.",
+                    self._TABLE, record.id,
+                )
+                vec_str = self._zero_vec_str()
         else:
             vec_str = _vec_to_str(record.embedding) if record.embedding else self._zero_vec_str()
         # --- end ORC-2 gate -------------------------------------------------

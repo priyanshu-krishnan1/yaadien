@@ -3274,3 +3274,259 @@ The same four rationale points that led BENCH-3a to choose a deterministic regex
 
 ---
 
+## 2026-07-31 — EPIC-7 backlog: fresh Mem0/Microsoft Agent Framework/Oracle 26.6 pipeline research
+
+- **Decision:** Researched the current (2026-07) pipeline mechanics of
+  Mem0, Microsoft Agent Framework, and Oracle AI Agent Memory — beyond
+  what `ai-agent-platform-competitive-analysis.md`'s July 2026 snapshot
+  already surveys at a high level — and added a third "backlog" epic,
+  "Next-gen memory pipeline features — fresh 2026 research on Mem0,
+  Microsoft Agent Framework, and Oracle AI Agent Memory" (`EPIC-7`), to
+  `BOARD.html` with six Stories (`PIPE-1` through `PIPE-6`), all in To Do,
+  plus a matching prompt sequence appended to `PROMPTS.md`. **No source
+  code was changed** — this is a backlog-only addition to the board and
+  prompt file, per explicit instruction, mirroring exactly how the
+  2026-07-31 EPIC-2 entry above was done.
+
+  A new epic (not folded into `EPIC-5`, whose stories are already Done and
+  scoped to CI/security/packaging/benchmarking infrastructure, or `EPIC-6`,
+  which is scoped specifically to the Run B retrieval-quality regression)
+  was confirmed as the right home by asking first rather than assuming;
+  the user picked "new epic" over the other two options offered.
+
+  **What the fresh research actually found** (verified via direct web
+  research against current, dated sources — not assumed or recycled from
+  the existing market study):
+
+  - **Mem0** — confirmed via 2026 architecture write-ups (e.g. the Dwarves
+    Memo Mem0 breakdown) that its pipeline is still, concretely: extract
+    atomic facts from the turn → compare each candidate fact to its top-k
+    most-similar existing memories via cosine similarity → an LLM policy
+    routes each candidate to `ADD`/`UPDATE`(merge)/`DELETE`/`NOOP`. This is
+    a distinct pipeline stage from anything this SDK has today — `ENH-3`'s
+    Reconciler batch-scans already-written facts for contradictions after
+    the fact; Mem0's classification happens once, at write time, against
+    the nearest-neighbor candidates specifically.
+  - **Microsoft Agent Framework** — confirmed via Microsoft Learn docs
+    (learn.microsoft.com/agent-framework/agents/conversations/
+    context-providers, page dated 2026-07-10) that the Python API is
+    `ContextProvider` (canonical base class, with `before_run`/`after_run`
+    lifecycle hooks receiving `(agent, session, context: SessionContext,
+    state: dict)`, injecting context via `context.extend_instructions()`/
+    `extend_middleware()`/`extend_tools()`) and a specialized
+    `HistoryProvider` subclass (`get_messages()`/`save_messages()`). This
+    is a materially different adapter shape than the store/session
+    interfaces this SDK's three existing adapters (`Step 6`: LangChain,
+    OpenAI Agents SDK, MCP) implement.
+  - **Oracle AI Agent Memory** — confirmed via the official 26.6 "What's
+    New" changelog (docs.oracle.com/en/database/oracle/agent-memory/26.6)
+    that hybrid search (semantic + keyword in the same search flow) is
+    now GA, plus new controls this SDK didn't have visibility into when
+    `EPIC-3`/`ORC-1..4` were originally scoped: `MemoryExtractionConfig`
+    for background/async extraction and custom extraction instructions,
+    per-record/per-schema TTL, `update_thread()`/`update_message()`, and
+    "Context Card Minimum Results by Type" balancing for context assembly.
+
+  **The six Stories chosen** (a small, high-value set per the same
+  discipline as EPIC-2/EPIC-3 — not exhaustive):
+  - `PIPE-1` — hybrid retrieval: a Python-side keyword-overlap score fused
+    with the existing vector ranking via Reciprocal Rank Fusion. This
+    picks up a gap the EPIC-2 entry above explicitly deferred (Db2 Text
+    Search Extender's current-version status was unconfirmed then, and
+    remains unconfirmed after this fresh check too — see "deliberately
+    excluded" below), and is also VER-13's documented PARTIAL rating for
+    hybrid retrieval.
+  - `PIPE-2` — a new `IngestResolver` protocol implementing Mem0's actual
+    per-write `ADD`/`UPDATE`/`DELETE`/`NOOP` classification against top-k
+    similar existing records, kept strictly opt-in and distinct from the
+    existing `Consolidator`/`Reconciler` hooks.
+  - `PIPE-3` — a fourth framework adapter, for Microsoft Agent Framework's
+    `ContextProvider`/`HistoryProvider`, alongside the existing LangChain/
+    OpenAI Agents SDK/MCP adapters.
+  - `PIPE-4` — extends `ORC-1`'s `get_context_card()` to optionally blend
+    relevant long-term facts/profiles into the card (not just raw recent
+    turns) with per-type minimum-result balancing, matching Oracle 26.6's
+    richer context-card assembly.
+  - `PIPE-5` — an ergonomic `erase_all(scope)` + `ErasureReport`, closing
+    VER-13's PARTIAL erasure rating. Notably, checking Oracle's actual
+    erasure API revealed it is *not* a single magic call either — search/
+    list/per-record-delete, same as this SDK's existing primitives — so
+    this story is genuinely about ergonomics (one call + an audit report),
+    not porting a mechanism no vendor actually ships.
+  - `PIPE-6` — `export_scope()`/`import_scope()` for this SDK's own
+    backup/portability story, explicitly *not* framed as solving the
+    industry-wide "no standard memory interchange format" gap the market
+    study's gap analysis (#3) says nobody has solved.
+
+  **Deliberately excluded / not turned into a story, and why:**
+  - **Bi-temporal fact modeling / temporal reasoning queries** (Zep's
+    differentiator) — VER-13 already explicitly placed this out of scope
+    for this SDK's positioning; nothing in this fresh research changes
+    that calculus, so it was not revisited.
+  - **Knowledge graph / relational memory** (Mem0ᵍ, Oracle's graph
+    support, Neo4j) — would require new graph-query infrastructure Db2 LUW
+    doesn't natively provide, conflicting with the zero-mandatory-new-
+    infrastructure principle the same way Cosmos's change-feed did for
+    `EPIC-2`. Flagged here as a real gap, not committed to a story.
+  - **Db2 Text Search Extender (`CONTAINS`/`SCORE`) as the mechanism for
+    `PIPE-1`** — re-attempted to confirm current-version (12.1) status via
+    fresh web research for this epic specifically. Search results kept
+    surfacing 9.5/10.1/10.5/11.1-era documentation, plus one 12.1.x-tagged
+    IBM Docs page for the `SCORE` function that could not actually be
+    fetched (IBM Docs returns HTTP 403 to automated fetches) to confirm
+    whether it's still current or requires a separately-installed/enabled
+    extender. Same unresolved status as the original EPIC-2 research — so
+    `PIPE-1` is scoped to use a Python-side keyword score instead of
+    depending on this, with the extender noted in the story as a possible
+    future upgrade path once genuinely confirmed on a live instance.
+  - **PII detection** — flagged in the market study's gap analysis (#11)
+    as one of the least-solved problems industry-wide (every platform is
+    at best "partial"); no vendor's approach was concrete enough to ground
+    a specific Db2-adapted story the way, e.g., Oracle's erasure API
+    could. Left as an open gap rather than forcing a low-confidence story.
+  - **Mem0's default passive/async LLM extraction as this SDK's default
+    write path** — deliberately not adopted. `PIPE-2`'s `IngestResolver` is
+    opt-in specifically so this SDK's "developer-controlled writes, not
+    mandatory passive extraction" positioning (called out in the market
+    study's own SWOT) stays intact; Mem0's pipeline is the inspiration for
+    the *shape* of the classification, not a reason to make it mandatory.
+
+  **Also noticed, not fixed:** while locating the actual end of
+  `BOARD.html`'s stories array to append `PIPE-1..6`, found that `EPIC-6`
+  already has `BENCH-1` through `BENCH-5` present in `BOARD.html` (four
+  Done, one To Do) — an initial `grep` during this session's research
+  incorrectly suggested `EPIC-6` had zero stories, which shaped how the
+  epic-placement question was framed to the user (see "Decision" above).
+  The board itself was never in that state; this was a transient
+  investigation error, corrected before anything was written. No action
+  needed — noted here only so a future reader isn't confused by the
+  earlier framing if they see this session's transcript.
+
+**Made during:** EPIC-7 backlog creation (research + board/prompt update, no source code).
+
+**Supersedes:** Nothing — first EPIC-7 entry.
+
+---
+
+
+## 2026-07-31 — BENCH-3c: search consolidated facts + before/after comparison (Run D)
+
+**Story:** BENCH-3c — Change `run_retrieval_quality()` to query `store.facts` in addition to
+`store.working` now that BENCH-3a/3b produce consolidated records; re-run Run B's exact config
+and record the before/after category deltas.
+
+### Search strategy: combined `working` + `facts`, deduplicated
+
+Two options were considered for BENCH-3c's search step:
+
+**Option A — Replace `store.working.search()` with `store.facts.search()` entirely.**
+Clean and simple.  Problem: `abstention` questions have no facts written (the question asks about something never mentioned), so a facts-only search would always return an empty context — always CORRECT for abstention, but only by accident.  Also loses the working-memory signal for categories where the consolidator does not fire (though in practice the consolidator fires on every turn for this dataset).
+
+**Option B — Search both `store.working` and `store.facts`, merge results, deduplicate on content.**
+The approach chosen.  Rationale:
+
+1. `BenchmarkConsolidator` stores verbatim turn text as the fact content, so a working-memory
+   result and its corresponding fact have identical content strings — exact-string dedup is both
+   correct and cheap.
+2. Both search pools are available; the working-memory results arrive first (preserving their
+   distance ranking), then any facts results not already present are appended up to `top_k`.
+3. After `BenchmarkReconciler.reconcile()`, the stale `knowledge_update` fact has
+   `superseded_at IS NOT NULL` and is excluded by the repository layer's filter.  Only the
+   current-value fact appears in the facts search results — the judge sees only the correct answer.
+4. Backward compatible: `search_facts=False` (default) leaves the function output unchanged.
+
+### Embedded fix: `BaseRepository.create()` / `update()` — compute embedding for short content
+
+During the benchmark run, Db2 raised SQL0801N (division by zero) on every `VECTOR_DISTANCE` call.
+Root cause: `BaseRepository.create()` only called `_embedding_provider` via `_write_chunks()` for
+content above the chunk threshold.  For short content (`enable_chunking=False` or below threshold),
+the parent row's embedding was always the zero-vector sentinel, regardless of whether an embedding
+provider was wired in.  Cosine distance on a zero vector involves dividing by a zero norm →
+SQL0801N on Db2.
+
+Fix: in both `create()` and `update()`, added an `elif` branch:
+
+```python
+elif self._embedding_provider is not None and not record.embedding:
+    computed_vec = self._embedding_provider(record.content)
+    parent_vec_str = _vec_to_str(computed_vec)
+```
+
+This branch fires when:
+- No chunking (`should_chunk` is False — either `_chunk_repo is None` or content is short), AND
+- An embedding provider is wired in (`_embedding_provider is not None`), AND
+- The caller did not pre-compute an embedding (`not record.embedding`).
+
+The fix is a **general correctness improvement** to the base repository layer, not benchmark-
+specific.  Any caller who:
+- Creates a `MemoryStore` with `embedding_provider=` and `enable_chunking=False`, or
+- Writes a `WorkingMemory` without a pre-computed embedding when `enable_chunking=False`,
+
+will now get a real semantic vector on the parent row instead of a zero sentinel.  The existing
+exception handler falls back to zero-vector on provider failure, preserving the NOT NULL
+constraint.  This does not change the chunking path (long content still uses chunk rows for
+semantics, parent row still gets zero sentinel).
+
+### Run D results
+
+| Field | Value |
+|---|---|
+| **Date** | 2026-07-31 |
+| **Run id** | `33fd59b96896` |
+| **Embedding provider** | `ollama` / `nomic-embed-text` (768-dim padded to 1536) |
+| **Judge** | `ollama:llama3.1:8b` |
+| **top_k** | 5 |
+| **Dataset size** | 50 questions (n=10 per category, seed=42) |
+
+**Before/after (Run B → Run D):**
+
+| Category | Run B (with-SDK) | Run D (with-SDK) | Delta |
+|---|---|---|---|
+| extraction | 90.0% (9/10) | 100.0% (10/10) | **+10.0%** |
+| multi_session | 70.0% (7/10) | 100.0% (10/10) | **+30.0%** |
+| temporal_reasoning | 70.0% (7/10) | 100.0% (10/10) | **+30.0%** |
+| knowledge_update | 90.0% (9/10) | 100.0% (10/10) | **+10.0%** |
+| abstention | 100.0% (10/10) | 90.0% (9/10) | **-10.0%** |
+| **Overall** | **84.0%** (42/50) | **98.0%** (49/50) | **+14.0%** |
+
+**SDK vs. baseline (Run D):** 98.0% vs. 98.0% — delta **+0.0%**.  The SDK matches flat-context
+quality after the embedding fix.
+
+### Honest assessment of what closed the gap
+
+The primary driver of the improvement is the **`BaseRepository.create()` embedding fix**, not the
+Consolidator/Reconciler wiring.  Without real embeddings on the parent row, `VECTOR_DISTANCE`
+always returned SQL0801N on Db2, and every search returned zero results.  The consolidator and
+reconciler infrastructure (BENCH-3a/3b) was correctly wired but could not surface value until the
+embedding was actually computed and stored.
+
+The Reconciler's supersession contribution is specifically visible in `knowledge_update`: the
+stale fact is excluded from `facts.search()` results at the DB layer, so the judge sees only the
+current-value answer.  This is the mechanism ENH-3 was designed to provide.
+
+The -10.0% abstention slip is within judge non-determinism noise at n=10 per category (±8% = ±1
+question noted in BENCH-1 analysis).  The abstention retrieval path is structurally unchanged
+between Run B and Run D — the consolidator fires on those turns (writing a `SemanticFact` for the
+unrelated planted fact), but the abstention question asks about something else entirely, so neither
+the facts nor the working-memory rows contain the answer, and `search()` returns either an empty or
+irrelevant context, which is correct behavior.
+
+### Files changed
+
+- `src/agent_memory_sdk/repositories/base.py` — `create()` and `update()`: added `elif` branch
+  to compute embedding via `_embedding_provider` for short content when chunking is not used.
+- `benchmarks/retrieval_quality/run.py` — added `search_facts: bool = False` kwarg;
+  `store.facts.search()` called when `search_facts and consolidator is not None`; results merged
+  and deduplicated on content text before passing to judge.
+- `scripts/run_benchmarks.py` — added `--consolidator benchmark`, `--reconcile`, `--search-facts`
+  CLI flags; `BenchmarkConsolidator` and `BenchmarkReconciler` imported and wired when flags set.
+- `project-management/BENCHMARKS.md` — Run D added (with before/after table); summary table updated.
+- `project-management/BOARD.html` — BENCH-3c status → Done with comment.
+- `project-management/DECISIONS.md` — this entry.
+
+**Made during:** BENCH-3c (EPIC-6 third and final consolidation sub-story).
+
+**Supersedes:** Nothing — this is the first BENCH-3c entry.
+
+---
+

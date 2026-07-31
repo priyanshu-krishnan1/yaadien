@@ -50,6 +50,8 @@ from benchmarks.common.report import RunMetadata, render_markdown  # noqa: E402
 from benchmarks.common.scope_gen import new_run_id  # noqa: E402
 from benchmarks.isolation_load.run import run_isolation_load  # noqa: E402
 from benchmarks.latency_cost.run import MockConsolidator, run_latency_cost  # noqa: E402
+from benchmarks.retrieval_quality.consolidator import BenchmarkConsolidator  # noqa: E402
+from benchmarks.retrieval_quality.reconciler import BenchmarkReconciler  # noqa: E402
 from benchmarks.retrieval_quality.run import run_baseline, run_retrieval_quality  # noqa: E402
 
 from agent_memory_sdk.db.connection import ConnectionError as Db2ConnectionError  # noqa: E402
@@ -124,13 +126,38 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=5, help="top_k for retrieval-suite search() calls (default 5).")
     parser.add_argument("--latency-ops", type=int, default=50, help="Number of remember()/search() calls to time (default 50).")
     parser.add_argument(
-        "--consolidator", choices=["none", "mock"], default="none",
+        "--consolidator", choices=["none", "mock", "benchmark"], default="none",
         help=(
             "'none' (default): NoOp consolidator, $0.00 estimated cost — the "
             "SDK's default write path. 'mock': wires in a non-LLM mock "
             "consolidator (benchmarks/latency_cost/run.py:MockConsolidator) "
             "wrapped in a token-cost estimator, to demonstrate the cost-"
-            "tracking mechanism (NOT a real LLM cost claim)."
+            "tracking mechanism (NOT a real LLM cost claim). "
+            "'benchmark': wires BenchmarkConsolidator (deterministic "
+            "template-matching, BENCH-3a/3c) into the retrieval-quality suite "
+            "so each remember() also writes SemanticFact rows."
+        ),
+    )
+    parser.add_argument(
+        "--reconcile",
+        action="store_true",
+        default=False,
+        help=(
+            "Wire BenchmarkReconciler into the retrieval-quality suite "
+            "(BENCH-3b/3c). After all sessions for each question are written, "
+            "calls store.reconcile('facts', scope) to supersede stale "
+            "knowledge_update facts before search(). Only meaningful with "
+            "--consolidator benchmark."
+        ),
+    )
+    parser.add_argument(
+        "--search-facts",
+        action="store_true",
+        default=False,
+        help=(
+            "Search store.facts in addition to store.working for each question "
+            "(BENCH-3c). Merges and deduplicates results before passing context "
+            "to the judge. Only meaningful with --consolidator benchmark."
         ),
     )
     parser.add_argument("--tenants", type=int, default=10, help="Synthetic tenants for the isolation suite (default 10).")
@@ -183,9 +210,15 @@ def main(argv: list[str] | None = None) -> int:
 
     consolidator_hook = None
     consolidator = None
+    reconciler = None
     if args.consolidator == "mock":
         consolidator_hook = CostTrackingHook(wrapped=MockConsolidator())
         consolidator = consolidator_hook
+    elif args.consolidator == "benchmark":
+        consolidator = BenchmarkConsolidator()
+
+    if getattr(args, "reconcile", False):
+        reconciler = BenchmarkReconciler()
 
     store = MemoryStore(pool, embedding_dim=embedding_dim, embedding_provider=embedding_provider, consolidator=consolidator)
 
@@ -219,6 +252,9 @@ def main(argv: list[str] | None = None) -> int:
                 n_per_category=args.dataset_size,
                 seed=args.seed,
                 top_k=args.top_k,
+                consolidator=consolidator if args.consolidator == "benchmark" else None,
+                reconciler=reconciler,
+                search_facts=getattr(args, "search_facts", False),
                 debug=args.debug,
             )
             print(f"      with-SDK accuracy:    {retrieval_result.overall_accuracy:.1%} "

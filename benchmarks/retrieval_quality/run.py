@@ -4,8 +4,10 @@ benchmarks/retrieval_quality/run.py
 Two evaluation modes over the same synthetic dataset:
 
 ``run_retrieval_quality`` — **with SDK**: session turns written via
-``MemoryStore.remember()``, answer retrieved via ``store.working.search()``,
-scored by the judge. This is the SDK's actual retrieval pipeline.
+``MemoryStore.remember()``, answer retrieved via ``store.working.search()``
+(default) or a merged ``store.working.search()`` + ``store.facts.search()``
+(when *search_facts=True* is supplied alongside a consolidator), scored by
+the judge.  This is the SDK's actual retrieval pipeline.
 
 ``run_baseline`` — **without SDK**: the judge receives all session turns
 concatenated into a flat context window, with no storage or retrieval step.
@@ -102,6 +104,7 @@ def run_retrieval_quality(
     *,
     consolidator: Any | None = None,
     reconciler: Any | None = None,
+    search_facts: bool = False,
     debug: bool = False,
 ) -> RetrievalQualityResult:
     """Execute the retrieval-quality suite (with SDK) and return the result.
@@ -147,6 +150,31 @@ def run_retrieval_quality(
                                   A *reconciler* without a *consolidator* is a
                                   no-op: without a Consolidator there are no
                                   ``SemanticFact`` rows to reconcile.
+        search_facts:             When ``True`` (and *consolidator* is supplied),
+                                  search ``active_store.facts`` **in addition to**
+                                  ``active_store.working``, merge the two result
+                                  lists, deduplicate on content text, and pass the
+                                  merged context to the judge instead of the raw
+                                  working-memory results alone.  This is the
+                                  BENCH-3c change: after BENCH-3a's Consolidator
+                                  promotes turns to ``SemanticFact`` rows and
+                                  BENCH-3b's Reconciler supersedes the stale ones,
+                                  the retrieval step must actually query the facts
+                                  table to benefit from the supersession.
+
+                                  Merge/dedup strategy: collect all unique content
+                                  strings from ``working`` results first (in their
+                                  distance-ranked order), then append any ``facts``
+                                  results whose content is not already present,
+                                  up to ``top_k`` unique results total.  Because
+                                  ``BenchmarkConsolidator`` stores the verbatim
+                                  turn text as the fact content, working-memory
+                                  results and facts results with the same text are
+                                  exact duplicates — dedup is exact-string match.
+
+                                  When ``False`` (default), only
+                                  ``active_store.working.search()`` is called —
+                                  identical to pre-BENCH-3c behaviour.
         debug:                    When True, log full retrieval evidence for
                                   every INCORRECT question (rank, distance,
                                   retrieved context, flat-context baseline).
@@ -229,11 +257,42 @@ def run_retrieval_quality(
                 )
 
         query_embedding = embedding_provider(q.question)
-        results = active_store.working.search(
+        working_results = active_store.working.search(
             query_embedding=query_embedding,
             scope=q.scope,
             top_k=top_k,
         )
+
+        # BENCH-3c: when search_facts=True and a consolidator has been wired
+        # in (so SemanticFact rows actually exist), also search store.facts and
+        # merge the results.  The merged list is deduplicated on content text
+        # because BenchmarkConsolidator stores verbatim turn text as the fact
+        # content — a working-memory result and its corresponding fact result
+        # have identical content strings.
+        #
+        # After BENCH-3b's reconcile() call (above), the stale fact for a
+        # knowledge_update question has superseded_at IS NOT NULL and is
+        # excluded from facts.search() by the repository layer's filter.  Only
+        # the current-value fact is returned, so the merged context contains the
+        # correct answer and not the stale one.
+        if search_facts and consolidator is not None:
+            facts_results = active_store.facts.search(
+                query_embedding=query_embedding,
+                scope=q.scope,
+                top_k=top_k,
+            )
+            # Merge: working results first (preserve their distance ranking),
+            # then any facts results whose content is not already present.
+            seen: set[str] = {r.content for r in working_results}
+            merged = list(working_results)
+            for fr in facts_results:
+                if fr.content not in seen:
+                    merged.append(fr)
+                    seen.add(fr.content)
+            results = merged[:top_k]
+        else:
+            results = working_results
+
         retrieved_context = "\n".join(r.content for r in results)
 
         is_correct = judge(q.question, q.gold_answer, retrieved_context)
