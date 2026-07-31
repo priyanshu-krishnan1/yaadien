@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agent-memory-sdk · Db2 Memory Dashboard</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; background: #f0f2f5; color: #1f2328; }
+
+.header { background: #1f2328; color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #3b82d4; }
+.header-logo { width: 32px; height: 32px; background: #3b82d4; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff; flex-shrink: 0; }
+.header h1 { font-size: 16px; font-weight: 600; }
+.header-sub { font-size: 12px; color: #8b949e; margin-left: auto; white-space: nowrap; }
+
+.stats-row { display: flex; gap: 12px; padding: 16px 24px 0; flex-wrap: wrap; }
+.stat-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 18px; min-width: 130px; }
+.stat-card.blue  { border-top: 3px solid #3b82d4; }
+.stat-card.green { border-top: 3px solid #22c55e; }
+.stat-card.amber { border-top: 3px solid #f59e0b; }
+.stat-card.gray  { border-top: 3px solid #9ca3af; }
+.stat-label { font-size: 11px; color: #57606a; text-transform: uppercase; letter-spacing: .05em; }
+.stat-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
+.stat-sub { font-size: 11px; color: #57606a; margin-top: 2px; }
+
+.main { padding: 20px 24px 40px; display: flex; flex-direction: column; gap: 20px; }
+
+/* ---- section card ---- */
+.section { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.section-header { padding: 12px 16px; background: #f7f8fa; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.section-title { font-size: 14px; font-weight: 700; }
+.badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+.badge-blue   { background: #dbeafe; color: #1d4ed8; }
+.badge-green  { background: #dcfce7; color: #166534; }
+.badge-amber  { background: #fef3c7; color: #92400e; }
+.badge-gray   { background: #f0f2f5; color: #57606a; }
+.badge-purple { background: #f3e8ff; color: #6d28d9; }
+
+/* ---- tables ---- */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #57606a; border-bottom: 2px solid #e5e7eb; background: #f7f8fa; white-space: nowrap; }
+td { padding: 9px 12px; border-bottom: 1px solid #f0f2f5; vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fafbfc; }
+
+.content-cell { max-width: 400px; }
+.content-text { line-height: 1.5; word-break: break-word; }
+.meta-tag { display: inline-block; font-size: 10px; color: #57606a; background: #f0f2f5; border-radius: 3px; padding: 1px 5px; font-family: "SFMono-Regular", Consolas, monospace; margin-top: 3px; }
+.agent-cell { font-size: 11px; color: #57606a; font-family: "SFMono-Regular", Consolas, monospace; max-width: 180px; word-break: break-all; }
+.ts { font-size: 11px; color: #57606a; white-space: nowrap; }
+
+.conf-wrap { display: flex; align-items: center; gap: 5px; }
+.conf-bar-bg { width: 40px; height: 6px; background: #e5e7eb; border-radius: 3px; flex-shrink: 0; overflow: hidden; }
+.conf-bar-fill { height: 100%; border-radius: 3px; }
+.conf-bar-fill.c-high { background: #22c55e; }
+.conf-bar-fill.c-mid  { background: #f59e0b; }
+.conf-val { font-size: 11px; color: #57606a; }
+
+/* superseded row style */
+.row-superseded td { opacity: .6; }
+.row-superseded td:first-child { border-left: 3px solid #f59e0b; padding-left: 9px; }
+.supersede-badge { display: inline-block; font-size: 10px; font-weight: 700; background: #fef3c7; color: #92400e; border-radius: 3px; padding: 1px 6px; }
+.supersede-reason { display: block; font-size: 11px; color: #92400e; margin-top: 3px; }
+
+/* ---- CSS-only toggle for superseded section ---- */
+.toggle-wrap { border-top: 1px solid #e5e7eb; }
+.toggle-cb { display: none; }
+.toggle-label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: #57606a;
+  background: #f7f8fa; user-select: none;
+}
+.toggle-label:hover { background: #f0f2f5; color: #1f2328; }
+.toggle-arrow { font-size: 10px; transition: transform .2s; display: inline-block; }
+.toggle-cb:checked ~ .toggle-label .toggle-arrow { transform: rotate(90deg); }
+.toggle-body { display: none; }
+.toggle-cb:checked ~ .toggle-body { display: block; }
+.toggle-note { padding: 10px 16px; font-size: 11px; color: #57606a; background: #fffbeb; border-top: 1px solid #fde68a; line-height: 1.6; }
+
+/* ---- two-col grid for smaller tables ---- */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+footer { text-align: center; font-size: 11px; color: #8b949e; padding: 14px; border-top: 1px solid #e5e7eb; background: #fff; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-logo">AM</div>
+  <h1>agent-memory-sdk &nbsp;&middot;&nbsp; Db2 Memory Dashboard</h1>
+  <div class="header-sub">Snapshot &nbsp;&middot;&nbsp; 2026-07-31 &nbsp;&middot;&nbsp; Run D benchmark + integration test data</div>
+</div>
+
+<!-- ── stat pills ── -->
+<div class="stats-row">
+  <div class="stat-card blue">
+    <div class="stat-label">Working Memory</div>
+    <div class="stat-value">830</div>
+    <div class="stat-sub">live rows</div>
+  </div>
+  <div class="stat-card blue">
+    <div class="stat-label">Semantic Facts</div>
+    <div class="stat-value">223</div>
+    <div class="stat-sub">201 live &middot; 22 superseded</div>
+  </div>
+  <div class="stat-card green">
+    <div class="stat-label">Episodic Memory</div>
+    <div class="stat-value">50</div>
+    <div class="stat-sub">live rows</div>
+  </div>
+  <div class="stat-card gray">
+    <div class="stat-label">Entity Profiles</div>
+    <div class="stat-value">8</div>
+    <div class="stat-sub">live rows</div>
+  </div>
+  <div class="stat-card gray">
+    <div class="stat-label">Procedural Memory</div>
+    <div class="stat-value">8</div>
+    <div class="stat-sub">live rows</div>
+  </div>
+  <div class="stat-card amber">
+    <div class="stat-label">Superseded Facts</div>
+    <div class="stat-value">22</div>
+    <div class="stat-sub">stale &middot; excluded from search()</div>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- ══ SEMANTIC FACTS ══ -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Semantic Facts</span>
+      <span class="badge badge-blue">store.facts</span>
+      <span class="badge badge-green">201 live</span>
+      <span class="badge badge-amber">22 superseded</span>
+      <span class="badge badge-gray">showing 18 most recent live + all 10 superseded</span>
+    </div>
+    <table>
+      <thead><tr><th>Content</th><th>Conf</th><th>Agent</th><th>Created</th></tr></thead>
+      <tbody>
+        <tr><td class="content-cell"><div class="content-text">Diego mentioned that they live in Wellington.</div><div class="meta-tag">benchmark_template_consolidator &middot; conf 0.90</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="agent-cell">bench-&hellip;agent-5009</td><td class="ts">2026-07-31 09:29</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Kwame mentioned that they live in Toronto.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="agent-cell">bench-&hellip;agent-5008</td><td class="ts">2026-07-31 09:28</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Marcus mentioned that they live in Nairobi.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="agent-cell">bench-&hellip;agent-5006</td><td class="ts">2026-07-31 09:28</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Elena mentioned that they live in Lisbon.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="agent-cell">bench-&hellip;agent-5005</td><td class="ts">2026-07-31 09:27</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Ingrid said: actually, I&#39;ve switched &#8212; my favorite programming language is now TypeScript, not Rust anymore.</div><div class="meta-tag">correction fact &middot; conf 0.95</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4009</td><td class="ts">2026-07-31 09:25</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Marcus said: actually, I&#39;ve switched &#8212; my favorite programming language is now Kotlin, not Rust anymore.</div><div class="meta-tag">correction fact &middot; conf 0.95</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4008</td><td class="ts">2026-07-31 09:25</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Ingrid said: actually, I&#39;ve switched &#8212; my favorite programming language is now Go, not TypeScript anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4007</td><td class="ts">2026-07-31 09:24</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Priya said: actually, I&#39;ve switched &#8212; my favorite programming language is now Python, not Rust anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4006</td><td class="ts">2026-07-31 09:24</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Fatima said: actually, I&#39;ve switched &#8212; my favorite programming language is now Go, not Elixir anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4005</td><td class="ts">2026-07-31 09:23</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Diego said: actually, I&#39;ve switched &#8212; my favorite programming language is now Kotlin, not Elixir anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4004</td><td class="ts">2026-07-31 09:22</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Yuki said: actually, I&#39;ve switched &#8212; my favorite programming language is now Elixir, not TypeScript anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4003</td><td class="ts">2026-07-31 09:22</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Yuki said: actually, I&#39;ve switched &#8212; my favorite programming language is now Rust, not Kotlin anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4002</td><td class="ts">2026-07-31 09:21</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Diego said: actually, I&#39;ve switched &#8212; my favorite programming language is now Python, not Elixir anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4001</td><td class="ts">2026-07-31 09:21</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Ingrid said: actually, I&#39;ve switched &#8212; my favorite programming language is now Rust, not Go anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-4000</td><td class="ts">2026-07-31 09:20</td></tr>
+        <tr><td class="content-cell"><div class="content-text">On 2024-09-22, Yuki was promoted to Senior Engineer at Acme Corp.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-3009</td><td class="ts">2026-07-31 09:20</td></tr>
+        <tr><td class="content-cell"><div class="content-text">On 2024-01-10, Yuki started a new job at Acme Corp as a Junior Engineer.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-3009</td><td class="ts">2026-07-31 09:20</td></tr>
+        <tr><td class="content-cell"><div class="content-text">On 2026-09-22, Ingrid was promoted to Senior Engineer at Acme Corp.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-3008</td><td class="ts">2026-07-31 09:19</td></tr>
+        <tr><td class="content-cell"><div class="content-text">On 2025-01-10, Elena started a new job at Acme Corp as a Junior Engineer.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:38px"></div></div><span class="conf-val">0.95</span></div></td><td class="agent-cell">bench-&hellip;agent-3007</td><td class="ts">2026-07-31 09:19</td></tr>
+      </tbody>
+    </table>
+
+    <!-- CSS-only collapsible superseded section -->
+    <div class="toggle-wrap">
+      <input type="checkbox" id="toggle-superseded" class="toggle-cb">
+      <label for="toggle-superseded" class="toggle-label">
+        <span class="toggle-arrow">&#9658;</span>
+        Show 10 superseded facts (excluded from search() &mdash; ENH-3 audit trail)
+        <span class="badge badge-amber" style="margin-left:4px">22 total</span>
+      </label>
+      <div class="toggle-body">
+        <table>
+          <thead><tr><th>Stale Content</th><th>Conf</th><th>Superseded At</th><th>Reason (BenchmarkReconciler)</th></tr></thead>
+          <tbody>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Ingrid said their favorite programming language is Rust.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:25:42</td><td><span class="supersede-reason">contradicts: Ingrid&#39;s current value is &#39;TypeScript&#39;, not &#39;Rust&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Marcus said their favorite programming language is Rust.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:25:15</td><td><span class="supersede-reason">contradicts: Marcus&#39;s current value is &#39;Kotlin&#39;, not &#39;Rust&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Ingrid said their favorite programming language is TypeScript.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:24:44</td><td><span class="supersede-reason">contradicts: Ingrid&#39;s current value is &#39;Go&#39;, not &#39;TypeScript&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Priya said their favorite programming language is Rust.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:24:10</td><td><span class="supersede-reason">contradicts: Priya&#39;s current value is &#39;Python&#39;, not &#39;Rust&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Fatima said their favorite programming language is Elixir.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:23:34</td><td><span class="supersede-reason">contradicts: Fatima&#39;s current value is &#39;Go&#39;, not &#39;Elixir&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Diego said their favorite programming language is Elixir.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:22:55</td><td><span class="supersede-reason">contradicts: Diego&#39;s current value is &#39;Kotlin&#39;, not &#39;Elixir&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Yuki said their favorite programming language is TypeScript.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:22:26</td><td><span class="supersede-reason">contradicts: Yuki&#39;s current value is &#39;Elixir&#39;, not &#39;TypeScript&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Yuki said their favorite programming language is Kotlin.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:22:01</td><td><span class="supersede-reason">contradicts: Yuki&#39;s current value is &#39;Rust&#39;, not &#39;Kotlin&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Diego said their favorite programming language is Elixir.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:21:35</td><td><span class="supersede-reason">contradicts: Diego&#39;s current value is &#39;Python&#39;, not &#39;Elixir&#39;</span></td></tr>
+            <tr class="row-superseded"><td class="content-cell"><div class="content-text">Ingrid said their favorite programming language is Go.</div><span class="supersede-badge">SUPERSEDED</span></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-mid" style="width:36px"></div></div><span class="conf-val">0.90</span></div></td><td class="ts">2026-07-31 09:21:06</td><td><span class="supersede-reason">contradicts: Ingrid&#39;s current value is &#39;Rust&#39;, not &#39;Go&#39;</span></td></tr>
+          </tbody>
+        </table>
+        <div class="toggle-note">
+          Superseded rows are <strong>retained in Db2 for governance/audit</strong> — <code>deleted_at</code> is still NULL.
+          They are excluded from all <code>search()</code> / <code>list_all()</code> results by the
+          <code>AND superseded_at IS NULL</code> predicate added in ENH-3 (migration 0004).
+          The distinction matters: <code>superseded_at IS NOT NULL</code> = &ldquo;AI learned this was contradicted&rdquo;;
+          <code>deleted_at IS NOT NULL</code> = &ldquo;user/operator asked us to forget this&rdquo;.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ WORKING MEMORY ══ -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Working Memory</span>
+      <span class="badge badge-blue">store.working</span>
+      <span class="badge badge-gray">830 live rows &middot; showing 25 most recent</span>
+    </div>
+    <table>
+      <thead><tr><th>Content</th><th>Conf</th><th>Agent / User</th><th>Created</th></tr></thead>
+      <tbody>
+        <tr><td class="content-cell"><div class="content-text">Diego mentioned that they live in Wellington.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;5009 / user-9</td><td class="ts">2026-07-31 09:29</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Kwame mentioned that they live in Toronto.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;5008 / user-8</td><td class="ts">2026-07-31 09:28</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Marcus mentioned that they live in Nairobi.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;5006 / user-6</td><td class="ts">2026-07-31 09:28</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Elena mentioned that they live in Lisbon.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;5005 / user-5</td><td class="ts">2026-07-31 09:27</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Ingrid said: actually, I&#39;ve switched &#8212; my favorite programming language is now TypeScript, not Rust anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4009 / user-9</td><td class="ts">2026-07-31 09:25</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Ingrid said their favorite programming language is Rust.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4009 / user-9</td><td class="ts">2026-07-31 09:25</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Marcus said: actually, I&#39;ve switched &#8212; my favorite programming language is now Kotlin, not Rust anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4008 / user-8</td><td class="ts">2026-07-31 09:25</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Marcus said their favorite programming language is Rust.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4008 / user-8</td><td class="ts">2026-07-31 09:24</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Priya said: actually, I&#39;ve switched &#8212; my favorite programming language is now Python, not Rust anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4006 / user-6</td><td class="ts">2026-07-31 09:23</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Priya said their favorite programming language is Rust.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4006 / user-6</td><td class="ts">2026-07-31 09:23</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Fatima said: actually, I&#39;ve switched &#8212; my favorite programming language is now Go, not Elixir anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4005 / user-5</td><td class="ts">2026-07-31 09:23</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Fatima said their favorite programming language is Elixir.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4005 / user-5</td><td class="ts">2026-07-31 09:23</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Diego said: actually, I&#39;ve switched &#8212; my favorite programming language is now Kotlin, not Elixir anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4004 / user-4</td><td class="ts">2026-07-31 09:22</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Diego said their favorite programming language is Elixir.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4004 / user-4</td><td class="ts">2026-07-31 09:22</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Yuki said: actually, I&#39;ve switched &#8212; my favorite programming language is now Elixir, not TypeScript anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4003 / user-3</td><td class="ts">2026-07-31 09:22</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Yuki said their favorite programming language is TypeScript.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4003 / user-3</td><td class="ts">2026-07-31 09:22</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Yuki said: actually, I&#39;ve switched &#8212; my favorite programming language is now Rust, not Kotlin anymore.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4002 / user-2</td><td class="ts">2026-07-31 09:21</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Yuki said their favorite programming language is Kotlin.</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">bench-&hellip;4002 / user-2</td><td class="ts">2026-07-31 09:21</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ══ EPISODIC ══ -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Episodic Memory</span>
+      <span class="badge badge-green">store.episodic</span>
+      <span class="badge badge-gray">50 live rows &middot; showing 10 most recent</span>
+    </div>
+    <table>
+      <thead><tr><th>Content</th><th>Conf</th><th>Agent</th><th>Created</th></tr></thead>
+      <tbody>
+        <tr><td class="content-cell"><div class="content-text">episodic regression check</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-a253&hellip;</td><td class="ts">2026-07-30 09:14</td></tr>
+        <tr><td class="content-cell"><div class="content-text">episode 4</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-407d&hellip;</td><td class="ts">2026-07-30 09:12</td></tr>
+        <tr><td class="content-cell"><div class="content-text">episode 3</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-407d&hellip;</td><td class="ts">2026-07-30 09:12</td></tr>
+        <tr><td class="content-cell"><div class="content-text">episode 2</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-407d&hellip;</td><td class="ts">2026-07-30 09:12</td></tr>
+        <tr><td class="content-cell"><div class="content-text">episode 1</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-407d&hellip;</td><td class="ts">2026-07-30 09:12</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Summary of past session</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-fb7a&hellip;</td><td class="ts">2026-07-30 09:11</td></tr>
+        <tr><td class="content-cell"><div class="content-text">recall-test content</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-106a&hellip;</td><td class="ts">2026-07-30 09:11</td></tr>
+        <tr><td class="content-cell"><div class="content-text">Past session: user asked about Tokyo weather</div></td><td><div class="conf-wrap"><div class="conf-bar-bg"><div class="conf-bar-fill c-high" style="width:40px"></div></div><span class="conf-val">1.00</span></div></td><td class="agent-cell">test-agent-2e3c&hellip;</td><td class="ts">2026-07-30 09:11</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ══ PROFILES + PROCEDURAL side by side ══ -->
+  <div class="two-col">
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Entity Profiles</span>
+        <span class="badge badge-purple">store.profiles</span>
+        <span class="badge badge-gray">8 rows</span>
+      </div>
+      <table>
+        <thead><tr><th>Content</th><th>User</th><th>Created</th></tr></thead>
+        <tbody>
+          <tr><td class="content-cell"><div class="content-text">profile regression check</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 09:14</td></tr>
+          <tr><td class="content-cell"><div class="content-text">Power Python developer; prefers dark mode.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 09:12</td></tr>
+          <tr><td class="content-cell"><div class="content-text">Power Python developer; prefers dark mode.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 09:05</td></tr>
+          <tr><td class="content-cell"><div class="content-text">Power Python developer; prefers dark mode.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 03:47</td></tr>
+          <tr><td class="content-cell"><div class="content-text">Power Python developer; prefers dark mode.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-29 22:05</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Procedural Memory</span>
+        <span class="badge badge-purple">store.procedures</span>
+        <span class="badge badge-gray">8 rows</span>
+      </div>
+      <table>
+        <thead><tr><th>Content</th><th>User</th><th>Created</th></tr></thead>
+        <tbody>
+          <tr><td class="content-cell"><div class="content-text">procedural regression check</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 09:14</td></tr>
+          <tr><td class="content-cell"><div class="content-text">When debugging Python, check the traceback first.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 09:12</td></tr>
+          <tr><td class="content-cell"><div class="content-text">When debugging Python, check the traceback first.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 09:05</td></tr>
+          <tr><td class="content-cell"><div class="content-text">When debugging Python, check the traceback first.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-30 03:47</td></tr>
+          <tr><td class="content-cell"><div class="content-text">When debugging Python, check the traceback first.</div></td><td class="agent-cell">test-user-1</td><td class="ts">2026-07-29 22:05</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<footer style="border-top:1px solid #e5e7eb;padding:12px;text-align:center;font-size:11px;color:#8b949e;">Made with IBM Bob</footer>
+
+</body>
+</html>
