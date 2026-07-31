@@ -3078,3 +3078,51 @@ instead of the ordering hypothesis.
 - `scripts/run_benchmarks.py` — `--debug` CLI flag wired to `run_retrieval_quality(debug=)`,
   `logging.basicConfig` activated only when `--debug` is set.
 
+
+## 2026-08-03 — BENCH-2: ordering hypothesis refuted by BENCH-1; closed without code change
+
+**Story:** BENCH-2 — Fix result ordering in retrieved context, if BENCH-1 confirms it's a factor.
+
+**Decision:** No code change. BENCH-2 is closed as Done with no SDK change and no harness change.
+
+**Reason:** BENCH-2 was explicitly conditional on BENCH-1 confirming that the ordering
+difference between `store.working.search()` (vector-distance rank) and `run_baseline()`
+(session/chronological order) was a real contributor to judge verdicts being flipped.
+
+BENCH-1's evidence refutes this:
+
+- Every failing question across all three diagnostic runs returned `results (0 retrieved)`.
+- When `search()` returns an empty list, `retrieved_context` is an empty string regardless
+  of how the list is joined or sorted. There is no ordering artifact to correct.
+- The correct question to ask ("is the join order causing wrong answers?") cannot even be
+  posed until `search()` returns at least one result. BENCH-1 showed it never does for the
+  benchmark's short content.
+
+**What the latent ordering difference means going forward:**
+
+The structural difference does exist and is real: `store.working.search()` returns results
+ranked by cosine distance (nearest query match first); `run_baseline()` joins turns in
+session-insertion order (oldest first). For temporal_reasoning ("before the promotion") and
+knowledge_update ("CURRENT... language") questions, a prompt that presents the newer fact
+*before* the older one might help a model answer correctly, while one that presents them
+oldest-first might not — this is a plausible confound. However:
+
+1. It is not measurable until the ORC-2 chunk-path bug is fixed (BENCH-2 or a follow-on
+   story) and `search()` actually returns results.
+2. At that point it is still a **harness-only** concern: real callers of `search()` are
+   not typically answering temporal sequence questions from a two-turn prompt; they insert
+   the retrieved context into a longer conversation where model attention handles ordering.
+3. If post-ORC-2-fix runs show ordering still matters, the correct fix is a one-line sort
+   in `run_retrieval_quality()` (`results.sort(key=lambda r: r.created_at)`) — a
+   harness-local change with no SDK API impact — not an `order_by=` parameter on
+   `BaseRepository.search()`. Adding an `order_by=` parameter would be an SDK-level
+   change that requires API design, migration considerations, and a broader justification
+   than one synthetic-benchmark measurement. That justification does not exist yet.
+
+**No BENCHMARKS.md re-run:** The code is unchanged; a re-run would produce the same scores
+as BENCH-1's runs (within judge non-determinism noise) and add no information.
+
+**Made during:** BENCH-2 (EPIC-6 diagnostic/fix sequence).
+
+**Supersedes:** Nothing — this is the first and only BENCH-2 entry.
+

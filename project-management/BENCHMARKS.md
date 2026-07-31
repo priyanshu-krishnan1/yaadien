@@ -172,6 +172,14 @@ not top_k, not ordering, not Consolidator/Reconciler wiring. The fix is to corre
 chunk table has no rows for the content. See DECISIONS.md — BENCH-1 entry for the
 traced call chain and fix options.
 
+> **BENCH-2 note (2026-08-03):** The ordering hypothesis (sort `results` by
+> `created_at` before joining into `retrieved_context`) was evaluated and **closed
+> without a code change**. BENCH-1 showed every failing question returned zero
+> results — there is nothing to reorder. The ordering difference between
+> distance-rank and session order is a latent confound, not an active one. No new
+> benchmark run was produced (code unchanged; a re-run would fall within judge
+> non-determinism noise). See DECISIONS.md — BENCH-2 entry.
+
 ---
 
 ### Run C — Judge: `deepseek-r1:8b` (Ollama, local) — with SDK only
