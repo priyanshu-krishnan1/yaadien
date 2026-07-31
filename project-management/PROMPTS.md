@@ -22,8 +22,9 @@ previous steps (same session, or point it at the repo in a new one).
 ## Where these files live
 
 This file, `BOARD.html`, `DECISIONS.md`, `ARCHITECTURE.md`,
-`INTEGRATION_TESTING.md`, `Chats.md`, the market study, and every
-`audit-prompt*.md` all live together under **`project-management/`** at the
+`INTEGRATION_TESTING.md`, `Chats.md`, `BENCHMARKS.md`, the market study,
+and every `audit-prompt*.md` (now under `project-management/audits/`) all
+live together under **`project-management/`** at the
 repo root — moved there so the repo root only shows what actually ships
 (`README.md`, `pyproject.toml`, `src/`, `tests/`, `scripts/`). When a step
 below says to read or update one of these files by bare name (e.g.
@@ -156,8 +157,9 @@ Do not change these decisions. If something here seems wrong once you're in
 the code, flag it explicitly and ask before deviating.
 
 All process/tracking docs — BOARD.html, DECISIONS.md, ARCHITECTURE.md,
-PROMPTS.md (this file), INTEGRATION_TESTING.md, Chats.md, the market study,
-and every audit-prompt*.md — live under project-management/ at the repo
+PROMPTS.md (this file), INTEGRATION_TESTING.md, Chats.md, BENCHMARKS.md,
+the market study, and every audit-prompt*.md (under project-management/
+audits/) — live under project-management/ at the repo
 root, not at the repo root itself. Your working directory for git/pytest/
 etc. is still the repo root; when any instruction below says "read
 DECISIONS.md" or similar by bare name, that means
@@ -929,4 +931,264 @@ dated entry recording the dataset size/methodology and a summary of
 results. In BOARD.html, set PH-6's status to "Done" and add a comment
 summarizing what you built. Then
 `git add -A && git commit -m "ph-6: agent-memory benchmarking harness"`.
+```
+
+---
+
+## EPIC-6 — Benchmark findings: retrieval-quality gap vs. flat-context baseline
+
+PH-6 built the harness; this epic is downstream of it — acting on what it
+actually measured. Run B in `BENCHMARKS.md` (llama3.1:8b judge,
+nomic-embed-text embeddings, n=50, seed=42) shows the with-SDK path
+scoring *below* a flat-context (no SDK) baseline: 84.0% vs 94.0% overall
+(-10.0%), with multi_session and temporal_reasoning at -30.0% each,
+extraction and knowledge_update at -10.0% each, and abstention a clear
+SDK win at +30.0%. Work the stories below **in order** — BENCH-1 first,
+always — since it determines whether BENCH-2/3/4 are even the right fix.
+
+---
+
+## BENCH-1 — Root-cause the accuracy gap with real evidence
+
+```
+Before starting: in BOARD.html, set BENCH-1's status to "In Progress".
+
+BENCHMARKS.md's Run B analysis already guesses the cause of the
+multi_session/temporal_reasoning/extraction/knowledge_update gap is
+search() "returning only one of the two relevant turns" at top_k=5. Check
+this against real data before accepting it: every one of those categories'
+questions (benchmarks/retrieval_quality/dataset.py) plants exactly 2 turns
+total in its scope, and top_k defaults to 5 — 2 <= 5, so both turns should
+be retrieved every time. The existing hypothesis may be wrong.
+
+Add temporary debug instrumentation to run_retrieval_quality()
+(benchmarks/retrieval_quality/run.py) that, for every question the judge
+marks INCORRECT, logs: the full ordered `results` list from
+store.working.search() (content + rank + distance if available), the
+`retrieved_context` string actually handed to the judge, and the matching
+flat-context baseline string for the same question id. Re-run
+`--suite retrieval --baseline` at Run B's exact config (embedding-provider
+ollama, judge ollama:llama3.1:8b, dataset-size 10, seed 42) and inspect
+every failing question in the four negative-delta categories.
+
+Test these candidate root causes with the logged evidence, don't assume
+one:
+1. Recall — is a relevant turn actually missing from `results`?
+2. Ordering — store.working.search() ranks by vector distance to the
+   query; run_baseline()'s flat context is always in original session
+   order. Compare the two join expressions in run.py directly. For
+   temporal_reasoning ("before the promotion") and knowledge_update
+   ("CURRENT... language"), a scrambled presentation order is a plausible
+   confounder distinct from missing recall.
+3. Judge non-determinism — local Ollama models aren't necessarily
+   deterministic run-to-run; re-run the same failing questions 2-3x and
+   see if the verdict flips.
+
+This is a diagnostic story — land no fix beyond the instrumentation
+itself, and remove or gate it behind --debug before finishing (don't
+leave permanent noisy logging on the hot path).
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry with the confirmed root cause per category, and correct
+BENCHMARKS.md's Run B "Analysis" section if the existing hypothesis is
+wrong or incomplete. In BOARD.html, set BENCH-1's status to "Done" and
+add a comment summarizing the findings. Then
+`git add -A && git commit -m "bench-1: root-cause retrieval-quality gap with logged evidence"`.
+```
+
+---
+
+## BENCH-2 — Fix result ordering, if BENCH-1 confirms it's a factor
+
+```
+Before starting: in BOARD.html, set BENCH-2's status to "In Progress".
+Read BENCH-1's DECISIONS.md findings first — only proceed with a code
+change here if BENCH-1 confirmed ordering as a real contributor.
+
+store.working.search() ranks by vector distance to the query;
+run_retrieval_quality() joins `results` in that rank order
+("\n".join(r.content for r in results)), while run_baseline() joins turns
+in original session/chronological order. If BENCH-1's evidence shows this
+reordering flips judge verdicts, fix it at the layer the evidence points
+to:
+
+- If it's a harness-only concern: sort `results` by created_at before
+  building retrieved_context in run_retrieval_quality() — small, local,
+  no SDK API change, no migration.
+- If real callers of search() would hit the same problem (not just this
+  synthetic benchmark): consider whether MemoryStore/BaseRepository.
+  search() should support an explicit ordering option (e.g.
+  order_by="relevance" default vs "chronological") — only pursue this
+  larger SDK-level version if BENCH-1's evidence shows it's a general
+  problem, not a benchmark-harness artifact. Justify the choice either
+  way in DECISIONS.md.
+
+Before starting: read DECISIONS.md in full, including BENCH-1's entry.
+Before finishing: re-run --suite retrieval --baseline at Run B's exact
+config, record the new category deltas in BENCHMARKS.md as a new dated
+run (append, don't overwrite Run B), append a dated DECISIONS.md entry.
+In BOARD.html, set BENCH-2's status to "Done" with a comment summarizing
+the fix and the before/after delta — or, if BENCH-1 refuted the ordering
+hypothesis, close it "Done" with a comment explaining why no change was
+needed. Then
+`git add -A && git commit -m "bench-2: fix search() result ordering in retrieval-quality suite"`.
+```
+
+---
+
+## BENCH-3a — Build a real fact-extraction Consolidator for the benchmark
+
+```
+Before starting: in BOARD.html, set BENCH-3a's status to "In Progress".
+
+First of three sub-stories wiring the ENH-3/ENH-4 machinery (already
+built and Done in EPIC-2) into the benchmark's write path. Today
+scripts/run_benchmarks.py always constructs MemoryStore with
+consolidator=None for the retrieval-quality suite — the --consolidator
+mock flag only wires MockConsolidator (a cost-tracking demo with no real
+extraction logic) into the latency suite; it never runs for
+--suite retrieval.
+
+Build a Consolidator implementation appropriate for the benchmark's
+synthetic, single-fact-per-turn sessions (an LLM-based one using the same
+local Ollama model already configured as judge, or a lighter
+template-matching one if that proves sufficient — justify the choice)
+that, given the raw turns MemoryStore.remember() passes it, produces
+SemanticFact records via store.facts. Wire it into
+run_retrieval_quality()'s MemoryStore construction as a new optional
+parameter (not a hardcoded default), so the suite can run with or without
+consolidation for a clean before/after comparison.
+
+Before starting: read DECISIONS.md in full, including the ENH-3/ENH-4/
+PH-6 entries this depends on, and BENCH-1's findings. Before finishing:
+append a dated entry describing the extraction logic and its limitations
+on this synthetic dataset. In BOARD.html, set BENCH-3a's status to "Done"
+with a comment. Do not change run_retrieval_quality()'s default behavior
+in this story — BENCH-3c wires it in and re-scores. Then
+`git add -A && git commit -m "bench-3a: real fact-extraction consolidator for benchmark suite"`.
+```
+
+---
+
+## BENCH-3b — Wire a Reconciler so stale knowledge_update facts are superseded
+
+```
+Before starting: in BOARD.html, set BENCH-3b's status to "In Progress".
+
+Second sub-story of the Consolidator/Reconciler wiring fix. Once
+BENCH-3a's Consolidator is producing SemanticFact records, knowledge_update
+(a fact stated, then explicitly contradicted in a later session) is
+exactly the case the ENH-3 Reconciler protocol was built for: detect the
+contradiction and call SemanticFactRepository.supersede() so the stale
+fact is excluded from search()/list_all() (superseded_at IS NOT NULL,
+already implemented and tested in ENH-3/VER-10) instead of handing both
+facts to the judge and hoping it infers which one is "CURRENT."
+
+Build a Reconciler for the benchmark suite (same style decision as
+BENCH-3a — LLM-based via the local Ollama model, or pattern-matching
+given the synthetic dataset's explicit contradiction phrasing, e.g.
+"actually, I've switched") and wire MemoryStore.reconcile(memory_type,
+scope) into the retrieval-quality run after each question's sessions are
+written, before search() is called.
+
+Before starting: read DECISIONS.md in full, including BENCH-3a's entry.
+Before finishing: append a dated entry. In BOARD.html, set BENCH-3b's
+status to "Done" with a comment. Then
+`git add -A && git commit -m "bench-3b: wire reconciler for knowledge_update supersession in benchmark suite"`.
+```
+
+---
+
+## BENCH-3c — Search consolidated facts and re-score the full suite
+
+```
+Before starting: in BOARD.html, set BENCH-3c's status to "In Progress".
+
+Third sub-story closing out the Consolidator/Reconciler fix. Today
+run_retrieval_quality() only ever calls store.working.search() — raw
+turns, never store.facts. With BENCH-3a's Consolidator promoting
+multi-session facts into single SemanticFact records and BENCH-3b's
+Reconciler superseding stale ones, the search step needs to actually use
+them: either search store.facts in addition to (or instead of)
+store.working, merging/deduping results, or make the search target
+configurable so both modes stay comparable.
+
+Re-run Run B's exact configuration (--suite retrieval --baseline
+--embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10
+--seed 42) with consolidation+reconciliation wired in, and record the new
+category-by-category deltas as a new dated run in BENCHMARKS.md, directly
+comparable to Run B — this is the number that proves or disproves whether
+the ENH-3/ENH-4 wiring actually closes the gap. If it doesn't close as
+expected, say so plainly rather than declaring victory.
+
+Before starting: read DECISIONS.md in full, including BENCH-3a/3b's
+entries. Before finishing: append a dated entry with the full
+before/after comparison and an honest assessment. In BOARD.html, set
+BENCH-3c's status to "Done" with a comment summarizing the before/after
+deltas. Then
+`git add -A && git commit -m "bench-3c: search consolidated facts in retrieval-quality suite, re-score"`.
+```
+
+---
+
+## BENCH-4 — Close the extraction/knowledge_update -10% gap independent of consolidation
+
+```
+Before starting: in BOARD.html, set BENCH-4's status to "In Progress".
+Check BENCH-1's findings first — this story may turn out to be redundant
+with BENCH-1's root cause.
+
+extraction and knowledge_update only regressed -10.0% each (vs -30.0%
+for the multi-session categories) — a distinct, smaller-scope question
+from the Consolidator/Reconciler wiring in BENCH-3a/3b/3c that shouldn't
+block on it. Run the retrieval-quality suite (Run B's seed=42,
+n=10-per-category) sweeping --top-k (e.g. 5, 10, 20) and comparing
+--embedding-provider ollama (nomic-embed-text) against
+--embedding-provider sentence-transformers, isolating which knob (if
+either) closes the gap. At n=10 per category, be explicit in the
+write-up about signal vs. noise — don't over-claim a fix from a couple of
+flipped questions.
+
+Before starting: read DECISIONS.md in full, including BENCH-1's findings.
+Before finishing: append a dated entry with the sweep results and a
+recommendation (or explicit non-recommendation) for the harness's default
+top_k. In BOARD.html, set BENCH-4's status to "Done" with a comment.
+Then
+`git add -A && git commit -m "bench-4: top_k/embedding-provider sweep for extraction and knowledge_update gap"`.
+```
+
+---
+
+## BENCH-5 — Validate the "SDK wins at scale" hypothesis
+
+```
+Before starting: in BOARD.html, set BENCH-5's status to "In Progress".
+
+BENCHMARKS.md's Run B analysis claims the flat-context baseline degrades
+sharply once history grows to hundreds of turns (citing the LongMemEval
+paper's 30-70% figure for frontier models), while the SDK's structured
+retrieval holds steady — that's asserted from the paper, not measured on
+this repo's own harness. Validate it before it's used to justify shipping
+a -10% overall regression as acceptable on the short-session dataset.
+
+Add a configurable session-length/session-count knob to
+benchmarks/retrieval_quality/dataset.py's generators (e.g. padding each
+session with additional unrelated planted facts/turns, or generating more
+sessions per question, scaling toward the hundreds-of-turns range the
+paper's comparison point uses) gated behind a new CLI flag so the
+existing default dataset shape is unchanged. Re-run both
+run_retrieval_quality() and run_baseline() at increasing scale (small/
+medium/large session counts) and record how each mode's accuracy trends
+as context grows, in BENCHMARKS.md as a new section distinct from Run
+A/B/C.
+
+Sequence this after BENCH-1 through BENCH-4 land, since those affect what
+the with-SDK path scores at any scale — but the dataset-generator changes
+can be built independently if useful to start earlier.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry with the at-scale results and an honest verdict — confirmed,
+partially confirmed, or refuted. In BOARD.html, set BENCH-5's status to
+"Done" with a comment. Then
+`git add -A && git commit -m "bench-5: validate SDK-vs-baseline behavior at larger session scale"`.
 ```

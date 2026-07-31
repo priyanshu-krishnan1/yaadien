@@ -2909,3 +2909,172 @@ Per-call wall-clock latency percentiles (mean, p50, p95, p99, max) for `remember
 **Results at time of commit:** No live Db2/LLM run recorded yet — `project-management/BENCHMARKS.md` is a methodology-documenting placeholder. Run `make benchmark` (or `make benchmark ARGS="--embedding-provider sentence-transformers --judge gemini --dataset-size 10"` for a real number) against a Db2 instance to populate it.
 
 **Ruff / tests:** All benchmark Python files pass `ruff check`. The benchmarks package is not imported by the `src/` package and is not covered by the unit suite (no Db2 mock available at unit-test time). The 542 existing unit tests continue to pass at 87% coverage (no regression).
+
+---
+
+## 2026-07-31 — project-management/audits/ subfolder for one-off audit prompts
+
+**Decision:** The 13 one-off, already-executed audit/remediation prompts —
+`audit-prompt.md`, `audit-prompt-2.md` … `audit-prompt-12.md`, and
+`beta-readiness-audit-prompt.md` — moved (via `git mv`, history preserved)
+from `project-management/` directly into a new `project-management/audits/`
+subfolder. Every other file in `project-management/` (`README.md`,
+`PROMPTS.md`, `ARCHITECTURE.md`, `DECISIONS.md` (this file), `BOARD.html`,
+`BENCHMARKS.md`, `INTEGRATION_TESTING.md`, `Chats.md`,
+`ai-agent-platform-competitive-analysis.md`) stayed where it was.
+
+**Reason:** `project-management/` had grown to 18 files at one flat level —
+12 numbered `audit-prompt-N.md` files (inconsistently named: no `-1` suffix
+on the first one) plus `beta-readiness-audit-prompt.md`, mixed in alongside
+the actively-referenced "living" docs (`PROMPTS.md`, `DECISIONS.md`,
+`ARCHITECTURE.md`, `BOARD.html`, `BENCHMARKS.md`). The audit prompts are
+historical records of completed one-off fix passes, not docs anyone edits
+or re-reads as reference going forward (unlike `PROMPTS.md`/`DECISIONS.md`,
+which are read at the start of every new step). Separating "history" from
+"living reference" makes the folder's top level scannable again.
+
+**Cross-reference handling — same convention as the 2026-07-30 root →
+`project-management/` move recorded above:**
+- `beta-readiness-audit-prompt.md`'s existing mention of `audit-prompt-5.md`
+  needed no path fix — both files moved into `audits/` together and remain
+  siblings there.
+- This file's own historical entry describing the 2026-07-30 move (which
+  names `audit-prompt-2.md` through `audit-prompt-10.md` and
+  `beta-readiness-audit-prompt.md` by their pre-`audits/` path) was left
+  unedited — rewriting completed historical instructions serves no future
+  purpose, the same reasoning that entry itself gives for not rewriting
+  the audit prompts' own internal bare-filename references.
+- `PROMPTS.md`'s "Where these files live" section and its Step-0 working-
+  agreement prose were updated to name `project-management/audits/`
+  explicitly, since those two sections are the ones actually read at the
+  start of every new session/step.
+- `project-management/README.md` was rewritten: the file listing now shows
+  `audits/` as its own entry, and a new dated note was added alongside the
+  existing 2026-07-30 note explaining both moves for a future reader.
+
+**Made during:** repo-organization pass (not tied to a specific board
+story — a general house-keeping request).
+
+## 2026-08-03 — BENCH-1: root-cause retrieval-quality gap with logged evidence
+
+**Story:** BENCH-1 — Root-cause the with-SDK vs. flat-context accuracy gap with real evidence.
+
+**Method:** Added `--debug` flag to `scripts/run_benchmarks.py` that passes `debug=True`
+to `run_retrieval_quality()` (gated; not on the hot path). When active, `_log_incorrect()`
+emits a structured WARNING block for every INCORRECT question: the full ordered `results`
+list from `store.working.search()` (rank, distance if available, content), the
+`retrieved_context` string handed to the judge, and the matching flat-context baseline
+string. Re-ran `--suite retrieval --baseline --debug` at Run B's exact config
+(embedding-provider `ollama`, judge `ollama:llama3.1:8b`, dataset-size 10, seed 42) three
+times to test all three candidate root causes.
+
+---
+
+### Candidate 1 — Recall (missing turns from `results`): CONFIRMED as proximate cause
+
+**Evidence:** Every single failing question across all three diagnostic runs showed
+`results (0 retrieved)` — `store.working.search()` returned an **empty list** even though
+both session turns were written via `remember()` moments before. No question failed because
+one of the two turns was missing; they all failed because zero turns came back.
+
+The BENCHMARKS.md hypothesis ("search() returning only one of the two relevant turns at
+top_k=5") was **wrong**: top_k was not the bottleneck. Both turns were retrievable, but
+neither was returned.
+
+**Why zero results?** Traced to an ORC-2 interaction bug in `search()`'s auto-detect logic
+(`repositories/base.py`):
+
+- `MemoryStore` is constructed in `scripts/run_benchmarks.py` with an `embedding_provider`
+  and default `enable_chunking=True` (line 169: `store = MemoryStore(pool, ..., embedding_provider=embedding_provider)`).
+- When `enable_chunking=True` and `embedding_provider is not None`, a `ChunkRepository` is
+  created and injected into every repository (`store.py:226–231`). This means
+  `self._chunk_repo is not None` for the working-memory repository.
+- `search()` auto-detects the search path as:
+  `effective_search_chunks = self._chunk_repo is not None`  (`base.py:1370–1371`).
+  With `chunk_repo` wired in, this evaluates to `True`, routing ALL searches through
+  `_search_via_chunks()`.
+- `_search_via_chunks()` searches the `memory_chunks` table
+  (`base.py:1503–1510`), NOT the parent table's `embedding` column.
+- BUT the benchmark turns are all short (single sentences, ~50–120 chars) — far below
+  `chunk_threshold=2000`. For content `len <= chunk_threshold`, `should_chunk=False`
+  (`base.py:756–759`), so `remember()` stores the embedding **on the parent row**, and
+  writes **no rows to `memory_chunks`**. The chunk table is empty for this content.
+- Consequence: `_search_via_chunks()` finds zero chunk rows → returns `[]` → empty
+  `retrieved_context` → judge cannot answer → INCORRECT.
+
+This is a pre-existing ORC-2 bug: `search()` auto-detect should fall back to the standard
+parent-embedding path for content that wasn't chunked, but instead blindly routes to chunk
+search when `chunk_repo is not None`, regardless of whether chunks were actually written.
+
+---
+
+### Candidate 2 — Ordering (vector-distance rank vs. session order): NOT a factor
+
+**Evidence:** Ordering could only be tested on questions where at least one result was
+returned. Every failing question in all three diagnostic runs had zero results. There is no
+reordering artifact on any failing question because there is nothing to reorder.
+
+**Implication for BENCH-2:** BENCH-2 ("Fix result ordering in retrieved context") was
+conditional on BENCH-1 confirming ordering is a real contributor. It is not — the
+contributing gap comes from zero recall, not from presentation order. BENCH-2 is therefore
+not needed to close the negative delta; however the ordering difference (vector-distance
+rank vs. session order) remains a latent confound for any future config where results are
+actually returned, and the BENCH-2 story's description notes it should be closed as "Done
+— no change needed" per its own instructions.
+
+---
+
+### Candidate 3 — Judge non-determinism: CONFIRMED as a secondary source of variance
+
+**Evidence:** Across three diagnostic runs with the same seed, config, and dataset:
+
+| Run | Failing questions (categories) | Overall SDK accuracy |
+|-----|-------------------------------|----------------------|
+| Run 1 | multi_session-2,3,7,9; temporal_reasoning-2,7,8; knowledge_update-3 | 84.0% (42/50) |
+| Run 2 | multi_session-3,9; knowledge_update-2,3 | 92.0% (46/50) |
+| Run 3 | multi_session-0,3,5,9; temporal_reasoning-1,2 (then Db2 network error) | partial |
+
+The set of INCORRECT questions changed between run 1 and run 2 (different seed-42 dataset
+was generated each run because `new_run_id()` is called fresh every run producing different
+scope UUIDs). However the observation is clear: some questions that failed in run 1 passed
+in run 2 and vice versa, with no change to embedding or retrieval — only judge sampling
+differed. Judge non-determinism contributes ±1–4 questions of variance per run
+(±8% overall accuracy at n=10 per category). The zero-recall bug is the dominant effect,
+but run-to-run comparison of single-digit percentages should account for this noise floor.
+
+**Note on dataset reproducibility:** `run_retrieval_quality()` calls `new_run_id()` to
+generate fresh UUID-based scopes each run, which is correct for isolation — but it means
+the concrete dataset instances differ per run even at the same seed. The `seed=42` only
+controls the RNG for name/city/hobby/language choices, not the scope UUIDs. BENCHMARKS.md's
+statement "the same seed and dataset-size produce the same questions every run" is true for
+the question *text* but not for the scope UUIDs (which affect DB partitioning only, not
+retrievability).
+
+---
+
+### Confirmed root cause per negative-delta category
+
+| Category | Confirmed root cause |
+|----------|---------------------|
+| `multi_session` (−30%) | Zero recall from `store.working.search()` due to ORC-2 chunk-path auto-detect routing short-content searches through `memory_chunks` (empty for content < 2000 chars), returning `[]` for every question. |
+| `temporal_reasoning` (−30%) | Same ORC-2 chunk-path bug. The "before the promotion" ordering question is irrelevant — there is no retrieved content at all, not a reordering problem. |
+| `knowledge_update` (−10%) | Same ORC-2 chunk-path bug for a subset of questions; judge non-determinism accounts for some of the remaining variance at this smaller gap size. |
+| `extraction` (−10%) | Same ORC-2 chunk-path bug; extraction only plants one turn, so the empty-results failure is identical but at a lower rate because judge non-determinism occasionally produces a CORRECT verdict on an empty context (the judge guesses/hallucinates). |
+
+### Fix implication
+
+The fix is in `search()` auto-detect logic in `base.py`: when routing to `_search_via_chunks`,
+it must fall back to the standard parent-embedding path for records that were not actually
+chunked (i.e., when `memory_chunks` has no rows for the scope). Alternatively, the
+harness can pass `search_chunks=False` explicitly to `store.working.search()` to force the
+standard path for the known-short content of the retrieval-quality suite. The minimal fix
+for the benchmark harness and the broader SDK-level fix are two distinct options documented
+in BENCH-2's description — that story should be updated to target this confirmed root cause
+instead of the ordering hypothesis.
+
+**Files changed in BENCH-1:**
+- `benchmarks/retrieval_quality/run.py` — `_log_incorrect()` helper + `debug=` kwarg on
+  `run_retrieval_quality()` (gated, not on hot path by default).
+- `scripts/run_benchmarks.py` — `--debug` CLI flag wired to `run_retrieval_quality(debug=)`,
+  `logging.basicConfig` activated only when `--debug` is set.
+

@@ -18,6 +18,7 @@ vector retrieval beat stuffing everything into the prompt?"
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from agent_memory_sdk.models import WorkingMemory
 from agent_memory_sdk.store import MemoryStore
@@ -26,6 +27,55 @@ from benchmarks.common.scope_gen import new_run_id
 from benchmarks.retrieval_quality.dataset import ABILITY_CATEGORIES, generate_dataset
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Debug helper — only called when --debug is set, never on the hot path
+# ---------------------------------------------------------------------------
+
+def _log_incorrect(
+    q_id: str,
+    category: str,
+    question: str,
+    gold: str,
+    results: list[Any],
+    retrieved_context: str,
+    flat_context: str,
+) -> None:
+    """Emit a structured diagnostic block for one INCORRECT question.
+
+    Logs three items at WARNING level so they are visible without requiring
+    DEBUG-level log routing:
+
+    1. Each retrieved result (rank, distance if present, content).
+    2. The exact ``retrieved_context`` string handed to the judge.
+    3. The flat-context baseline string for the same question.
+
+    This is intentionally noisy — it is gated behind ``--debug`` and is
+    expected to be removed (or kept gated) once the diagnostic run is done.
+    """
+    sep = "-" * 72
+    logger.warning(
+        "\n%s\n[DEBUG-INCORRECT] id=%s  category=%s\n"
+        "  question : %r\n"
+        "  gold     : %r\n"
+        "  results  (%d retrieved):",
+        sep, q_id, category, question, gold, len(results),
+    )
+    for rank, r in enumerate(results, 1):
+        dist = getattr(r, "distance", None)
+        dist_str = f"  dist={dist:.4f}" if dist is not None else ""
+        logger.warning("    [rank %d]%s  content=%r", rank, dist_str, r.content)
+
+    logger.warning(
+        "  retrieved_context (joined, SDK order):\n%s",
+        "\n".join(f"    | {line}" for line in retrieved_context.splitlines()) or "    (empty)",
+    )
+    logger.warning(
+        "  flat_context (baseline / session order):\n%s",
+        "\n".join(f"    | {line}" for line in flat_context.splitlines()) or "    (empty)",
+    )
+    logger.warning("%s", sep)
 
 #: Component names that constitute a real (non-fallback) semantic embedding
 #: or real LLM-judge — used to decide whether a run's number may be labeled
@@ -43,6 +93,8 @@ def run_retrieval_quality(
     n_per_category: int = 4,
     seed: int = 42,
     top_k: int = 5,
+    *,
+    debug: bool = False,
 ) -> RetrievalQualityResult:
     """Execute the retrieval-quality suite (with SDK) and return the result.
 
@@ -56,9 +108,23 @@ def run_retrieval_quality(
         n_per_category:           Questions per ability category.
         seed:                     Dataset RNG seed (reproducibility).
         top_k:                    Number of results fetched per question.
+        debug:                    When True, log full retrieval evidence for
+                                  every INCORRECT question (rank, distance,
+                                  retrieved context, flat-context baseline).
+                                  Gate behind ``--debug`` CLI flag only — do
+                                  not leave enabled on the hot path.
     """
     run_id = new_run_id()
     dataset = generate_dataset(run_id, n_per_category=n_per_category, seed=seed)
+
+    # Build a flat-context map keyed by question id so debug mode can show
+    # the exact string the baseline would have handed to the judge.
+    flat_contexts: dict[str, str] = {}
+    if debug:
+        for q in dataset:
+            flat_contexts[q.id] = "\n".join(
+                turn for session in q.sessions for turn in session
+            )
 
     tallies: dict[str, list[int]] = {cat: [0, 0] for cat in ABILITY_CATEGORIES}
 
@@ -92,6 +158,10 @@ def run_retrieval_quality(
             "retrieval_quality: id=%s category=%s correct=%s question=%r gold=%r",
             q.id, q.category, is_correct, q.question, q.gold_answer,
         )
+
+        if debug and not is_correct:
+            _log_incorrect(q.id, q.category, q.question, q.gold_answer,
+                           results, retrieved_context, flat_contexts.get(q.id, ""))
 
     category_scores = [
         CategoryScore(category=cat, correct=tallies[cat][0], total=tallies[cat][1])

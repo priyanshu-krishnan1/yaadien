@@ -27,6 +27,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -109,6 +110,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Questions generated PER ability category for the retrieval suite (default 4; 5 categories => 5x this many total).",
     )
     parser.add_argument("--seed", type=int, default=42, help="Dataset RNG seed (default 42).")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help=(
+            "For every INCORRECT question in the retrieval suite, log the full "
+            "ordered results list (content, rank, distance), the retrieved_context "
+            "string handed to the judge, and the flat-context baseline for the same "
+            "question id. Intended for root-cause analysis only — output is noisy."
+        ),
+    )
     parser.add_argument("--top-k", type=int, default=5, help="top_k for retrieval-suite search() calls (default 5).")
     parser.add_argument("--latency-ops", type=int, default=50, help="Number of remember()/search() calls to time (default 50).")
     parser.add_argument(
@@ -135,6 +147,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+
+    if args.debug:
+        # Ensure WARNING-level output from the retrieval_quality logger is
+        # visible when --debug is active (Python default suppresses all
+        # logging unless basicConfig has been called).
+        logging.basicConfig(
+            level=logging.WARNING,
+            format="%(message)s",
+        )
 
     print("agent-memory-sdk — benchmark harness")
     print("=" * 60)
@@ -198,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                 n_per_category=args.dataset_size,
                 seed=args.seed,
                 top_k=args.top_k,
+                debug=args.debug,
             )
             print(f"      with-SDK accuracy:    {retrieval_result.overall_accuracy:.1%} "
                   f"({retrieval_result.overall_correct}/{retrieval_result.overall_total})")

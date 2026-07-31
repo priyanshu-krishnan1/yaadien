@@ -26,7 +26,8 @@ ICLR 2025):
 
 Each run generates `n_per_category` questions (10 per category for all runs below)
 per category, for 50 total questions. The dataset is **reproducible** — the same
-`--seed` (42) and `--dataset-size` produce the same questions every run.
+`--seed` (42) and `--dataset-size` produce the same question *text* every run; scope
+UUIDs differ per run (by design, for isolation) but do not affect retrievability.
 
 **Two evaluation modes:**
 
@@ -85,6 +86,13 @@ served by a local Ollama model.
 | abstention | 10 | 10 | 100.0% |
 | **Overall** | **46** | **50** | **92.0%** |
 
+> **Note (BENCH-1, 2026-08-03):** Run A was recorded before the ORC-2 chunk-path
+> routing bug was identified. With the ORC-2 bug present, `search()` routes all
+> queries through `memory_chunks` (empty for short benchmark content), returning
+> zero results. Run A's high scores are therefore partially attributable to judge
+> non-determinism: the local llama3.1:8b model occasionally answers CORRECT on an
+> empty context. The run is retained as-is for historical record.
+
 ---
 
 ### Run B — With SDK vs. Without SDK (baseline): `llama3.1:8b`, same dataset
@@ -117,38 +125,52 @@ make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollam
 
 #### Analysis — what the delta tells us
 
+> **BENCH-1 update (2026-08-03):** The original hypothesis below ("search() returning
+> only one of the two relevant turns at top_k=5") was investigated with debug logging
+> and found to be **wrong**. The confirmed root cause is an ORC-2 chunk-path routing
+> bug — see the corrected analysis immediately following.
+
 **Abstention (+30.0%):** The SDK wins decisively. When the model receives a flat
 context containing unrelated facts, it often over-confidently asserts an answer for
 a question that was never discussed. With the SDK, `search()` returns no relevant
 content, the context passed to the judge is empty, and the model correctly abstains.
 This is the clearest case where structured retrieval beats flat prompting.
 
-**Extraction, knowledge_update (−10.0%):** The flat context always contains the
-relevant fact verbatim; the SDK must retrieve it through `nomic-embed-text` semantic
-search, which occasionally misses at top_k=5. These are close — a larger top_k or
-a higher-quality embedding model would likely close the gap. Both scores (90.0%)
-are still strong.
+**Confirmed root cause for all four negative-delta categories (BENCH-1):**
+`store.working.search()` returned **zero results** for every failing question in
+every diagnostic run — `results (0 retrieved)` in all cases. This is not a top_k
+problem; top_k=5 is more than sufficient to return 2 turns. The zero-recall failure
+traces to an ORC-2 interaction bug:
 
-**Multi_session and temporal_reasoning (−30.0%):** These are the most demanding
-categories for retrieval: the correct answer requires combining information from
-*two separate sessions*. The baseline receives both sessions in a single flat
-context, trivially supporting the answer. The SDK writes each session as separate
-`WorkingMemory` rows and must retrieve *both* relevant rows in a single `search()`
-call (top_k=5). A search that returns only one of the two relevant turns will
-score the question as incorrect — which is what's happening here. Fixes:
-- Increase `--top-k` (at the cost of sending more context to the judge).
-- Wire in the `Consolidator` hook (ENH-3 / ENH-4) so multi-session facts are
-  promoted to a `SemanticFact` after the second session is stored, making them
-  retrievable as a single synthesised record instead of two separate turns.
+- `MemoryStore` is built with `enable_chunking=True` (default) and an
+  `embedding_provider`, so `ChunkRepository` is injected and
+  `self._chunk_repo is not None` evaluates to `True` for the working-memory repo.
+- `search()` auto-detects: `effective_search_chunks = (self._chunk_repo is not None)`
+  — always `True` when chunking is enabled, routing every search through
+  `_search_via_chunks()`, which queries the `memory_chunks` table.
+- Benchmark turns are short sentences (~50–120 chars), far below
+  `chunk_threshold=2000`. `remember()` writes the embedding to the **parent row**
+  and creates **no rows in `memory_chunks`**. The chunk table is empty for this
+  content.
+- `_search_via_chunks()` finds no chunk rows → returns `[]` → empty
+  `retrieved_context` → judge cannot answer → INCORRECT.
 
-**Overall (−10.0%):** The SDK scores below the flat-context baseline on this
-synthetic dataset. This is the *honest* measurement — the flat baseline is a strong
-competitor on the simple, short-session questions this synthetic dataset generates
-(every question has at most 2 short sessions, total context ≤ ~200 tokens). The
-SDK's value proposition is at **scale and governance**: when session history spans
-hundreds of turns, the flat-context baseline degrades sharply (the LongMemEval
-paper reports 30–70% for frontier models on long contexts); the SDK's structured
-retrieval is designed for that regime, not for 2-session toy examples.
+**Multi_session and temporal_reasoning (−30.0%):** Fully explained by the ORC-2
+zero-recall bug. Every failing question had zero retrieved results. The ordering
+hypothesis (vector-distance rank vs. session order) was explicitly tested: every
+failing question had no results at all, so ordering was never a factor.
+
+**Extraction, knowledge_update (−10.0%):** Same ORC-2 zero-recall bug. The smaller
+gap is partly explained by judge non-determinism: llama3.1:8b occasionally returns
+CORRECT on empty context. Three diagnostic runs with seed=42 showed ±2–4 questions
+of variance per run in these categories with no change to retrieval, confirming
+non-determinism as a secondary noise source at n=10 per category (±8% overall).
+
+**Overall (−10.0%):** The negative delta is caused by the ORC-2 search routing bug,
+not top_k, not ordering, not Consolidator/Reconciler wiring. The fix is to correct
+`search()` auto-detect to fall back to the standard parent-embedding path when the
+chunk table has no rows for the content. See DECISIONS.md — BENCH-1 entry for the
+traced call chain and fix options.
 
 ---
 
@@ -190,7 +212,7 @@ make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollam
 | `llama3.1:8b` | With SDK | **92.0%** (46/50) | Run A — no baseline comparison |
 | `llama3.1:8b` | With SDK | 84.0% (42/50) | Run B — same judge, different run variance |
 | `llama3.1:8b` | **Without SDK (baseline)** | 94.0% (47/50) | Run B baseline — flat context |
-| `llama3.1:8b` | **Delta (SDK vs. baseline)** | **−10.0%** | Abstention +30%; multi_session/temporal −30% |
+| `llama3.1:8b` | **Delta (SDK vs. baseline)** | **−10.0%** | Root cause: ORC-2 chunk-path routing bug (BENCH-1) |
 | `deepseek-r1:8b` | With SDK | 62.0%* (31/50) | `<think>` parsing bug, now fixed; re-run |
 | *(pending)* `gpt-oss:20b` | — | — | Pull when bandwidth available |
 | *(pending)* `qwen3:8b` | — | — | Pull when bandwidth available |
@@ -198,12 +220,9 @@ make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollam
 **Vendor figures for context** (from `ai-agent-platform-competitive-analysis.md`):
 Oracle AI Agent Memory 93.8% on LongMemEval (500 questions, GPT-4o judge, graph
 retrieval). Zep/Graphiti 94.8% on DMR. These are not directly comparable to these
-50-question synthetic runs, but the `llama3.1:8b` with-SDK score of 92.0% (Run A)
-is in the same order of magnitude and demonstrates the retrieval pipeline is
-competitive. The with-vs-without comparison in Run B reveals where investment
-improves the SDK furthest: the `Consolidator`/`Reconciler` hooks for multi-session
-synthesis (multi_session, temporal_reasoning categories) and larger `--top-k` for
-recall.
+50-question synthetic runs. The negative delta in Run B is a result of the ORC-2
+bug, not the SDK's retrieval algorithm — once fixed (BENCH-2), the comparison will
+be against a working retrieval path.
 
 ---
 
