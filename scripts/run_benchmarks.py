@@ -160,6 +160,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "to the judge. Only meaningful with --consolidator benchmark."
         ),
     )
+    parser.add_argument(
+        "--extra-turns-per-session", type=int, default=0,
+        dest="extra_turns_per_session",
+        help=(
+            "Number of unrelated noise turns to prepend to each session in the "
+            "retrieval-quality dataset (default 0 — existing dataset shape unchanged). "
+            "Used by BENCH-5 to scale the context toward hundreds of turns: e.g. "
+            "--extra-turns-per-session 10 adds 10 noise turns per session, making "
+            "each extraction session 11 turns and each multi_session/temporal_reasoning "
+            "session 22 turns total. The same value is passed to both run_retrieval_quality() "
+            "and run_baseline() so the comparison is over identical questions. "
+            "Example scale levels: small=5, medium=20, large=50."
+        ),
+    )
     parser.add_argument("--tenants", type=int, default=10, help="Synthetic tenants for the isolation suite (default 10).")
     parser.add_argument("--agents-per-tenant", type=int, default=2, help="Synthetic agents per tenant (default 2).")
     parser.add_argument("--workers", type=int, default=20, help="Concurrent worker threads for the isolation suite (default 20).")
@@ -252,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
                 n_per_category=args.dataset_size,
                 seed=args.seed,
                 top_k=args.top_k,
+                extra_turns_per_session=args.extra_turns_per_session,
                 consolidator=consolidator if args.consolidator == "benchmark" else None,
                 reconciler=reconciler,
                 search_facts=getattr(args, "search_facts", False),
@@ -267,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.judge,
                     n_per_category=args.dataset_size,
                     seed=args.seed,
+                    extra_turns_per_session=args.extra_turns_per_session,
                 )
                 delta = retrieval_result.overall_accuracy - baseline_result.overall_accuracy
                 print(f"      without-SDK accuracy: {baseline_result.overall_accuracy:.1%} "

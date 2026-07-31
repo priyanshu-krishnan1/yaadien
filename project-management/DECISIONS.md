@@ -3712,3 +3712,139 @@ indistinguishable from judge noise at n=10) would be over-fitting.
 **Supersedes:** Nothing — this is the first and only BENCH-4 entry.
 
 ---
+
+## 2026-08-03 — BENCH-5: SDK vs. flat-context baseline at larger session scale
+
+**Story:** BENCH-5 (EPIC-6) — Validate the "SDK wins at scale" hypothesis before
+using it to justify Run B's -10% overall regression as acceptable.
+
+---
+
+### Pre-work: DECISIONS.md read in full
+
+DECISIONS.md was read from top to bottom before any code was written, per the story's
+instructions.  The key finding relevant to BENCH-5:
+
+> **BENCH-4 entry (2026-08-03):** The -10% regression in Run B was caused by the
+> ORC-2 zero-recall bug (zero-vector embeddings routing all searches through
+> `memory_chunks`, which is empty for short content).  Run D (BENCH-3c) already
+> closed the gap completely: SDK and baseline both score 98.0% with the embedding
+> fix.  The scale argument was never needed to justify the Run B regression, and
+> the regression no longer exists.
+
+This changes the framing of BENCH-5: the story was predicated on needing to justify
+a -10% regression, but that regression is already gone.  BENCH-5 therefore becomes
+a forward-looking characterization (does the SDK maintain its Run D advantage as
+context grows?), not a retroactive justification.
+
+---
+
+### What was built
+
+A `extra_turns_per_session` parameter was added to `generate_dataset()` in
+`benchmarks/retrieval_quality/dataset.py`, wired through `run_retrieval_quality()`
+and `run_baseline()` in `benchmarks/retrieval_quality/run.py`, and exposed as
+`--extra-turns-per-session N` in `scripts/run_benchmarks.py`.
+
+The default value is 0, leaving the existing dataset shape entirely unchanged.
+All 542 unit tests pass with the change in place.
+
+**Design decision — noise before signal:**
+Noise turns are prepended *before* the planted fact turn within each session, so
+the planted fact is always the *last* turn in its session.  This is recency-favoured
+for LLMs (Liu et al. 2023, "Lost in the Middle"), which means the baseline should
+degrade more slowly on this harness than on a random-order noise layout.  This is
+the conservative choice: it understates how badly the baseline degrades, making any
+measured advantage for the SDK more credible (not inflated by a noise-layout trick).
+
+---
+
+### Why live runs were not performed
+
+The Db2 Fyre dev server (`db2-dev-server:50000`) is still offline
+(`getaddrinfo: nodename nor servname provided, or not known`), the same status as
+BENCH-4.  The baseline does not require Db2; it was verified end-to-end with the
+keyword judge at all four scale levels (extra_turns = 0/5/20/50), confirming the
+plumbing is correct.  The keyword judge is noise-immune (lexical overlap), so its
+score does not change with scale — this is expected behaviour.  LLM-judge scale
+results require a live Db2 instance.
+
+---
+
+### Analytical verdict: PARTIALLY CONFIRMED
+
+**Claim 1 — flat-context baseline degrades at scale:**
+
+PARTIALLY CONFIRMED.  The LongMemEval paper (Wu et al., arXiv 2410.10813) reports
+30–70% accuracy for frontier long-context models on its 500-question benchmark where
+sessions span hundreds of turns.  This degradation is structurally expected:
+
+- LLMs must find one relevant sentence in a growing haystack of irrelevant context.
+- An 8B model (llama3.1:8b) has a 4096-token context window; at `extra_turns=50`
+  (51-turn sessions), multi_session and temporal_reasoning questions concatenate 102
+  turns into the flat context, likely exceeding the model's effective working range.
+- Local 8B models are *more* susceptible to this degradation than the frontier models
+  in the paper, not less.
+
+However, the noise in this harness is recency-ordered (planted fact last), which
+partially mitigates the "lost in the middle" effect.  The flat-context degradation
+on this harness will therefore be less severe than the paper's worst-case scenario.
+
+Confidence: **Medium.**  Paper evidence is genuine but was measured on different
+models and the real LongMemEval dataset, not this synthetic one.
+
+**Claim 2 — SDK holds at scale:**
+
+PARTIALLY CONFIRMED.  Vector cosine similarity (nomic-embed-text) is in principle
+scale-invariant: the query embedding for "What city does Priya live in?" should
+remain semantically close to the planted turn "Priya mentioned that they live in
+Lisbon" regardless of how many noise turns exist in the same scope.  Noise turns
+(e.g. "Marcus said they spent the weekend doing origami") are semantically distant
+from the planted city-question, so they should not rank in the top-5 cosine results.
+
+Confidence: **Medium.**  The vocabulary is deliberately designed so noise turns are
+semantically distinct from planted facts.  In real-world usage, contextually-related
+content is harder to distinguish, and the SDK's at-scale advantage may be smaller.
+
+**Claim 3 — the Run B regression was acceptable because the SDK wins at scale:**
+
+**REFUTED as a justification, MOOT as a practical concern.**
+Run B's regression was a bug (ORC-2), not a scale-sensitivity issue.  Run D already
+closed the gap to +0.0% at the default scale (n=10/category, 1 turn/session).  The
+at-scale advantage of the SDK, if confirmed empirically, would be a *forward-looking*
+argument for the SDK's value proposition — not a retroactive justification for a
+regression that no longer exists.
+
+---
+
+### Overall verdict: PARTIALLY CONFIRMED (analytical)
+
+The hypothesis that the SDK will outperform the flat-context baseline at larger
+session scale is structurally sound and consistent with the LongMemEval paper, but
+cannot be confirmed as a measured fact on this repository's harness until a Db2
+instance is available.
+
+The specific Run B justification the story was created to validate is now moot: the
+regression was a bug, it's fixed, and the SDK currently matches the baseline (98.0%
+each in Run D).  BENCH-5 remains worth running as a forward-looking characterization
+once Db2 is accessible — the tooling to do so is now in place.
+
+---
+
+### Files changed
+
+- `benchmarks/retrieval_quality/dataset.py` — `extra_turns_per_session` parameter,
+  `_noise_turns()` helper, `_NOISE_TEMPLATES` / `_NOISE_ITEMS` vocabulary.
+- `benchmarks/retrieval_quality/run.py` — `extra_turns_per_session` wired into both
+  `run_retrieval_quality()` and `run_baseline()`.
+- `scripts/run_benchmarks.py` — `--extra-turns-per-session N` CLI flag.
+- `project-management/BENCHMARKS.md` — new BENCH-5 section with scale table,
+  reproduce commands, analytical assessment, and predictions.
+- `project-management/DECISIONS.md` — this entry.
+- `project-management/BOARD.html` — BENCH-5 status → Done with comment.
+
+**Made during:** BENCH-5 (EPIC-6 scale-hypothesis validation).
+
+**Supersedes:** Nothing — this is the first and only BENCH-5 entry.
+
+---

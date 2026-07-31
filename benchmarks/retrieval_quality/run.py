@@ -102,6 +102,7 @@ def run_retrieval_quality(
     seed: int = 42,
     top_k: int = 5,
     *,
+    extra_turns_per_session: int = 0,
     consolidator: Any | None = None,
     reconciler: Any | None = None,
     search_facts: bool = False,
@@ -119,6 +120,13 @@ def run_retrieval_quality(
         n_per_category:           Questions per ability category.
         seed:                     Dataset RNG seed (reproducibility).
         top_k:                    Number of results fetched per question.
+        extra_turns_per_session:  Number of unrelated noise turns prepended to
+                                  each session before the planted fact turn
+                                  (default 0 — existing dataset shape unchanged).
+                                  Passed directly to
+                                  :func:`~benchmarks.retrieval_quality.dataset.generate_dataset`.
+                                  Must match the value used for ``run_baseline``
+                                  when comparing the two modes.
         consolidator:             Optional :class:`~agent_memory_sdk.types.Consolidator`
                                   implementation.  When supplied, a **new**
                                   ``MemoryStore`` is constructed locally with this
@@ -182,7 +190,12 @@ def run_retrieval_quality(
                                   not leave enabled on the hot path.
     """
     run_id = new_run_id()
-    dataset = generate_dataset(run_id, n_per_category=n_per_category, seed=seed)
+    dataset = generate_dataset(
+        run_id,
+        n_per_category=n_per_category,
+        seed=seed,
+        extra_turns_per_session=extra_turns_per_session,
+    )
 
     # When a consolidator is supplied, build a fresh local MemoryStore that
     # has it wired in.  We mirror the caller's pool, embedding_provider, and
@@ -342,6 +355,7 @@ def run_baseline(
     judge_name: str,
     n_per_category: int = 4,
     seed: int = 42,
+    extra_turns_per_session: int = 0,
 ) -> BaselineResult:
     """Execute the no-SDK flat-context baseline and return the result.
 
@@ -357,16 +371,25 @@ def run_baseline(
     context; a negative delta means retrieval is losing relevant turns.
 
     Args:
-        judge:          Callable matching ``LLMJudge``.
-        judge_name:     Judge name — stamped into the report.
-        n_per_category: Questions per ability category (must match the SDK
-                        run being compared).
-        seed:           RNG seed (must match the SDK run being compared).
+        judge:                   Callable matching ``LLMJudge``.
+        judge_name:              Judge name — stamped into the report.
+        n_per_category:          Questions per ability category (must match
+                                 the SDK run being compared).
+        seed:                    RNG seed (must match the SDK run being
+                                 compared).
+        extra_turns_per_session: Number of noise turns prepended per session
+                                 (must match the SDK run being compared so
+                                 the comparison is over identical questions).
     """
     # Baseline shares the same dataset (same seed / n_per_category) so the
     # comparison is over identical questions and facts.
     run_id = new_run_id()
-    dataset = generate_dataset(run_id, n_per_category=n_per_category, seed=seed)
+    dataset = generate_dataset(
+        run_id,
+        n_per_category=n_per_category,
+        seed=seed,
+        extra_turns_per_session=extra_turns_per_session,
+    )
 
     tallies: dict[str, list[int]] = {cat: [0, 0] for cat in ABILITY_CATEGORIES}
 

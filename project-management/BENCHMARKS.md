@@ -334,6 +334,172 @@ gap to vendor figures is within judge non-determinism noise at n=50 (see BENCH-1
 
 ---
 
+## BENCH-5: SDK vs. flat-context baseline at larger session scale
+
+**Story:** BENCH-5 — Validate whether the LongMemEval paper's claim that flat-context
+baselines degrade sharply at hundreds of turns (30–70% for frontier models) holds on
+this repo's own harness before using it to justify a -10% overall regression.
+
+**Date:** 2026-08-03
+
+**Status: Partially confirmed — analytically, not empirically; Db2 Fyre dev server
+offline.**
+
+---
+
+### What was built
+
+A configurable session-scale knob was added to the dataset generator and wired through
+the entire harness.  The changes are backward-compatible — the default path is unchanged.
+
+| File | Change |
+|---|---|
+| `benchmarks/retrieval_quality/dataset.py` | Added `extra_turns_per_session: int = 0` parameter to `generate_dataset()` and all five per-category generators. When > 0, each session is padded with that many unrelated noise turns (drawn from `_NOISE_TEMPLATES` / `_NOISE_ITEMS`) **before** the planted fact turn. |
+| `benchmarks/retrieval_quality/run.py` | Added `extra_turns_per_session: int = 0` to both `run_retrieval_quality()` and `run_baseline()`; passed through to `generate_dataset()`. |
+| `scripts/run_benchmarks.py` | Added `--extra-turns-per-session N` CLI flag (default 0); wired into both function calls so SDK and baseline always run on identical questions. |
+
+**Reproduce a scale run once a Db2 instance is available:**
+
+```bash
+# Small  (~6 turns/session, ~480 total turns across n=10-per-category dataset)
+make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10 --seed 42 --baseline --consolidator benchmark --reconcile --search-facts --extra-turns-per-session 5"
+
+# Medium (~21 turns/session, ~1680 total turns)
+make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10 --seed 42 --baseline --consolidator benchmark --reconcile --search-facts --extra-turns-per-session 20"
+
+# Large  (~51 turns/session, ~4080 total turns)
+make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10 --seed 42 --baseline --consolidator benchmark --reconcile --search-facts --extra-turns-per-session 50"
+```
+
+Total context size formula (n=10/category, 5 categories):
+`(1 + 2 + 2 + 2 + 1) × (extra_turns + 1) × 10 = 80 × (extra_turns + 1)` turns total.
+
+---
+
+### Scale levels and expected total context
+
+| Scale | `--extra-turns-per-session` | Turns per extraction session | Turns per multi_session | Approx. total turns (n=10/cat) |
+|---|---|---|---|---|
+| Baseline (Run D) | 0 (default) | 1 | 2 | 80 |
+| Small | 5 | 6 | 12 | 480 |
+| Medium | 20 | 21 | 42 | 1,680 |
+| Large | 50 | 51 | 102 | 4,080 |
+
+---
+
+### Why live runs were not performed
+
+The Db2 Fyre dev server (`db2-dev-server:50000`) returned
+`getaddrinfo: nodename nor servname provided, or not known` — the same offline status
+reported in BENCH-4.  No live Db2 connection is available in this environment.
+
+The `run_baseline()` function does **not** require a Db2 connection; a dry run with the
+keyword judge (the only dependency-free option) was executed at all four scale levels to
+verify the plumbing end-to-end:
+
+| Scale | `extra_turns` | Keyword judge baseline | Note |
+|---|---|---|---|
+| Baseline | 0 | 80.0% (40/50) | Matches Run B/D abstention behaviour |
+| Small | 5 | 80.0% (40/50) | Keyword judge immune to noise — expected |
+| Medium | 20 | 80.0% (40/50) | See below |
+| Large | 50 | 80.0% (40/50) | See below |
+
+The keyword judge is a lexical-overlap heuristic: it passes if the gold-answer token
+appears anywhere in the flat context.  Adding noise turns that do not contain the gold
+token does not change its score — this is the expected and correct behaviour for a
+heuristic judge.  The interesting degradation effect requires an **LLM judge**
+(e.g. `llama3.1:8b` via Ollama): as the flat context grows, the LLM's attention window
+must find the needle (the planted fact) in an increasingly long haystack of irrelevant
+sentences.
+
+---
+
+### Analytical assessment of the hypothesis
+
+> **Hypothesis (BENCHMARKS.md Run B analysis):** "At larger context scale the SDK should
+> hold this score while the flat-context baseline degrades — this is the BENCH-5
+> hypothesis (not yet measured on this harness)."
+
+The hypothesis is partially confirmed analytically, but cannot yet be confirmed
+empirically on this harness:
+
+**Why the baseline degrades at scale (paper-backed reasoning):**
+
+The LongMemEval paper (Wu et al., arXiv 2410.10813) reports that frontier long-context
+models score 30–70% on its 500-question benchmark, where sessions span hundreds of turns.
+That degradation is structurally inevitable for the flat-context mode: the judge model
+receives *all* turns concatenated and must identify the single relevant sentence.  As the
+flat context grows from 1 turn to 50+ turns per session, two effects compound:
+1. **Distraction:** More unrelated sentences compete for the model's attention at
+   inference time.  Local models (llama3.1:8b, 8B parameters, 4096-token context window)
+   are more susceptible than large frontier models, not less.
+2. **Context-position bias:** LLMs reliably attend more to content near the start or end
+   of the context window (the "lost-in-the-middle" effect, Liu et al. 2023).  With noise
+   turns *before* the planted fact (the design choice in this harness), the planted fact
+   is at the *end* of each session — nominally the most attended position.  At `extra_turns=50`,
+   the session is 51 turns long; the planted fact is in position 51/51.  That's still
+   likely recency-favored, which means the flat-context baseline should **degrade more
+   slowly than the paper's worst-case** on this particular noise layout.
+
+**Why the SDK should hold (structural reasoning):**
+
+The SDK's retrieval path uses vector cosine similarity to find the planted fact directly,
+independent of session length.  The planted fact's nomic-embed-text embedding is
+semantically close to the question embedding regardless of how many noise turns exist in
+the same scope.  Noise turns receive low cosine similarity scores and are not returned in
+the top-k results.  At `top_k=5`, the SDK should retrieve the same 1–2 relevant turns
+at `extra_turns=50` as at `extra_turns=0`, as long as the embedding model correctly
+distinguishes signal from noise — which nomic-embed-text does reliably for the
+vocabulary used here.
+
+**The caveat on this repo's synthetic noise:**
+
+The noise turns in this harness use a small, constrained vocabulary (`_NOISE_ITEMS`,
+`_NOISE_TEMPLATES`).  They are semantically distinct from the planted facts (no language
+names, city names used as planted facts, or hobby names appear as planted answers in
+abstention/knowledge_update categories).  Real-world sessions contain contextually
+related content that is *harder* to distinguish semantically — the at-scale advantage of
+the SDK over the baseline may be **smaller** in production than on this synthetic
+benchmark, and the BENCH-5 numbers when obtained should be read with this caveat.
+
+**Honest verdict: PARTIALLY CONFIRMED (analytical)**
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| Flat-context baseline degrades at scale | Paper reports 30–70% on frontier models; structural attention/distraction reasoning applies to local models (8B) even more strongly | Medium — paper evidence is real but on different models/dataset |
+| SDK holds at scale | Vector cosine similarity is scale-independent in principle; noise turns are semantically distinct from planted facts in this harness | Medium — confirmed on baseline for keyword judge only; LLM judge at scale not run |
+| The -10% Run B regression was acceptable because the SDK wins at scale | **This specific claim cannot be validated.** Run B's -10% was caused by the ORC-2 zero-recall bug (not top_k, not scale sensitivity), and Run D already closed the gap to +0.0% with the embedding fix. The scale argument was never needed to justify the Run B regression, and the regression no longer exists. | N/A — the justification was moot |
+
+**The original framing in the story is now partially obsolete.** BENCH-1 through BENCH-3c
+established that Run B's regression was a bug, not a fundamental limitation of the SDK at
+short-session scale. Run D shows SDK ≥ baseline at short-session scale (98.0% each),
+not behind it.  BENCH-5's empirical at-scale comparison remains worth running once a
+Db2 instance is available, but it is no longer needed to justify shipping.
+
+---
+
+### Reproduce when Db2 is available
+
+```bash
+# One command to run all three scale levels sequentially:
+for N in 5 20 50; do
+  make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10 --seed 42 --baseline --consolidator benchmark --reconcile --search-facts --extra-turns-per-session $N"
+done
+```
+
+Record the per-category with-SDK and without-SDK accuracy at each scale level in this
+section once available.  The expected pattern (if the hypothesis holds):
+
+| Scale | Prediction: SDK accuracy | Prediction: Baseline accuracy | Prediction: Delta |
+|---|---|---|---|
+| Small (extra=5) | ~98% (noise won't affect vector retrieval) | ~85–95% (LLM judge may still handle 6-turn sessions) | ~+3 to +13% |
+| Medium (extra=20) | ~95–98% (minor judge variance) | ~70–85% (21 turns/session stresses local LLM) | ~+10 to +25% |
+| Large (extra=50) | ~90–98% (judge variance at n=10) | ~50–70% (51 turns, "lost in middle" likely) | ~+20 to +45% |
+
+These predictions are analytical estimates, not measured values.
+
+---
+
 ### Suite 2 / Suite 3 (latency/cost and isolation under load)
 
 *Not yet run. Run separately:*
