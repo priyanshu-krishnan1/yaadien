@@ -3126,3 +3126,80 @@ as BENCH-1's runs (within judge non-determinism noise) and add no information.
 
 **Supersedes:** Nothing — this is the first and only BENCH-2 entry.
 
+
+## 2026-08-03 — BENCH-3a: real fact-extraction consolidator for benchmark suite
+
+**Story:** BENCH-3a — Build a real fact-extraction Consolidator for the benchmark suite.
+
+### Design choice: template-matching over LLM-based
+
+Two options were considered for extracting `SemanticFact` records from the benchmark's raw `WorkingMemory` turns:
+
+**Option A — LLM-based (Ollama, same model as the judge):**
+An Ollama-backed consolidator using `llama3.1:8b` or similar, mirroring the `LLMConsolidator` example in `agent_memory_sdk.types.Consolidator`.  Fires once per `remember()` call, so N turns → N synchronous LLM calls inline on the write path.
+
+**Option B — Template-matching (deterministic regex patterns):**
+A regex-based extractor matched against the five known synthetic turn templates.  Zero LLM calls; fully deterministic; designed specifically for this benchmark dataset.
+
+**Option B chosen.  Rationale:**
+
+1. **Measurement hygiene**: BENCH-3a/3b/3c's goal is to measure whether consolidation *helps retrieval accuracy*, not to measure whether Ollama's extraction *quality* is high.  Adding per-turn LLM latency and sampling non-determinism to the write path conflates two variables: (a) does the extraction fire correctly at all, and (b) does the extracted content later improve search accuracy.  Template-matching holds (a) constant so (b) is the only variable.
+
+2. **Sufficiency for this dataset**: Every session turn in the synthetic dataset (`benchmarks/retrieval_quality/dataset.py`) matches one of five fixed template patterns with 100% recall.  No paraphrase, coreference resolution, or common-sense inference is needed.  An LLM would add cost and noise without improving coverage.
+
+3. **Reproducibility**: deterministic output → the same seed produces identical `SemanticFact` content across all benchmark runs.  This is required for before/after comparisons in BENCH-3c to be meaningful.
+
+4. **Cost**: `consolidate_every_n=1` (default) fires the consolidator on every `remember()` call.  At n=10 per category, 5 categories, ~2 turns/question, that is ~100 consolidator invocations per suite run.  At ~500–700ms per Ollama call, an LLM consolidator would add 50–70 seconds to each run — a material overhead that could also exhaust local RAM/VRAM during the concurrent isolation suite.
+
+An LLM-backed consolidator remains the correct choice for production / real-world sessions.  The `BenchmarkConsolidator` is explicitly scoped to this synthetic benchmark and documents its limitations.
+
+### What was built
+
+**`benchmarks/retrieval_quality/consolidator.py`** — new file.
+
+`BenchmarkConsolidator` class satisfies the `agent_memory_sdk.types.Consolidator` protocol (`__call__(raw_memories) -> list[SemanticFact]`).  For each non-empty `WorkingMemory` turn:
+
+1. The turn text is classified against four compiled regex patterns:
+   - `_P_DATED_EVENT` — `"On YYYY-MM-DD, Name did X."` → confidence **0.95** (explicit, temporally grounded)
+   - `_P_UPDATE` — `"Name said: actually, I've switched…"` → confidence **0.95** (explicit correction)
+   - `_P_ATTRIBUTE` — `"Name mentioned/said their <attr> is X."` → confidence **0.90** (direct attribute statement)
+   - `_P_PROJECT` — `"Name said the project…"` → confidence **0.90** (compound reference)
+   - catch-all (no pattern matched) → confidence **0.70**
+
+2. A `SemanticFact` is emitted with `content = turn text verbatim`, `confidence` from above, and `metadata={"source": "benchmark_template_consolidator", "from_memory_id": <source id>}`.
+
+The result is one `SemanticFact` per non-empty turn — a 1:1 mapping that is correct because the synthetic dataset plants exactly one fact per session turn.
+
+**`benchmarks/retrieval_quality/run.py`** — modified.
+
+`run_retrieval_quality()` gains a new keyword-only parameter `consolidator: Any | None = None`.  When `None` (default), behaviour is **unchanged** — the caller's `store` is used directly, no consolidation occurs, the function's output is identical to its pre-BENCH-3a behaviour.  When a consolidator is supplied:
+
+- A fresh `MemoryStore` is constructed locally with that consolidator wired in, sharing the caller's connection pool, embedding provider, and embedding dimension.
+- `enable_chunking=False` is set on the local store.  This is deliberate: all benchmark turns are short sentences (~50–120 chars), well below the 2000-char `chunk_threshold`.  With `enable_chunking=True` and an embedding provider present, `MemoryStore` builds a `ChunkRepository` and `search()` auto-detects `effective_search_chunks = True`, routing all searches through `memory_chunks` (empty for short content) → zero recall.  This is the BENCH-1 root-cause bug.  The consolidator-wired store disables chunking to ensure embeddings land on the parent `working_memory` row where `search()` can find them.
+- All `remember()` calls and `search()` calls in the loop use `active_store` instead of the caller's `store`.
+
+The `BenchmarkConsolidator` class is re-exported from `benchmarks.retrieval_quality.run` so BENCH-3b/3c can import it from the same canonical location as the rest of the retrieval-quality API.
+
+**Default `run_retrieval_quality()` behaviour is not changed** — BENCH-3c is the story that wires consolidation in and re-scores.
+
+### Limitations of this approach on the synthetic dataset
+
+- **Template-only**: any turn not matching the four patterns is promoted as a low-confidence (0.70) verbatim fact.  For real free-form sessions, this misses most facts.  Not a problem here because the synthetic generator always uses one of the known templates.
+- **Verbatim content**: the `SemanticFact.content` is the raw turn text, not a normalised or compressed fact string.  Retrieval quality depends on the embedding model finding the raw turn text semantically close to the question — adequate for the benchmark's vector search path, but not equivalent to a normalised fact ("Priya lives in Lisbon" vs. "Priya mentioned that they live in Lisbon.").
+- **No coreference, no inference**: pronouns, implicit references, and multi-hop facts are not resolved.  The synthetic turns always include the full name, so this does not affect benchmark accuracy.
+- **1:1 turn→fact mapping**: the benchmark plants exactly one fact per turn, making this mapping correct here.  Real conversations often pack multiple facts per utterance; this consolidator produces one coarse `SemanticFact` per sentence.
+- **Confidence calibration is synthetic**: the 0.70/0.90/0.95 values were chosen to reflect template clarity, not any grounding probability derived from the model.  They are stable across runs and serve the benchmark's `min_confidence` filtering correctly; they should not be compared to confidence scores produced by a real LLM-backed consolidator.
+
+### Files changed
+
+- `benchmarks/retrieval_quality/consolidator.py` — new file (196 lines); `BenchmarkConsolidator` class + pattern registry + `_classify()` helper.
+- `benchmarks/retrieval_quality/run.py` — `consolidator: Any | None = None` kwarg added to `run_retrieval_quality()`; `active_store` local-MemoryStore construction when consolidator is supplied; re-export of `BenchmarkConsolidator` via import.
+- `project-management/BOARD.html` — BENCH-3a status → Done with comment.
+- `project-management/DECISIONS.md` — this entry.
+
+**Made during:** BENCH-3a (EPIC-6 first consolidation sub-story).
+
+**Supersedes:** Nothing — this is the first BENCH-3a entry.  BENCH-3b will add a Reconciler for `knowledge_update` supersession; BENCH-3c will change the search target to `store.facts` and re-score.
+
+---
+

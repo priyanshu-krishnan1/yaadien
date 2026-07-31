@@ -24,6 +24,9 @@ from agent_memory_sdk.models import WorkingMemory
 from agent_memory_sdk.store import MemoryStore
 from benchmarks.common.report import BaselineResult, CategoryScore, RetrievalQualityResult
 from benchmarks.common.scope_gen import new_run_id
+from benchmarks.retrieval_quality.consolidator import (
+    BenchmarkConsolidator as BenchmarkConsolidator,  # noqa: F401
+)
 from benchmarks.retrieval_quality.dataset import ABILITY_CATEGORIES, generate_dataset
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,7 @@ def run_retrieval_quality(
     seed: int = 42,
     top_k: int = 5,
     *,
+    consolidator: Any | None = None,
     debug: bool = False,
 ) -> RetrievalQualityResult:
     """Execute the retrieval-quality suite (with SDK) and return the result.
@@ -108,6 +112,20 @@ def run_retrieval_quality(
         n_per_category:           Questions per ability category.
         seed:                     Dataset RNG seed (reproducibility).
         top_k:                    Number of results fetched per question.
+        consolidator:             Optional :class:`~agent_memory_sdk.types.Consolidator`
+                                  implementation.  When supplied, a **new**
+                                  ``MemoryStore`` is constructed locally with this
+                                  consolidator wired in (same pool, embedding
+                                  provider, and dimensions as the caller's
+                                  ``store``).  Turns are written through this
+                                  local store so that each ``remember()`` call
+                                  also produces ``SemanticFact`` records via the
+                                  consolidator.  When ``None`` (default), the
+                                  caller's ``store`` is used directly and no
+                                  consolidation occurs — matching the existing
+                                  behaviour so this parameter is backward-
+                                  compatible and does not change the default
+                                  ``run_retrieval_quality()`` output.
         debug:                    When True, log full retrieval evidence for
                                   every INCORRECT question (rank, distance,
                                   retrieved context, flat-context baseline).
@@ -116,6 +134,29 @@ def run_retrieval_quality(
     """
     run_id = new_run_id()
     dataset = generate_dataset(run_id, n_per_category=n_per_category, seed=seed)
+
+    # When a consolidator is supplied, build a fresh local MemoryStore that
+    # has it wired in.  We mirror the caller's pool, embedding_provider, and
+    # embedding_dim so all repositories are consistent.  The caller's own
+    # store is left untouched — this keeps the before/after comparison clean
+    # (the caller can run two runs: one without consolidator= and one with,
+    # against the same Db2 pool, comparing results directly).
+    active_store = store
+    if consolidator is not None:
+        active_store = MemoryStore(
+            store.working._pool,
+            embedding_dim=store.working.EMBEDDING_DIM,
+            embedding_provider=store.working._embedding_provider,
+            consolidator=consolidator,
+            # Chunking: disable for the retrieval suite — all turns are short
+            # sentences far below the 2000-char threshold, so chunking only
+            # routes searches through memory_chunks (empty for short content),
+            # causing zero-recall (see BENCH-1 root-cause analysis).  The
+            # caller's store already has enable_chunking=True but the
+            # consolidator-wired local store deliberately disables it so the
+            # write path stores embeddings on the parent working_memory row.
+            enable_chunking=False,
+        )
 
     # Build a flat-context map keyed by question id so debug mode can show
     # the exact string the baseline would have handed to the judge.
@@ -131,7 +172,7 @@ def run_retrieval_quality(
     for q in dataset:
         for session in q.sessions:
             for turn in session:
-                store.remember(
+                active_store.remember(
                     WorkingMemory(
                         tenant_id=q.scope.tenant_id,
                         agent_id=q.scope.agent_id,
@@ -143,7 +184,7 @@ def run_retrieval_quality(
                 )
 
         query_embedding = embedding_provider(q.question)
-        results = store.working.search(
+        results = active_store.working.search(
             query_embedding=query_embedding,
             scope=q.scope,
             top_k=top_k,
