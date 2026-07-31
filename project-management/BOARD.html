@@ -666,9 +666,14 @@
     "epic_id": "EPIC-6",
     "title": "Wire a Reconciler so stale knowledge_update facts are superseded, not left for the judge to sort out",
     "summary": "Contradicting facts (old vs. new favorite language) should be resolved via ENH-3 supersession (superseded_at excluded from search()) rather than relying on the LLM judge to infer recency from two raw, unordered turns.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Second sub-story of the Consolidator/Reconciler wiring fix. Once BENCH-3a's Consolidator is producing `SemanticFact` records, the knowledge_update category (a fact stated, then explicitly contradicted in a later session) is exactly the case the ENH-3 `Reconciler` protocol was built for: detect the contradiction and call `SemanticFactRepository.supersede()` so the stale fact is excluded from `search()`/`list_all()` (`superseded_at IS NOT NULL` filter, already implemented and tested in ENH-3/VER-10) instead of being handed to the judge alongside the current fact and hoping it figures out which one is \"CURRENT.\"\n\nBuild a `Reconciler` for the benchmark suite (same style decision as BENCH-3a — LLM-based via the local Ollama model, or simpler pattern-matching given the synthetic dataset's explicit contradiction phrasing e.g. \"actually, I've switched\") and wire `MemoryStore.reconcile(memory_type, scope)` into the retrieval-quality run after each question's sessions are written, before `search()` is called.\n\nBefore starting: read DECISIONS.md in full, including BENCH-3a's entry. Before finishing: append a dated DECISIONS.md entry. Set BENCH-3b's status to \"Done\" in BOARD.html with a comment, then `git add -A && git commit -m \"bench-3b: wire reconciler for knowledge_update supersession in benchmark suite\"`.",
-    "comments": []
+    "comments": [
+      {
+        "date": "2026-08-03",
+        "text": "Done. Built BenchmarkReconciler in benchmarks/retrieval_quality/reconciler.py — a deterministic template-matching Reconciler (not LLM-based; see DECISIONS.md BENCH-3b entry for full rationale). Detects the 'actually, I've switched — is now Y, not X anymore' correction pattern via _P_CORRECTION regex; scans older candidates (reverse-chron list_all ordering) for the same person + old value and emits a SupersedeDecision(winner=correction_fact, loser=old_attribute_fact). Wired into run_retrieval_quality() as a new optional reconciler: Any | None = None kwarg — forwarded to the local MemoryStore(reconciler=) constructor when a consolidator is also supplied; active_store.reconcile('facts', q.scope) is called after all sessions are written, before search(), guarded by 'if consolidator is not None'. Default behaviour unchanged. BenchmarkReconciler re-exported from run.py for BENCH-3c import convenience. 542 unit tests pass; ruff clean; mypy strict clean. DECISIONS.md entry appended with design rationale, algorithm description, and four documented limitations."
+      }
+    ]
   },
   {
     "id": "BENCH-3c",

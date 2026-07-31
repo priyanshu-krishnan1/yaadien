@@ -3203,3 +3203,74 @@ The `BenchmarkConsolidator` class is re-exported from `benchmarks.retrieval_qual
 
 ---
 
+
+## 2026-08-03 — BENCH-3b: Reconciler for knowledge_update supersession in benchmark suite
+
+**Story:** BENCH-3b — Wire a Reconciler so stale `knowledge_update` facts are superseded via ENH-3 instead of being handed to the judge unresolved.
+
+### Design choice: template-matching over LLM-based
+
+The same four rationale points that led BENCH-3a to choose a deterministic regex Consolidator (see DECISIONS.md BENCH-3a entry) apply here:
+
+1. **Measurement hygiene**: the variable under test is whether calling `reconcile()` → `supersede()` improves `knowledge_update` accuracy, not whether Ollama's contradiction-detection quality is good.  A non-deterministic LLM reconciler would introduce variance that obscures the before/after delta.
+
+2. **Sufficiency for this dataset**: every `knowledge_update` session in the synthetic dataset (see `_gen_knowledge_update` in `benchmarks/retrieval_quality/dataset.py`) uses a single, fixed correction template:
+
+    ```
+    "{name} said: actually, I've switched — my favorite programming language is now {new_lang}, not {old_lang} anymore."
+    ```
+
+    The `_P_CORRECTION` regex in the reconciler captures `name`, `new_val`, and `old_val` from this template with 100% recall on the synthetic data.  No paraphrase, coreference, or inference is required.
+
+3. **Reproducibility**: deterministic pattern-matching → same decisions on every run at the same seed.
+
+4. **Cost**: `reconcile("facts", scope)` is called once per question after all sessions are written.  An LLM-based reconciler would add one `list_all()` + one LLM call per question (n_per_category × 5 categories calls total per suite run), introducing ~500–700ms latency per call and model sampling variance.
+
+### How the reconciler works
+
+`BenchmarkReconciler.__call__(candidates)` receives the live, non-superseded `SemanticFact` records for a scope in reverse-chronological order (newest first, as returned by `facts.list_all()`):
+
+1. **Scan for correction facts (winners)**: iterate candidates top-to-bottom (newest-first).  For each fact whose content matches `_P_CORRECTION` (`"actually, I've switched … is now Y, not X anymore"`), extract `(name, new_val, old_val)`.
+
+2. **Find the loser**: scan the remaining candidates (older, higher index) for a fact that:
+   - mentions the same `name` (case-insensitive),
+   - mentions `old_val` (case-insensitive), and
+   - does **not** itself contain the correction phrase (so the winner doesn't self-supersede).
+
+3. **Emit a `SupersedeDecision`**: `winner_id` = the correction fact's id, `loser_id` = the old-attribute fact's id, `reason` = `"contradicts: {name}'s current value is '{new_val}', not '{old_val}'"`.
+
+4. **Break after the first loser**: the synthetic dataset plants exactly one contradicted attribute per scope, so one loser per correction is always correct here.
+
+`MemoryStore.reconcile("facts", scope)` then calls `SemanticFactRepository.supersede(loser_id, winner_id, reason, scope)`, setting `superseded_at IS NOT NULL` on the loser row so it is excluded from all future `search()` / `list_all()` calls (already implemented and tested in ENH-3/VER-10).
+
+### Wiring into `run_retrieval_quality()`
+
+`run_retrieval_quality()` gains a new keyword-only parameter `reconciler: Any | None = None`.  When `None` (default), behaviour is **unchanged** — no reconciliation is performed, the function output is identical to its pre-BENCH-3b behaviour.  When a reconciler is supplied:
+
+- It is wired into the local `MemoryStore` (the same one constructed when `consolidator` is supplied) via the `reconciler=` argument at construction time.
+- After all sessions for each question have been written via `remember()`, but before `search()` is called, `active_store.reconcile("facts", q.scope)` is invoked.
+- The call is guarded by `if consolidator is not None` — without a Consolidator no `SemanticFact` rows exist, so `reconcile()` would always see an empty candidate list and is wasteful to invoke.
+- Reconciler exceptions are caught and logged (not propagated), following the same defensive pattern as the Consolidator.
+
+`BenchmarkReconciler` is re-exported from `benchmarks.retrieval_quality.run` (same as `BenchmarkConsolidator`) so BENCH-3c can import both from the same canonical location.
+
+### Limitations of this approach on the synthetic dataset
+
+- **One contradiction template only**: only the explicit `"actually, I've switched"` / `"is now Y, not X anymore"` correction phrase is matched.  Real-world contradictions expressed via paraphrase, implicit retraction, or gradual position change are not detected.
+- **One attribute per scope**: the reconciler assumes at most one correction per scope and breaks after the first loser.  This is always correct for the synthetic dataset.
+- **Name-and-attribute string match for loser identification**: the loser-detection logic requires `name` and `old_val` to appear verbatim in the loser fact's content.  This is always true for the synthetic dataset because the generator includes both values in the correction turn (the `not {old_lang} anymore` clause).
+- **Reverse-chronological ordering assumption**: `facts.list_all()` returns records newest-first.  The reconciler relies on this ordering to find the winner before the loser.  If `list_all()` ordering ever changes, the reconciler's winner/loser identification logic would break.
+
+### Files changed
+
+- `benchmarks/retrieval_quality/reconciler.py` — new file; `BenchmarkReconciler` class + `_parse_correction()` / `_is_matching_loser()` helpers + `_P_CORRECTION` / `_P_ATTRIBUTE` pattern registry.
+- `benchmarks/retrieval_quality/run.py` — `reconciler: Any | None = None` kwarg added to `run_retrieval_quality()`; `reconciler=reconciler` forwarded to the local `MemoryStore` constructor when a consolidator is supplied; `active_store.reconcile("facts", q.scope)` call added after sessions are written, guarded by `if consolidator is not None`; `BenchmarkReconciler` re-exported via import.
+- `project-management/BOARD.html` — BENCH-3b status → Done with comment.
+- `project-management/DECISIONS.md` — this entry.
+
+**Made during:** BENCH-3b (EPIC-6 second consolidation sub-story).
+
+**Supersedes:** Nothing — this is the first BENCH-3b entry.  BENCH-3c will change the search target to `store.facts` and re-score the full suite.
+
+---
+

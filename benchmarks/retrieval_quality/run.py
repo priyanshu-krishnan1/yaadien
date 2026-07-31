@@ -28,6 +28,9 @@ from benchmarks.retrieval_quality.consolidator import (
     BenchmarkConsolidator as BenchmarkConsolidator,  # noqa: F401
 )
 from benchmarks.retrieval_quality.dataset import ABILITY_CATEGORIES, generate_dataset
+from benchmarks.retrieval_quality.reconciler import (
+    BenchmarkReconciler as BenchmarkReconciler,  # noqa: F401
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,7 @@ def run_retrieval_quality(
     top_k: int = 5,
     *,
     consolidator: Any | None = None,
+    reconciler: Any | None = None,
     debug: bool = False,
 ) -> RetrievalQualityResult:
     """Execute the retrieval-quality suite (with SDK) and return the result.
@@ -126,6 +130,23 @@ def run_retrieval_quality(
                                   behaviour so this parameter is backward-
                                   compatible and does not change the default
                                   ``run_retrieval_quality()`` output.
+        reconciler:               Optional :class:`~agent_memory_sdk.types.Reconciler`
+                                  implementation.  When supplied (alongside a
+                                  *consolidator*), ``active_store.reconcile(
+                                  "facts", scope)`` is called after all sessions
+                                  for each question have been written and before
+                                  ``search()`` is called.  This causes the stale
+                                  fact (the old attribute value in a
+                                  ``knowledge_update`` question) to be
+                                  soft-superseded via
+                                  :meth:`~agent_memory_sdk.repositories.facts.SemanticFactRepository.supersede`,
+                                  so only the current fact is visible to
+                                  ``search()``.  When ``None`` (default), no
+                                  reconciliation is performed — backward-
+                                  compatible with all existing callers.
+                                  A *reconciler* without a *consolidator* is a
+                                  no-op: without a Consolidator there are no
+                                  ``SemanticFact`` rows to reconcile.
         debug:                    When True, log full retrieval evidence for
                                   every INCORRECT question (rank, distance,
                                   retrieved context, flat-context baseline).
@@ -148,6 +169,11 @@ def run_retrieval_quality(
             embedding_dim=store.working.EMBEDDING_DIM,
             embedding_provider=store.working._embedding_provider,
             consolidator=consolidator,
+            # Wire the reconciler into the same local store so that
+            # active_store.reconcile("facts", scope) can call it directly.
+            # When reconciler is None the store defaults to NoOpReconciler,
+            # which is a safe no-op.
+            reconciler=reconciler,
             # Chunking: disable for the retrieval suite — all turns are short
             # sentences far below the 2000-char threshold, so chunking only
             # routes searches through memory_chunks (empty for short content),
@@ -181,6 +207,25 @@ def run_retrieval_quality(
                         content=turn,
                     ),
                     q.scope,
+                )
+
+        # BENCH-3b: run a reconciliation pass after all sessions are written
+        # and before search() is called.  When a reconciler is configured,
+        # this supersedes stale SemanticFact rows (e.g. the old attribute value
+        # in a knowledge_update question) so only the current fact is visible
+        # to the subsequent search() call.  When reconciler is None (default),
+        # active_store._reconciler is NoOpReconciler and this call is a fast
+        # no-op (list_all + empty decisions list → zero supersede() calls).
+        # We only call reconcile when consolidator is also set — without a
+        # consolidator there are no SemanticFact rows and reconcile() would
+        # always see an empty candidates list anyway.
+        if consolidator is not None:
+            try:
+                active_store.reconcile("facts", q.scope)
+            except Exception:
+                logger.exception(
+                    "retrieval_quality: reconcile() raised for id=%s; continuing.",
+                    q.id,
                 )
 
         query_embedding = embedding_provider(q.question)
