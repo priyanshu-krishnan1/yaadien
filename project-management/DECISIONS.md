@@ -3905,3 +3905,48 @@ If Db2 Text Search Extender availability is later confirmed on a real 12.1+ inst
 **Supersedes:** Nothing — this is the first and only PIPE-1 entry.
 
 ---
+
+## 2026-08-02 — PIPE-5: `MemoryStore.erase_all(scope)` with an `ErasureReport`
+
+### What was built
+
+Added a genuine hard-delete erasure primitive closing the PARTIAL erasure gap VER-13 recorded in DECISIONS.md: `forget()` only tombstones one row in one table, and there was no single "erase everything for this person" call.
+
+- **`ErasureReport` dataclass** (`src/agent_memory_sdk/types.py`) — three fields: `rows_deleted: dict[str, int]` (per-table row count), `total_deleted: int` (sum across all six tables), `erased_at: datetime | None` (UTC timestamp of completion). Exported from `agent_memory_sdk/__init__.py`, parallel to how `ContextCard` is exported.
+- **`BaseRepository.erase_all(scope) -> int`** (`src/agent_memory_sdk/repositories/base.py`) — the per-table primitive. Issues `DELETE FROM <table> WHERE <scope predicates>` with **no** `deleted_at`/`expires_at` condition at all — every row matching scope is removed, tombstoned or not, expired or not. This is deliberately positioned alongside `forget()` and `purge_expired()` in the same class with a docstring contrasting all three: `forget()` sets `deleted_at` (reversible), `purge_expired()` hard-deletes but only rows already tombstoned, `erase_all()` hard-deletes unconditionally. Enforces `_require_agent_id(scope)` — the same scoping-enforcement discipline VER-5 verified across every other method on this class.
+- **`ChunkRepository.erase_by_scope(scope) -> int`** (`src/agent_memory_sdk/repositories/chunks.py`) — the `memory_chunks` equivalent. `memory_chunks` rows have no tombstone lifecycle of their own (they're only ever hard-deleted via `delete_by_source()` when a parent record is rewritten), so this is the only way to bulk-remove a scope's chunk fragments. Same `_require_agent_id` enforcement.
+- **`MemoryStore.erase_all(scope) -> ErasureReport`** (`src/agent_memory_sdk/store.py`) — the facade. Loops `erase_all(scope)` over all five per-type repositories (`working`, `episodic`, `facts`, `profiles`, `procedures`), then reaches `memory_chunks` via `self.chunks.erase_by_scope(scope)` when chunking is active, or via a throwaway `ChunkRepository(self._pool)` when it isn't (`self.chunks` is `None` whenever the store was built without an `embedding_provider`, but stale chunk rows can still exist from an earlier configuration — a new `self._pool` attribute was added to `MemoryStore.__init__` specifically so `erase_all()` can reach the table in that case). Sums the six counts into `total_deleted` and stamps `erased_at = datetime.now(timezone.utc)`.
+
+### Why not require more than `agent_id`
+
+The board card explicitly modeled this as "a thin loop issuing the same scope-predicated DELETE each repository's `purge_expired()` already uses, minus the `deleted_at`/`expires_at` gating" — so `erase_all()` follows `purge_expired()`'s existing minimum-scope contract (`agent_id` required, `tenant_id`/`user_id`/`thread_id` optional narrowing) rather than inventing a stricter rule specific to this method. Callers who want to erase exactly one person's data narrow the call by setting `user_id` on the scope they pass in — the same pattern already used everywhere else in the SDK. No new scoping mechanism was introduced.
+
+### Vendor-parity check (from the board card)
+
+Before implementing, checked whether any competitor ships a single "erase everything" primitive as prior art. Oracle AI Agent Memory's own erasure story (per current documentation) is search + list + per-record delete, not a magic one-call API — Oracle Database's native auditing covers the storage layer underneath instead. This SDK's `erase_all()` is a genuine ergonomic improvement (one call across six tables with an audit report) without claiming to have invented a mechanism no vendor actually ships.
+
+### Irreversibility
+
+`erase_all()` is documented in three places (its own docstring, `BaseRepository.erase_all()`'s docstring, and this entry) as bypassing the `deleted_at`/`expires_at` tombstone lifecycle entirely and having no recovery path short of a database backup taken beforehand. It must only be invoked in direct response to an explicit erasure request, never as routine maintenance (`purge_expired()` remains the tool for that).
+
+### Files changed
+
+- `src/agent_memory_sdk/types.py` — `ErasureReport` dataclass.
+- `src/agent_memory_sdk/__init__.py` — export `ErasureReport`.
+- `src/agent_memory_sdk/repositories/base.py` — `BaseRepository.erase_all(scope) -> int`.
+- `src/agent_memory_sdk/repositories/chunks.py` — `ChunkRepository.erase_by_scope(scope) -> int`.
+- `src/agent_memory_sdk/store.py` — `MemoryStore.erase_all(scope) -> ErasureReport`; `self._pool` attribute added in `__init__` so `erase_all()` can build a fallback `ChunkRepository` when chunking isn't active.
+- `tests/test_pipe5_erasure.py` — 48 new unit tests: `BaseRepository.erase_all()` parametrized across all five repository types (SQL structure, no `deleted_at`/`expires_at` gating, scope predicate presence, `agent_id` enforcement, cross-scope param isolation, zero-row case), `ChunkRepository.erase_by_scope()` (same coverage), `ErasureReport` dataclass shape, and the `MemoryStore.erase_all()` facade (report shape, all-six-tables DELETE, total-sum correctness, UTC timestamp, no partial deletes on a rejected scope, cross-scope param isolation, both the chunking-enabled and chunking-disabled `memory_chunks` reach-through paths).
+- `project-management/ARCHITECTURE.md` — module-path listing and a new erasure-flow note.
+- `project-management/BOARD.html` — PIPE-5 status → Done with comment.
+- `project-management/DECISIONS.md` — this entry.
+
+### Test results
+
+Full suite: 615 passed, 77 skipped (integration tests requiring a live Db2 instance — unchanged, pre-existing skip condition), 87.05% coverage (threshold 85%). `ruff check` on all changed/added files — clean. `mypy src` — clean, no issues in 20 source files. (A `ruff check .` run repo-wide surfaces 2 pre-existing findings in `scripts/smoke_test.py` and `tests/test_benchmarks_unit.py` unrelated to this story — confirmed via `git stash` to predate this change; flagged separately rather than folded into this story's diff.)
+
+**Made during:** PIPE-5 (EPIC-7 ergonomic erasure).
+
+**Supersedes:** Nothing — this is the first and only PIPE-5 entry.
+
+---
