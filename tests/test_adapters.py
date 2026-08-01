@@ -661,6 +661,240 @@ class TestMcpAdapter:
 
 
 # ---------------------------------------------------------------------------
+# Microsoft Agent Framework adapter tests
+# ---------------------------------------------------------------------------
+#
+# agent_framework is not installed in this environment, so
+# MemoryStoreContextProvider/MemoryStoreHistoryProvider fall back to
+# subclassing `object` (see the module's try/except import guard). To
+# exercise the real before_run/after_run/get_messages/save_messages
+# behaviour as they'd run against the real base classes, the af_module
+# fixture below installs a minimal fake `agent_framework` module in
+# sys.modules and force-reimports the adapter module against it, then
+# restores the original (uninstalled) state afterward.
+
+class TestAgentFrameworkAdapter:
+    """Tests for agent_memory_sdk.adapters.agent_framework."""
+
+    @pytest.fixture
+    def af(self):
+        """Reimport the adapter module with a fake agent_framework 'installed'."""
+        import types
+
+        class _FakeContextProvider:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+        class _FakeHistoryProvider(_FakeContextProvider):
+            pass
+
+        fake_mod = types.ModuleType("agent_framework")
+        fake_mod.ContextProvider = _FakeContextProvider  # type: ignore[attr-defined]
+        fake_mod.HistoryProvider = _FakeHistoryProvider  # type: ignore[attr-defined]
+
+        mod_name = "agent_memory_sdk.adapters.agent_framework"
+        cached_af_mod = sys.modules.pop(mod_name, None)
+        cached_fw_mod = sys.modules.get("agent_framework")
+        sys.modules["agent_framework"] = fake_mod
+        try:
+            import agent_memory_sdk.adapters.agent_framework as af_mod
+
+            assert af_mod._AGENT_FRAMEWORK_AVAILABLE is True
+            yield af_mod
+        finally:
+            sys.modules.pop(mod_name, None)
+            if cached_fw_mod is not None:
+                sys.modules["agent_framework"] = cached_fw_mod
+            else:
+                sys.modules.pop("agent_framework", None)
+            if cached_af_mod is not None:
+                sys.modules[mod_name] = cached_af_mod
+
+    def _make_context_provider(self, af, rows=None, agent_id="test-agent", **kwargs):
+        pool = _FakePool(rows)
+        store = MemoryStore(pool)
+        provider = af.MemoryStoreContextProvider(store=store, agent_id=agent_id, **kwargs)
+        return provider, store, pool
+
+    def _make_history_provider(self, af, rows=None, agent_id="test-agent"):
+        pool = _FakePool(rows)
+        store = MemoryStore(pool)
+        provider = af.MemoryStoreHistoryProvider(store=store, agent_id=agent_id)
+        return provider, store, pool
+
+    # ---- MemoryStoreContextProvider.before_run -----------------------------
+
+    def test_before_run_injects_working_turns(self, af):
+        row = _row(content=json.dumps({"content": "hi there"}), metadata={"role": "user"})
+        provider, store, pool = self._make_context_provider(af, rows=[row])
+        context = MagicMock()
+        state: dict[str, Any] = {"thread_id": "sess-1"}
+        asyncio.run(provider.before_run(agent=None, session=None, context=context, state=state))
+        calls = [c.args for c in context.extend_instructions.call_args_list]
+        assert any(c[0] == "agent-memory-sdk:working" for c in calls)
+
+    def test_before_run_no_turns_does_not_inject_working(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        asyncio.run(
+            provider.before_run(agent=None, session=None, context=context, state={"thread_id": "s"})
+        )
+        calls = [c.args for c in context.extend_instructions.call_args_list]
+        assert not any(c[0] == "agent-memory-sdk:working" for c in calls)
+
+    def test_before_run_injects_facts_when_query_embedding_present(self, af):
+        fact_row = _fact_row(content="user prefers dark mode")
+        provider, store, pool = self._make_context_provider(af, rows=[fact_row])
+        context = MagicMock()
+        state: dict[str, Any] = {"thread_id": "sess-1", "query_embedding": _VEC}
+        asyncio.run(provider.before_run(agent=None, session=None, context=context, state=state))
+        assert any("VECTOR_DISTANCE" in s for s in pool.cursor.all_sqls)
+        calls = [c.args for c in context.extend_instructions.call_args_list]
+        assert any(c[0] == "agent-memory-sdk:facts" for c in calls)
+
+    def test_before_run_skips_facts_without_query_embedding(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        state: dict[str, Any] = {"thread_id": "sess-1"}
+        asyncio.run(provider.before_run(agent=None, session=None, context=context, state=state))
+        assert all("VECTOR_DISTANCE" not in s for s in pool.cursor.all_sqls)
+        calls = [c.args for c in context.extend_instructions.call_args_list]
+        assert not any(c[0] == "agent-memory-sdk:facts" for c in calls)
+
+    def test_before_run_scope_uses_state_thread_id_not_instance(self, af):
+        """The same provider instance, called with two different session
+        states, must scope each call to that call's thread_id."""
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        asyncio.run(
+            provider.before_run(agent=None, session=None, context=context, state={"thread_id": "sess-A"})
+        )
+        params_a = pool.cursor.last_params
+        asyncio.run(
+            provider.before_run(agent=None, session=None, context=context, state={"thread_id": "sess-B"})
+        )
+        params_b = pool.cursor.last_params
+        assert "sess-A" in params_a
+        assert "sess-B" in params_b
+
+    def test_before_run_falls_back_to_session_id_attribute(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        session = MagicMock()
+        session.session_id = "sess-from-session-obj"
+        session.id = None
+        asyncio.run(provider.before_run(agent=None, session=session, context=context, state={}))
+        assert "sess-from-session-obj" in pool.cursor.last_params
+
+    # ---- MemoryStoreContextProvider.after_run ------------------------------
+
+    def test_after_run_persists_messages_list(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        state = {
+            "thread_id": "sess-1",
+            "messages": [
+                {"role": "user", "text": "hello"},
+                {"role": "assistant", "text": "hi!"},
+            ],
+        }
+        asyncio.run(provider.after_run(agent=None, session=None, context=context, state=state))
+        inserts = [s for s in pool.cursor.all_sqls if "INSERT INTO working_memory" in s]
+        assert len(inserts) == 2
+
+    def test_after_run_persists_request_response(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        state = {
+            "thread_id": "sess-1",
+            "request": {"role": "user", "text": "ping"},
+            "response": {"role": "assistant", "text": "pong"},
+        }
+        asyncio.run(provider.after_run(agent=None, session=None, context=context, state=state))
+        inserts = [s for s in pool.cursor.all_sqls if "INSERT INTO working_memory" in s]
+        assert len(inserts) == 2
+
+    def test_after_run_reads_messages_from_context_fallback(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        context.messages = [{"role": "user", "text": "from context"}]
+        state: dict[str, Any] = {"thread_id": "sess-1"}
+        asyncio.run(provider.after_run(agent=None, session=None, context=context, state=state))
+        inserts = [s for s in pool.cursor.all_sqls if "INSERT INTO working_memory" in s]
+        assert len(inserts) == 1
+
+    def test_after_run_no_messages_is_a_noop(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock(spec=[])  # no .messages attribute at all
+        state: dict[str, Any] = {"thread_id": "sess-1"}
+        asyncio.run(provider.after_run(agent=None, session=None, context=context, state=state))
+        inserts = [s for s in pool.cursor.all_sqls if "INSERT INTO working_memory" in s]
+        assert len(inserts) == 0
+
+    def test_after_run_persists_role_in_metadata(self, af):
+        provider, store, pool = self._make_context_provider(af, rows=[])
+        context = MagicMock()
+        state = {"thread_id": "sess-1", "messages": [{"role": "assistant", "text": "hi!"}]}
+        asyncio.run(provider.after_run(agent=None, session=None, context=context, state=state))
+        metadata_param = pool.cursor.last_params[6]
+        meta = json.loads(metadata_param)
+        assert meta["role"] == "assistant"
+
+    # ---- MemoryStoreHistoryProvider ----------------------------------------
+
+    def test_get_messages_returns_chronological_order(self, af):
+        rows = [
+            _row(id_="r2", content=json.dumps({"role": "user", "text": "newest"})),
+            _row(id_="r1", content=json.dumps({"role": "assistant", "text": "oldest"})),
+        ]
+        provider, store, pool = self._make_history_provider(af, rows=rows)
+        messages = asyncio.run(provider.get_messages("sess-1", state={}))
+        assert len(messages) == 2
+        assert messages[0]["text"] == "oldest"
+        assert messages[1]["text"] == "newest"
+
+    def test_get_messages_returns_empty_when_no_rows(self, af):
+        provider, store, pool = self._make_history_provider(af, rows=[])
+        messages = asyncio.run(provider.get_messages("sess-1", state={}))
+        assert messages == []
+
+    def test_get_messages_scopes_by_session_id(self, af):
+        provider, store, pool = self._make_history_provider(af, rows=[])
+        asyncio.run(provider.get_messages("sess-xyz", state={}))
+        assert "sess-xyz" in pool.cursor.last_params
+
+    def test_save_messages_persists_all(self, af):
+        provider, store, pool = self._make_history_provider(af, rows=[])
+        messages = [
+            {"role": "user", "text": "first"},
+            {"role": "assistant", "text": "second"},
+        ]
+        asyncio.run(provider.save_messages("sess-1", messages, state={}))
+        inserts = [s for s in pool.cursor.all_sqls if "INSERT INTO working_memory" in s]
+        assert len(inserts) == 2
+
+    def test_save_messages_scope_uses_session_id_param_not_instance_state(self, af):
+        """Same provider instance, two different session_ids — scope must
+        follow the call argument, never something fixed on the instance."""
+        provider, store, pool = self._make_history_provider(af, rows=[])
+        asyncio.run(provider.save_messages("sess-A", [{"role": "user", "text": "x"}], state={}))
+        params_a = pool.cursor.last_params
+        asyncio.run(provider.save_messages("sess-B", [{"role": "user", "text": "y"}], state={}))
+        params_b = pool.cursor.last_params
+        assert "sess-A" in params_a
+        assert "sess-B" in params_b
+
+    def test_save_messages_reads_user_id_from_state(self, af):
+        provider, store, pool = self._make_history_provider(af, rows=[])
+        asyncio.run(
+            provider.save_messages(
+                "sess-1", [{"role": "user", "text": "x"}], state={"user_id": "user-42"}
+            )
+        )
+        assert "user-42" in pool.cursor.last_params
+
+
+# ---------------------------------------------------------------------------
 # Core package importable without any adapter deps
 # ---------------------------------------------------------------------------
 
@@ -683,6 +917,10 @@ class TestCoreImportableWithoutAdapters:
         with patch.dict(sys.modules, {"mcp": None}):
             import agent_memory_sdk  # noqa: F401
 
+    def test_core_imports_without_agent_framework(self):
+        with patch.dict(sys.modules, {"agent_framework": None}):
+            import agent_memory_sdk  # noqa: F401
+
     def test_adapter_module_importable_without_langchain(self):
         """The adapter *module* can be imported; instantiation fails without dep."""
         from agent_memory_sdk.adapters import langchain as lc_mod  # noqa: F401
@@ -692,6 +930,25 @@ class TestCoreImportableWithoutAdapters:
 
     def test_adapter_module_importable_without_mcp(self):
         from agent_memory_sdk.adapters import mcp_server as mcp_mod  # noqa: F401
+
+    def test_adapter_module_importable_without_agent_framework(self):
+        """Unlike the other adapters, this module's classes actually subclass
+        the framework's base classes; when the package is absent the
+        try/except fallback binds them to ``object`` instead, so the module
+        import itself must still succeed (import guard fires at
+        instantiation time, in __init__ — see the module docstring)."""
+        mod_name = "agent_memory_sdk.adapters.agent_framework"
+        cached = sys.modules.pop(mod_name, None)
+        try:
+            with patch.dict(sys.modules, {"agent_framework": None}):
+                from agent_memory_sdk.adapters import (
+                    agent_framework as af_mod,  # noqa: F401
+                )
+                assert af_mod._AGENT_FRAMEWORK_AVAILABLE is False
+        finally:
+            sys.modules.pop(mod_name, None)
+            if cached is not None:
+                sys.modules[mod_name] = cached
 
     def test_instantiation_fails_with_helpful_message_langchain(self):
         from agent_memory_sdk.adapters.langchain import _require_langchain
@@ -710,6 +967,31 @@ class TestCoreImportableWithoutAdapters:
 
         with patch.dict(sys.modules, {"mcp": None}), pytest.raises(ImportError, match="mcp"):
             _require_mcp()
+
+    def test_instantiation_fails_with_helpful_message_agent_framework(self):
+        """With agent_framework unavailable, constructing either provider
+        class must raise a helpful ImportError (not, say, an AttributeError
+        from calling a method that doesn't exist on ``object``)."""
+        mod_name = "agent_memory_sdk.adapters.agent_framework"
+        cached = sys.modules.pop(mod_name, None)
+        try:
+            with patch.dict(sys.modules, {"agent_framework": None}):
+                from agent_memory_sdk.adapters.agent_framework import (
+                    MemoryStoreContextProvider,
+                    MemoryStoreHistoryProvider,
+                    _require_agent_framework,
+                )
+
+                with pytest.raises(ImportError, match="agent-framework"):
+                    _require_agent_framework()
+                with pytest.raises(ImportError, match="agent-framework"):
+                    MemoryStoreContextProvider(store=MagicMock(), agent_id="a")
+                with pytest.raises(ImportError, match="agent-framework"):
+                    MemoryStoreHistoryProvider(store=MagicMock(), agent_id="a")
+        finally:
+            sys.modules.pop(mod_name, None)
+            if cached is not None:
+                sys.modules[mod_name] = cached
 
 
 # ---------------------------------------------------------------------------
@@ -762,3 +1044,53 @@ class TestMessageSerialisation:
         result = _content_to_str(content)
         parsed = json.loads(result)
         assert parsed[0]["type"] == "text"
+
+    # ---- agent_framework message helpers (dict + object duck-typing) ------
+
+    def test_af_roundtrip_dict_message(self):
+        from agent_memory_sdk.adapters.agent_framework import (
+            _content_to_message_dict,
+            _message_to_content,
+        )
+
+        msg = {"role": "user", "text": "Hello world!"}
+        serialised = _message_to_content(msg)
+        restored = _content_to_message_dict(serialised)
+        assert restored["role"] == "user"
+        assert restored["text"] == "Hello world!"
+
+    def test_af_roundtrip_dict_message_content_key(self):
+        """dict messages using 'content' instead of 'text' are also accepted."""
+        from agent_memory_sdk.adapters.agent_framework import (
+            _content_to_message_dict,
+            _message_to_content,
+        )
+
+        msg = {"role": "assistant", "content": "I can help with that."}
+        serialised = _message_to_content(msg)
+        restored = _content_to_message_dict(serialised)
+        assert restored["role"] == "assistant"
+        assert restored["text"] == "I can help with that."
+
+    def test_af_roundtrip_object_message(self):
+        """Object-style messages (attrs instead of dict keys) are duck-typed
+        the same way LangChain BaseMessage objects are in adapters/langchain.py."""
+        from agent_memory_sdk.adapters.agent_framework import (
+            _content_to_message_dict,
+            _message_to_content,
+        )
+
+        fake_msg = MagicMock()
+        fake_msg.role = "assistant"
+        fake_msg.text = "from an object"
+        serialised = _message_to_content(fake_msg)
+        restored = _content_to_message_dict(serialised)
+        assert restored["role"] == "assistant"
+        assert restored["text"] == "from an object"
+
+    def test_af_corrupted_content_falls_back(self):
+        from agent_memory_sdk.adapters.agent_framework import _content_to_message_dict
+
+        restored = _content_to_message_dict("not json at all")
+        assert restored["text"] == "not json at all"
+        assert restored["role"] == "unknown"
