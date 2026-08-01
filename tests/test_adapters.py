@@ -765,12 +765,14 @@ class TestAgentFrameworkAdapter:
         assert not any(c[0] == "agent-memory-sdk:working" for c in calls)
 
     def test_before_run_injects_facts_when_query_embedding_present(self, af):
-        # before_run() issues two round trips: get_context_card() lists
-        # working turns first (empty here — this test only cares about the
-        # facts branch), then facts.search() — each execute() call must see
-        # a row-set matching that specific query's expected shape.
+        # before_run() issues three execute() calls:
+        #   1. get_context_card() → list_all(working) → returns [] (no turns)
+        #   2. facts.search() step-1 ID ranking query → returns [("row-1",)]
+        #   3. facts.search() step-2 row-data fetch → returns [fact_row]
         fact_row = _fact_row(content="user prefers dark mode")
-        provider, store, pool = self._make_context_provider(af, rows_sequence=[[], [fact_row]])
+        provider, store, pool = self._make_context_provider(
+            af, rows_sequence=[[], [("row-1",)], [fact_row]]
+        )
         context = MagicMock()
         state: dict[str, Any] = {"thread_id": "sess-1", "query_embedding": _VEC}
         asyncio.run(provider.before_run(agent=None, session=None, context=context, state=state))
@@ -963,16 +965,27 @@ class TestCoreImportableWithoutAdapters:
         try/except fallback binds them to ``object`` instead, so the module
         import itself must still succeed (import guard fires at
         instantiation time, in __init__ — see the module docstring)."""
+        import importlib
+
+        import agent_memory_sdk.adapters as adapters_pkg
+
         mod_name = "agent_memory_sdk.adapters.agent_framework"
         cached = sys.modules.pop(mod_name, None)
+        # Also clear the attribute on the parent package object so Python's
+        # import machinery re-executes the module source rather than returning
+        # the stale cached object (which may have been imported by the af
+        # fixture with _AGENT_FRAMEWORK_AVAILABLE=True).
+        old_attr = getattr(adapters_pkg, "agent_framework", None)
+        if hasattr(adapters_pkg, "agent_framework"):
+            delattr(adapters_pkg, "agent_framework")
         try:
             with patch.dict(sys.modules, {"agent_framework": None}):
-                from agent_memory_sdk.adapters import (
-                    agent_framework as af_mod,  # noqa: F401
-                )
+                af_mod = importlib.import_module(mod_name)
                 assert af_mod._AGENT_FRAMEWORK_AVAILABLE is False
         finally:
             sys.modules.pop(mod_name, None)
+            if old_attr is not None:
+                adapters_pkg.agent_framework = old_attr  # type: ignore[attr-defined]
             if cached is not None:
                 sys.modules[mod_name] = cached
 

@@ -120,6 +120,16 @@ _VEC = [0.1] * 1536
 _VEC_STR = "[" + ",".join("0.1" for _ in range(1536)) + "]"
 
 
+def _dummy_provider(text: str) -> list[float]:
+    """Minimal EmbeddingProvider satisfying the construction-time guard.
+
+    Most tests pre-set ``embedding=_VEC`` on the candidate so this provider
+    is never actually called at write time — it is only present so that
+    ``MemoryStore(ingest_resolver=...)`` does not raise a ``ValueError``.
+    """
+    return _VEC
+
+
 def _fact_row(
     id_: str = "fact-existing",
     content: str = "User prefers dark mode.",
@@ -329,7 +339,7 @@ class TestResolverAddDecision:
             [],                     # create() dedup select: no existing dup
         ])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.ADD))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="new fact", embedding=_VEC)
 
         result = store.remember(fact, _SCOPE)
@@ -347,7 +357,7 @@ class TestResolverAddDecision:
             [],
         ])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.ADD))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="new fact", embedding=_VEC)
 
         store.remember(fact, _SCOPE)
@@ -384,7 +394,7 @@ class TestResolverAddDecision:
             [],   # create() dedup select
         ])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.ADD))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="new fact", embedding=_VEC)
 
         store.remember(fact, _SCOPE)
@@ -408,7 +418,7 @@ class TestResolverUpdateDecision:
         resolver = _FixedResolver(
             IngestDecision(action=IngestAction.UPDATE, target_id="fact-existing", reason="refines")
         )
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="updated content", embedding=_VEC)
 
         result = store.remember(fact, _SCOPE)
@@ -425,7 +435,7 @@ class TestResolverUpdateDecision:
             [],   # create() dedup select
         ])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.UPDATE, target_id=None))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="new fact", embedding=_VEC)
 
         result = store.remember(fact, _SCOPE)
@@ -443,7 +453,7 @@ class TestResolverUpdateDecision:
         resolver = _FixedResolver(
             IngestDecision(action=IngestAction.UPDATE, target_id="ghost-id")
         )
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="new fact", embedding=_VEC)
 
         result = store.remember(fact, _SCOPE)
@@ -463,7 +473,7 @@ class TestResolverUpdateDecision:
         resolver = _FixedResolver(
             IngestDecision(action=IngestAction.UPDATE, target_id="ghost-id")
         )
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="new fact", embedding=_VEC)
 
         with caplog.at_level(logging.WARNING, logger="agent_memory_sdk.store"):
@@ -488,7 +498,7 @@ class TestResolverDeleteDecision:
         resolver = _FixedResolver(
             IngestDecision(action=IngestAction.DELETE, target_id="fact-existing", reason="contradicted")
         )
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="obsolete info", embedding=_VEC)
 
         result = store.remember(fact, _SCOPE)
@@ -510,7 +520,7 @@ class TestResolverDeleteDecision:
             [_fact_row()],
         ])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.DELETE, target_id=None))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="x", embedding=_VEC)
 
         with caplog.at_level(logging.WARNING, logger="agent_memory_sdk.store"):
@@ -535,7 +545,7 @@ class TestResolverNoopDecision:
             [_fact_row()],
         ])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.NOOP, reason="duplicate"))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="duplicate fact", embedding=_VEC)
 
         result = store.remember(fact, _SCOPE)
@@ -611,7 +621,7 @@ class TestCandidateEmbeddingResolution:
             [_fact_row()],
         ])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.NOOP))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        store = MemoryStore(pool, ingest_resolver=resolver, embedding_provider=_dummy_provider, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="x", embedding=_VEC)
 
         store.remember(fact, _SCOPE)
@@ -620,14 +630,17 @@ class TestCandidateEmbeddingResolution:
         assert len(pool.cursor.all_sqls) == 2
 
     def test_no_embedding_and_no_provider_skips_search(self) -> None:
+        """When neither the record has an embedding nor an embedding_provider is
+        configured, the resolver receives similar=[] and search is skipped."""
         pool = _FakePool([[]])
         resolver = _FixedResolver(IngestDecision(action=IngestAction.NOOP))
-        store = MemoryStore(pool, ingest_resolver=resolver)
+        # No embedding_provider configured on the store.
+        store = MemoryStore(pool, ingest_resolver=resolver, enable_chunking=False)
         fact = SemanticFact(agent_id="agent-001", content="x")  # no embedding set
 
         store.remember(fact, _SCOPE)
 
-        assert pool.cursor.all_sqls == []  # search skipped entirely
+        assert pool.cursor.all_sqls == []  # search skipped entirely — no vector available
         assert resolver.calls[0][1] == []
 
     def test_embedding_provider_used_when_candidate_has_no_embedding(self) -> None:
@@ -774,6 +787,41 @@ class TestConstructorValidation:
         pool = _FakePool([[]])
         store = MemoryStore(pool, resolver_k=10)
         assert store._resolver_k == 10
+
+    def test_ingest_resolver_without_embedding_provider_ok(self) -> None:
+        """A real IngestResolver without an embedding_provider is allowed at construction.
+        Search is skipped at write time when neither the record embedding nor a
+        provider is available; the resolver receives similar=[] in that case."""
+        pool = _FakePool([[]])
+        resolver = _FixedResolver(IngestDecision(action=IngestAction.ADD))
+
+        # Should not raise — no embedding_provider is a valid (degraded) config.
+        store = MemoryStore(pool, ingest_resolver=resolver, enable_chunking=False)
+        assert not isinstance(store._ingest_resolver, NoOpIngestResolver)
+
+    def test_ingest_resolver_with_embedding_provider_ok(self) -> None:
+        """No error when both ingest_resolver and embedding_provider are supplied."""
+        pool = _FakePool([[]])
+        resolver = _FixedResolver(IngestDecision(action=IngestAction.ADD))
+
+        def _provider(text: str) -> list[float]:
+            return [0.0]
+
+        # Should not raise.
+        store = MemoryStore(
+            pool,
+            ingest_resolver=resolver,
+            embedding_provider=_provider,
+            enable_chunking=False,
+        )
+        assert not isinstance(store._ingest_resolver, NoOpIngestResolver)
+
+    def test_noop_ingest_resolver_without_embedding_provider_ok(self) -> None:
+        """Default NoOpIngestResolver never requires an embedding_provider."""
+        pool = _FakePool([[]])
+        # No embedding_provider, no ingest_resolver → should construct fine.
+        store = MemoryStore(pool)
+        assert isinstance(store._ingest_resolver, NoOpIngestResolver)
 
 
 # ---------------------------------------------------------------------------
