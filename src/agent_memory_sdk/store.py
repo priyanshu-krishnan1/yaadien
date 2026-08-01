@@ -117,9 +117,11 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
 from typing import Any
 
+from agent_memory_sdk.exceptions import ScopeMismatchError
 from agent_memory_sdk.exceptions import StaleWriteError as StaleWriteError  # re-export
 from agent_memory_sdk.models import (
     EntityProfile,
@@ -198,6 +200,43 @@ _ALIAS_TO_ATTR: dict[str, str] = {
     "procedures": "procedures",
     "procedural": "procedures",
 }
+
+# ---------------------------------------------------------------------------
+# PIPE-6: export_scope() / import_scope() — table-name discriminator mapping
+# ---------------------------------------------------------------------------
+
+# Db2 table name (the "_type" tag used on every exported record) -> repo attr.
+# Deliberately uses the real table names (not the short "working"/"facts"
+# aliases from _ALIAS_TO_ATTR above) so a JSONL export file is self-describing
+# without needing this SDK's internal alias vocabulary to interpret it.
+_EXPORT_TYPE_TO_REPO_ATTR: dict[str, str] = {
+    "working_memory": "working",
+    "episodic_memory": "episodic",
+    "semantic_facts": "facts",
+    "entity_profiles": "profiles",
+    "procedural_memory": "procedures",
+}
+
+# Db2 table name -> Pydantic model class used to reconstruct a record from
+# its exported dict on import.
+_EXPORT_TYPE_TO_MODEL: dict[str, type[_MemoryBase]] = {
+    "working_memory": WorkingMemory,
+    "episodic_memory": EpisodicMemory,
+    "semantic_facts": SemanticFact,
+    "entity_profiles": EntityProfile,
+    "procedural_memory": ProceduralMemory,
+}
+
+#: A dedicated "_type" tag for memory_chunks rows, which have no Pydantic
+#: model of their own (see ChunkRepository.list_all()'s docstring).
+_CHUNKS_TYPE = "memory_chunks"
+
+#: Internal pagination batch size for export_scope(). Not part of the public
+#: API; each memory-type table (and memory_chunks) is fetched in pages of
+#: this size via list_all(limit=..., offset=...) so a large scope's export
+#: does not require loading the entire table into memory at once — the
+#: generator yields records page-by-page as it walks the offset.
+_EXPORT_BATCH_SIZE = 500
 
 
 class MemoryStore:
@@ -811,6 +850,285 @@ class MemoryStore:
             scope, rows_deleted, total_deleted,
         )
         return report
+
+    # ------------------------------------------------------------------
+    # export_scope() / import_scope() — portability & backup (PIPE-6)
+    # ------------------------------------------------------------------
+
+    def export_scope(self, scope: MemoryScope) -> Iterator[dict[str, Any]]:
+        """Yield one JSON-serializable dict per row across all five memory tables
+        plus ``memory_chunks`` matching *scope*.
+
+        **This is this SDK's own proprietary backup/portability format, not a
+        cross-vendor interchange standard** — no such standard exists anywhere
+        in the industry (see ``project-management/ai-agent-platform-competitive-analysis.md``
+        gap analysis #3: even vendors that advertise "import/export" support,
+        such as Mem0 and Oracle, each use a format proprietary to that vendor).
+        This method exists to close this SDK's own narrower gap: there was
+        previously no way to back up or migrate a tenant/agent's memory out of
+        Db2 at all.
+
+        Every yielded dict carries a ``"_type"`` discriminator field naming
+        the source table (``"working_memory"``, ``"episodic_memory"``,
+        ``"semantic_facts"``, ``"entity_profiles"``, ``"procedural_memory"``,
+        or ``"memory_chunks"``). For the five memory-type tables the rest of
+        the dict is exactly ``record.model_dump(mode="json")`` — every field
+        on the corresponding Pydantic model (:class:`~agent_memory_sdk.models.WorkingMemory`,
+        etc.), with ``datetime`` fields serialized as ISO-8601 strings and the
+        ``embedding`` field left as a **raw list of floats** (not base64, not
+        a Db2-specific encoding — plain JSON numbers). For ``memory_chunks``
+        rows (which have no dedicated Pydantic model — see
+        :meth:`~agent_memory_sdk.repositories.chunks.ChunkRepository.list_all`)
+        the dict has keys ``id``, ``source_table``, ``source_id``,
+        ``chunk_index``, ``chunk_text``, ``embedding``, ``tenant_id``,
+        ``agent_id``, ``user_id``, ``thread_id``, ``created_at``.
+
+        **What's included:** the same rows :meth:`~agent_memory_sdk.repositories.base.BaseRepository.list_all`
+        would return for *scope* — i.e. non-deleted (``deleted_at IS NULL``)
+        and, for ``semantic_facts``, non-superseded (``superseded_at IS
+        NULL``) rows — but *including* TTL-expired-but-not-yet-tombstoned rows
+        (``include_expired=True``), since those are still live memory that
+        hasn't been explicitly forgotten. Tombstoned and superseded rows are
+        intentionally excluded: they represent memory the operator or the
+        Reconciler already decided should not be treated as current, and
+        :meth:`import_scope` has no mechanism to restore a row directly into
+        a tombstoned/superseded state (it always writes through ``create()``,
+        which always produces a fresh, live row) — exporting them would be
+        misleading busywork.
+
+        **Pagination:** each table is fetched in internal pages (500 rows at a
+        time) via repeated ``list_all(limit=..., offset=...)`` calls, so a
+        large scope does not need to be materialized in memory all at once —
+        this method is a generator; the caller controls how much of the
+        stream is buffered (e.g. writing straight to a JSONL file one line at
+        a time, as ``scripts/export_memory.py`` does).
+
+        Args:
+            scope: Must include at minimum ``agent_id``. Only rows visible to
+                   this exact scope (per :func:`~agent_memory_sdk.repositories.base._scope_predicates`)
+                   are exported — narrower scopes (e.g. a single ``thread_id``)
+                   export a strict subset of a broader scope's export.
+
+        Yields:
+            One JSON-serializable ``dict`` per matching row, in table order
+            (``working_memory``, ``episodic_memory``, ``semantic_facts``,
+            ``entity_profiles``, ``procedural_memory``, then ``memory_chunks``
+            if chunking is enabled on this store), each tagged with ``"_type"``.
+
+        Raises:
+            ValueError: if ``scope.agent_id`` is missing (raised lazily, on
+                        first iteration, since this method is a generator).
+        """
+        for type_name, repo_attr in _EXPORT_TYPE_TO_REPO_ATTR.items():
+            repo = getattr(self, repo_attr)
+            offset = 0
+            while True:
+                batch = repo.list_all(
+                    scope,
+                    limit=_EXPORT_BATCH_SIZE,
+                    offset=offset,
+                    include_expired=True,
+                )
+                if not batch:
+                    break
+                for record in batch:
+                    data = record.model_dump(mode="json")
+                    data["_type"] = type_name
+                    yield data
+                if len(batch) < _EXPORT_BATCH_SIZE:
+                    break
+                offset += _EXPORT_BATCH_SIZE
+
+        if self.chunks is not None:
+            offset = 0
+            while True:
+                chunk_batch = self.chunks.list_all(
+                    scope, limit=_EXPORT_BATCH_SIZE, offset=offset
+                )
+                if not chunk_batch:
+                    break
+                for chunk in chunk_batch:
+                    created_at = chunk.get("created_at")
+                    yield {
+                        "id": chunk["id"],
+                        "source_table": chunk["source_table"],
+                        "source_id": chunk["source_id"],
+                        "chunk_index": chunk["chunk_index"],
+                        "chunk_text": chunk["chunk_text"],
+                        "embedding": chunk["embedding"],
+                        "tenant_id": chunk["tenant_id"],
+                        "agent_id": chunk["agent_id"],
+                        "user_id": chunk["user_id"],
+                        "thread_id": chunk["thread_id"],
+                        "created_at": created_at.isoformat() if created_at else None,
+                        "_type": _CHUNKS_TYPE,
+                    }
+                if len(chunk_batch) < _EXPORT_BATCH_SIZE:
+                    break
+                offset += _EXPORT_BATCH_SIZE
+
+    def import_scope(
+        self, records: Iterable[dict[str, Any]], scope: MemoryScope
+    ) -> dict[str, int]:
+        """Re-insert exported records into *scope* via the existing per-type
+        ``create()`` methods (and :meth:`~agent_memory_sdk.repositories.chunks.ChunkRepository.insert_chunk`
+        for ``memory_chunks`` rows).
+
+        This is the inverse of :meth:`export_scope`. It is intended to
+        restore a backup or migrate a tenant/agent's memory into a *fresh*
+        Db2 instance/schema — it does **not** attempt to reproduce a
+        cross-vendor interchange format (see :meth:`export_scope`'s docstring;
+        no such standard exists industry-wide).
+
+        **Scope re-validation (critical safety property):** ``create()``
+        unconditionally *overwrites* a record's ``tenant_id``/``agent_id``/
+        ``user_id``/``thread_id`` fields with *scope*'s values before
+        inserting. Without an explicit check, importing a record captured
+        under one scope into a different target *scope* would silently
+        rewrite that record's scope fields rather than surfacing the
+        mismatch — a real risk when consolidating exports from multiple
+        agents/tenants/users into the wrong destination. To prevent that,
+        every record's ``tenant_id``/``agent_id``/``user_id``/``thread_id``
+        fields are compared against *scope* **before** any repository call is
+        made for that record; a mismatch raises
+        :class:`~agent_memory_sdk.exceptions.ScopeMismatchError` (a
+        :class:`ValueError` subclass) instead of proceeding. To import
+        records spanning multiple scopes, call this method once per distinct
+        scope, passing only the records for that scope each time.
+
+        **Known limitation (inherited from create()):** because each record
+        is re-inserted via the ordinary per-type ``create()`` path, the usual
+        write-time dedup check (``_DEDUP_ON_WRITE``, ENH-2) still applies for
+        ``semantic_facts``/``entity_profiles``/``procedural_memory`` — if a
+        row with the same ``(scope, content_hash)`` already exists live in
+        the target scope, ``create()`` returns that existing row instead of
+        inserting a duplicate. ``created_at``/``updated_at``/``version`` are
+        also reset to "now" / ``1`` by ``create()`` regardless of what the
+        exported record originally carried — an import produces fresh live
+        rows, not an exact byte-for-byte replica of the original row's
+        lifecycle timestamps. ``working_memory`` has no dedup gate
+        (``_DEDUP_ON_WRITE = False``) so its rows always re-insert faithfully.
+
+        Args:
+            records: An iterable (e.g. a generator reading a JSONL file, or
+                     the output of :meth:`export_scope`) of dicts, each
+                     carrying a ``"_type"`` discriminator field as produced by
+                     :meth:`export_scope`.
+            scope:   The target scope every record must match. Must include
+                     at minimum ``agent_id``.
+
+        Returns:
+            A dict mapping table name to the number of records processed for
+            that table, e.g.::
+
+                {
+                    "working_memory": 12,
+                    "episodic_memory": 3,
+                    "semantic_facts": 0,
+                    "entity_profiles": 0,
+                    "procedural_memory": 1,
+                    "memory_chunks": 4,
+                }
+
+        Raises:
+            ValueError: if a record is missing the ``"_type"`` field, or
+                        ``"_type"`` names a table this SDK doesn't recognize.
+            ScopeMismatchError: if a record's scope columns don't match
+                        *scope*.
+        """
+        counts: dict[str, int] = {
+            **dict.fromkeys(_EXPORT_TYPE_TO_REPO_ATTR, 0),
+            _CHUNKS_TYPE: 0,
+        }
+
+        for raw in records:
+            record_dict = dict(raw)  # never mutate the caller's dict
+            type_name = record_dict.pop("_type", None)
+            if not type_name:
+                raise ValueError(
+                    "import_scope: record is missing the required '_type' "
+                    "discriminator field. Records must be produced by "
+                    "export_scope() (or otherwise carry a '_type' key naming "
+                    "one of: " + ", ".join(sorted(counts)) + ")."
+                )
+
+            if type_name == _CHUNKS_TYPE:
+                self._import_chunk_record(record_dict, scope)
+                counts[_CHUNKS_TYPE] += 1
+                continue
+
+            repo_attr = _EXPORT_TYPE_TO_REPO_ATTR.get(type_name)
+            model_cls = _EXPORT_TYPE_TO_MODEL.get(type_name)
+            if repo_attr is None or model_cls is None:
+                raise ValueError(
+                    f"import_scope: unrecognized _type {type_name!r}. "
+                    "Expected one of: " + ", ".join(sorted(counts)) + "."
+                )
+
+            self._check_scope_match(record_dict, scope, type_name)
+
+            record_obj = model_cls.model_validate(record_dict)
+            getattr(self, repo_attr).create(record_obj, scope)
+            counts[type_name] += 1
+
+        return counts
+
+    def _import_chunk_record(
+        self, record_dict: dict[str, Any], scope: MemoryScope
+    ) -> None:
+        """Re-insert a single exported ``memory_chunks`` row via ``insert_chunk()``."""
+        if self.chunks is None:
+            raise ValueError(
+                "import_scope: encountered a 'memory_chunks' record but this "
+                "MemoryStore was constructed without chunking enabled (the "
+                "'chunks' repository is None). Construct MemoryStore with "
+                "enable_chunking=True and an embedding_provider to import "
+                "memory_chunks rows."
+            )
+
+        self._check_scope_match(record_dict, scope, _CHUNKS_TYPE)
+
+        self.chunks.insert_chunk(
+            source_table=record_dict["source_table"],
+            source_id=record_dict["source_id"],
+            chunk_index=record_dict["chunk_index"],
+            chunk_text=record_dict["chunk_text"],
+            embedding=record_dict.get("embedding") or [],
+            scope=scope,
+        )
+
+    @staticmethod
+    def _check_scope_match(
+        record_dict: dict[str, Any], scope: MemoryScope, type_name: str
+    ) -> None:
+        """Raise :class:`~agent_memory_sdk.exceptions.ScopeMismatchError` if
+        *record_dict*'s scope columns don't exactly match *scope*.
+
+        See :meth:`import_scope`'s docstring for why this check exists: it
+        runs before any repository/DB call so a scope mismatch is reported
+        cleanly instead of ``create()`` silently rewriting the record's
+        scope columns to match the (wrong) target.
+        """
+        record_scope = MemoryScope(
+            tenant_id=record_dict.get("tenant_id"),
+            agent_id=record_dict.get("agent_id") or "",
+            user_id=record_dict.get("user_id"),
+            thread_id=record_dict.get("thread_id"),
+        )
+        if record_scope != scope:
+            raise ScopeMismatchError(
+                f"import_scope: scope mismatch on {type_name!r} record "
+                f"id={record_dict.get('id')!r}: record scope "
+                f"(tenant_id={record_scope.tenant_id!r}, "
+                f"agent_id={record_scope.agent_id!r}, "
+                f"user_id={record_scope.user_id!r}, "
+                f"thread_id={record_scope.thread_id!r}) does not match target "
+                f"scope (tenant_id={scope.tenant_id!r}, agent_id={scope.agent_id!r}, "
+                f"user_id={scope.user_id!r}, thread_id={scope.thread_id!r}). "
+                "import_scope() refuses to silently rewrite a record's scope "
+                "— re-export from the correct scope, or call import_scope() "
+                "once per distinct scope present in the record stream."
+            )
 
     # ------------------------------------------------------------------
     # reconcile() — run a reconciliation pass over semantic facts
