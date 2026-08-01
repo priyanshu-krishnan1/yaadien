@@ -53,11 +53,20 @@ openai-agents = [
 mcp = [
     "mcp>=1.0",
 ]
+# Microsoft Agent Framework (GA 2026-04-03, unifies AutoGen + Semantic
+# Kernel) — ContextProvider/HistoryProvider adapter (PIPE-3). No version
+# floor pinned yet: the package was not resolvable/installable from this
+# environment at the time this extra was added (2026-08-02); tighten this
+# once a real release is confirmed on PyPI.
+agent-framework = [
+    "agent-framework",
+]
 # Convenience: all adapters
 all = [
     "agent-memory-sdk[langchain]",
     "agent-memory-sdk[openai-agents]",
     "agent-memory-sdk[mcp]",
+    "agent-memory-sdk[agent-framework]",
 ]
 dev = [
     "pytest>=8.0",

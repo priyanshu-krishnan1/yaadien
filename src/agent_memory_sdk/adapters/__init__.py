@@ -31,4 +31,16 @@ Available adapters
     ``remember``, ``recall``, ``forget``, and ``list_memories``.
 
     Install: ``pip install agent-memory-sdk[mcp]``
+
+``agent_memory_sdk.adapters.agent_framework``
+    :class:`~agent_memory_sdk.adapters.agent_framework.MemoryStoreContextProvider`
+    — Microsoft Agent Framework ``ContextProvider`` (``before_run``/
+    ``after_run`` lifecycle hooks) backed by ``store.get_context_card()``
+    + ``store.facts`` (retrieval) and ``store.remember()`` (persistence),
+    and
+    :class:`~agent_memory_sdk.adapters.agent_framework.MemoryStoreHistoryProvider`
+    — the specialized ``HistoryProvider`` subclass (``get_messages()``/
+    ``save_messages()``) backed by ``store.working``.
+
+    Install: ``pip install agent-memory-sdk[agent-framework]``
 """
