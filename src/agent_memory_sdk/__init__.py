@@ -45,6 +45,7 @@ from agent_memory_sdk.types import (
     ContextCard,
     DistanceMetric,
     EmbeddingProvider,
+    ErasureReport,
     NoOpConsolidator,
     NoOpReconciler,
     NoOpSummarizer,
@@ -78,4 +79,5 @@ __all__ = [
     "ContextCard",
     "Summarizer",
     "NoOpSummarizer",
+    "ErasureReport",
 ]

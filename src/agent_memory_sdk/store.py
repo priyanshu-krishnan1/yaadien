@@ -117,6 +117,7 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Any
 
 from agent_memory_sdk.exceptions import StaleWriteError as StaleWriteError  # re-export
@@ -137,6 +138,7 @@ from agent_memory_sdk.repositories.profiles import EntityProfileRepository
 from agent_memory_sdk.repositories.working import WorkingMemoryRepository
 from agent_memory_sdk.types import (
     ContextCard,
+    ErasureReport,
     IngestAction,
     IngestDecision,
     NoOpConsolidator,
@@ -311,6 +313,11 @@ class MemoryStore:
         ingest_resolver: Any | None = None,
         resolver_k: int = 5,
     ) -> None:
+        # Kept for erase_all() (PIPE-5), which needs to reach memory_chunks
+        # even when this instance was built without chunking enabled (e.g.
+        # legacy chunk rows written by an earlier configuration).
+        self._pool = pool
+
         # Build the shared ChunkRepository when chunking is enabled and
         # an embedding provider has been supplied — otherwise it stays None
         # and the per-type repos fall back to the pre-ORC-2 single-embedding
@@ -712,6 +719,98 @@ class MemoryStore:
         ):
             results[repo._TABLE] = repo.purge_expired(scope)
         return results
+
+    # ------------------------------------------------------------------
+    # erase_all() — compliance hard-delete across every table (PIPE-5)
+    # ------------------------------------------------------------------
+
+    def erase_all(self, scope: MemoryScope) -> ErasureReport:
+        """Permanently hard-delete every record matching *scope*, everywhere.
+
+        This is the single "erase everything for this person" entry point
+        the SDK's erasure story was missing (see the PARTIAL rating recorded
+        in project-management/DECISIONS.md's VER-13 entry): it hard-deletes
+        every matching row across **all five memory repositories**
+        (``working_memory``, ``episodic_memory``, ``semantic_facts``,
+        ``entity_profiles``, ``procedural_memory``) **and** the
+        ``memory_chunks`` table (ORC-2 content-chunking fragments), in one
+        call, and returns an :class:`~agent_memory_sdk.types.ErasureReport`
+        with a per-table row count, a total, and a timestamp — the auditable
+        record a compliance erasure request needs.
+
+        **This is fundamentally different from — and a stronger guarantee
+        than — both existing lifecycle primitives:**
+
+        * :meth:`forget` — soft-delete.  Sets ``deleted_at`` on a *single*
+          row in a *single* table.  Reversible in principle (the row is
+          still physically present) and intended for routine, everyday
+          memory lifecycle management (e.g. "the user asked the agent to
+          forget this one fact").
+        * :meth:`purge_expired` — maintenance hard-delete, but only for rows
+          *already* tombstoned via :meth:`forget` (``deleted_at IS NOT
+          NULL``). It is a cleanup step for the soft-delete lifecycle, not
+          an erasure primitive.
+        * :meth:`erase_all` (this method) — hard-deletes **every** row
+          matching *scope* in **every** table, tombstoned or not, expired or
+          not, chunked or not.  It completely bypasses the
+          ``deleted_at``/``expires_at`` tombstone lifecycle described above.
+          **This action is irreversible.**  There is no grace period and no
+          recovery path other than a database backup taken before the call.
+          Use this only in direct response to an explicit erasure /
+          "right to be forgotten" request for the given scope — never as a
+          routine maintenance operation (use :meth:`purge_expired` for
+          that).
+
+        Args:
+            scope: Must include at minimum ``agent_id``.  As with every
+                   other scoped operation on this SDK (see
+                   project-management/DECISIONS.md VER-5 entry), the scope
+                   predicates are always applied so that erasure can never
+                   spill outside the requested tenant/agent/user/thread —
+                   narrow the scope (e.g. set ``user_id``) to erase exactly
+                   one person's data rather than an entire agent's.
+
+        Returns:
+            An :class:`~agent_memory_sdk.types.ErasureReport` with:
+
+            * ``rows_deleted`` — dict mapping each of the six table names to
+              the number of rows hard-deleted from it for this scope.
+            * ``total_deleted`` — sum of all six counts.
+            * ``erased_at`` — UTC timestamp when the erasure completed.
+
+        Raises:
+            ValueError: if ``scope.agent_id`` is missing.
+        """
+        rows_deleted: dict[str, int] = {}
+        for repo in (
+            self.working,
+            self.episodic,
+            self.facts,
+            self.profiles,
+            self.procedures,
+        ):
+            rows_deleted[repo._TABLE] = repo.erase_all(scope)
+
+        # memory_chunks has no per-type repository of its own — reach it via
+        # the shared ChunkRepository. Chunks may exist even if this
+        # MemoryStore instance currently has chunking disabled (self.chunks
+        # is None), e.g. legacy rows written under an earlier configuration,
+        # so fall back to a throwaway ChunkRepository over the same pool
+        # rather than skipping the table.
+        chunk_repo = self.chunks if self.chunks is not None else ChunkRepository(self._pool)
+        rows_deleted["memory_chunks"] = chunk_repo.erase_by_scope(scope)
+
+        total_deleted = sum(rows_deleted.values())
+        report = ErasureReport(
+            rows_deleted=rows_deleted,
+            total_deleted=total_deleted,
+            erased_at=datetime.now(timezone.utc),
+        )
+        logger.info(
+            "erase_all scope=%s rows_deleted=%s total=%d",
+            scope, rows_deleted, total_deleted,
+        )
+        return report
 
     # ------------------------------------------------------------------
     # reconcile() — run a reconciliation pass over semantic facts

@@ -1254,6 +1254,62 @@ class BaseRepository(ABC, Generic[M]):
         return int(deleted)
 
     # ------------------------------------------------------------------
+    # erase_all() — compliance hard-delete (PIPE-5)
+    # ------------------------------------------------------------------
+
+    def erase_all(self, scope: MemoryScope) -> int:
+        """Hard-delete **every** row in this table matching *scope* — no exceptions.
+
+        This is the per-table primitive behind
+        :meth:`~agent_memory_sdk.store.MemoryStore.erase_all`. It is a
+        genuine compliance ("right to erasure" / GDPR-style) hard-delete,
+        deliberately different from both :meth:`forget` and
+        :meth:`purge_expired`:
+
+        - :meth:`forget` sets ``deleted_at`` (reversible tombstone); rows
+          stay in the table.
+        - :meth:`purge_expired` hard-deletes, but only rows that are
+          **already tombstoned** (``deleted_at IS NOT NULL``).
+        - :meth:`erase_all` hard-deletes **every** row matching *scope*,
+          tombstoned or not, expired or not — the ``deleted_at`` /
+          ``expires_at`` lifecycle is bypassed entirely.
+
+        This method is irreversible: there is no soft-delete step, no grace
+        period, and no way to recover the deleted rows afterward (short of a
+        database backup). It must only be invoked in response to an explicit
+        erasure request for the given scope — never as part of routine
+        memory-lifecycle maintenance (use :meth:`purge_expired` for that).
+
+        Args:
+            scope: Must include at minimum agent_id.  Erasure is always
+                   scoped so that cross-tenant/agent data is never touched —
+                   the same scoping-enforcement discipline as every other
+                   method on this class (see project-management/DECISIONS.md
+                   VER-5 entry).
+
+        Returns:
+            Number of rows hard-deleted.
+
+        Raises:
+            ValueError: if scope.agent_id is missing.
+        """
+        _require_agent_id(scope)
+        scope_sql, scope_params = _scope_predicates(scope)
+
+        sql = f"""
+            DELETE FROM {self._TABLE}
+            WHERE {scope_sql}
+        """  # nosec B608 — _TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, scope_params)
+            conn.commit()
+            deleted = cur.rowcount
+
+        logger.info("erase_all %s scope=%s deleted=%d", self._TABLE, scope, deleted)
+        return int(deleted)
+
+    # ------------------------------------------------------------------
     # Claim-based consolidation locking (ENH-4)
     # ------------------------------------------------------------------
 
