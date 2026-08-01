@@ -203,6 +203,46 @@ class ChunkRepository:
         )
         return int(deleted)
 
+    def erase_by_scope(self, scope: MemoryScope) -> int:
+        """Hard-delete every ``memory_chunks`` row matching *scope* (PIPE-5).
+
+        Unlike :meth:`delete_by_source` (which targets the chunks of one
+        specific parent row, e.g. when rewriting chunks on ``update()``),
+        this deletes **every** chunk row for *scope* regardless of which
+        parent table or record it belongs to. Used by
+        :meth:`~agent_memory_sdk.store.MemoryStore.erase_all` so a compliance
+        erasure request also removes any chunked content fragments — chunks
+        have no ``deleted_at``/tombstone lifecycle of their own, so this is
+        the only way to remove them in bulk for a scope.
+
+        This is irreversible: there is no soft-delete step for
+        ``memory_chunks`` rows.
+
+        Args:
+            scope: Must include at minimum agent_id.
+
+        Returns:
+            Number of chunk rows hard-deleted.
+
+        Raises:
+            ValueError: if scope.agent_id is missing.
+        """
+        _require_agent_id(scope)
+        scope_sql, scope_params = _scope_predicates(scope)
+
+        sql = f"""
+            DELETE FROM memory_chunks
+            WHERE {scope_sql}
+        """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, scope_params)
+            conn.commit()
+            deleted = cur.rowcount
+
+        logger.info("erase_by_scope memory_chunks scope=%s deleted=%d", scope, deleted)
+        return int(deleted)
+
     # ------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------

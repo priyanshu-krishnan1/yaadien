@@ -781,3 +781,41 @@ class SearchMode(str, enum.Enum):
     APPROX = "APPROX"
     EXACT = "EXACT"
     DEFAULT = "DEFAULT"
+
+
+# ---------------------------------------------------------------------------
+# ErasureReport (PIPE-5)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ErasureReport:
+    """Auditable record of a :meth:`~agent_memory_sdk.store.MemoryStore.erase_all` call.
+
+    Returned by :meth:`~agent_memory_sdk.store.MemoryStore.erase_all` so the
+    caller has a durable, inspectable record of exactly what was permanently
+    removed in response to a compliance ("right to erasure" / GDPR-style)
+    request — distinct from :meth:`~agent_memory_sdk.store.MemoryStore.forget`,
+    which only tombstones a single row and never returns a cross-table count.
+
+    Attributes:
+        rows_deleted: Mapping of Db2 table name → number of rows hard-deleted
+                      from that table for the requested scope.  Always
+                      contains an entry for all six tables the SDK manages
+                      (``working_memory``, ``episodic_memory``,
+                      ``semantic_facts``, ``entity_profiles``,
+                      ``procedural_memory``, ``memory_chunks``), even when a
+                      given table had zero matching rows (value ``0``).
+        total_deleted: ``sum(rows_deleted.values())`` — the grand total of
+                      rows permanently removed across every table.
+        erased_at:    UTC timestamp captured when the erasure completed —
+                      the "when" half of the audit record.
+
+    This dataclass carries no scope information itself; callers that need to
+    correlate a report with the scope it was generated for should log the
+    :class:`~agent_memory_sdk.models.MemoryScope` alongside the report at the
+    call site.
+    """
+
+    rows_deleted: dict[str, int] = field(default_factory=dict)
+    total_deleted: int = 0
+    erased_at: datetime | None = None
