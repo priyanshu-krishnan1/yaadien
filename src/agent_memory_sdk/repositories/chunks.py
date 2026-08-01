@@ -339,7 +339,7 @@ class ChunkRepository:
             })
         return result
 
-    def list_all_for_scope(self, scope: MemoryScope) -> list[dict]:
+    def list_all_for_scope(self, scope: MemoryScope) -> list[dict[str, Any]]:
         """Return all ``memory_chunks`` rows for *scope* as plain dicts (for export).
 
         This is the export-facing alias for :meth:`list_all` used by
@@ -362,7 +362,7 @@ class ChunkRepository:
             ValueError: if scope.agent_id is missing.
         """
         _require_agent_id(scope)
-        results: list[dict] = []
+        results: list[dict[str, Any]] = []
         offset = 0
         page_size = 1000
         while True:
