@@ -10,10 +10,10 @@ Run:
 
 from __future__ import annotations
 
+from _embedding import fake_embedding
+
 from agent_memory_sdk import MemoryScope, MemoryStore, SemanticFact
 from agent_memory_sdk.db.connection import ConnectionPool
-
-from _embedding import fake_embedding
 
 pool = ConnectionPool()  # reads DB2_* env vars
 # embedding_provider auto-embeds record.content on remember() when the

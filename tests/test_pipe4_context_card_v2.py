@@ -31,7 +31,6 @@ profiles.list_all backfill).
 
 from __future__ import annotations
 
-import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -158,7 +157,7 @@ def _search_id_rows(ids: list[str]) -> list[tuple[Any, ...]]:
 class TestDefaultPathUnchanged:
     def test_no_query_leaves_relevant_fields_none(self) -> None:
         pool = _FakePool([[_wm_row("turn-1")]])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(_SCOPE, max_turns=1)
 
@@ -171,7 +170,7 @@ class TestDefaultPathUnchanged:
 
     def test_query_without_include_long_term_is_noop(self) -> None:
         pool = _FakePool([[_wm_row("turn-1")]])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(_SCOPE, max_turns=1, query="python preferences")
 
@@ -181,7 +180,7 @@ class TestDefaultPathUnchanged:
 
     def test_include_long_term_without_query_is_noop(self) -> None:
         pool = _FakePool([[_wm_row("turn-1")]])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(_SCOPE, max_turns=1, include_long_term=True)
 
@@ -191,7 +190,7 @@ class TestDefaultPathUnchanged:
 
     def test_empty_string_query_is_noop(self) -> None:
         pool = _FakePool([[_wm_row("turn-1")]])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE, max_turns=1, query="", include_long_term=True
@@ -215,7 +214,7 @@ class TestLongTermBlending:
             _search_id_rows(["prof-1"]),                # profiles.search: ids
             [_profile_row("prof-1")],                   # profiles.search: rows
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE,
@@ -240,7 +239,7 @@ class TestLongTermBlending:
             _search_id_rows([]),
             [],
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE, max_turns=1, query="q", include_long_term=True
@@ -266,7 +265,7 @@ class TestMinResultsBackfill:
             _search_id_rows([]),                       # profiles.search: ids (none)
             [],                                        # (no rows step needed, but keep queue aligned)
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE,
@@ -289,7 +288,7 @@ class TestMinResultsBackfill:
             _search_id_rows([]),
             [],
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE,
@@ -318,7 +317,7 @@ class TestMinResultsBackfill:
             _search_id_rows([]),
             [],
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE,
@@ -341,7 +340,7 @@ class TestMinResultsBackfill:
             _search_id_rows([]),
             [],
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE,
@@ -361,7 +360,7 @@ class TestMinResultsBackfill:
             _search_id_rows([]),                      # profiles.search: none
             [_profile_row("prof-1")],                 # profiles.list_all backfill
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE,
@@ -382,7 +381,7 @@ class TestMinResultsBackfill:
             _search_id_rows([]),
             [],
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         card = store.get_context_card(
             _SCOPE,
@@ -396,7 +395,7 @@ class TestMinResultsBackfill:
 
     def test_unrecognized_min_results_key_raises(self) -> None:
         pool = _FakePool([[_wm_row("turn-1")]])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         with pytest.raises(ValueError, match="Unknown min_results_by_type key"):
             store.get_context_card(
@@ -408,7 +407,7 @@ class TestMinResultsBackfill:
 
     def test_negative_min_results_value_raises(self) -> None:
         pool = _FakePool([[_wm_row("turn-1")]])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         with pytest.raises(ValueError, match="must be >= 0"):
             store.get_context_card(
@@ -488,7 +487,7 @@ class TestConfigAndFailureModes:
         pool = _FakePool([
             [_wm_row("turn-1")],
         ])
-        store = MemoryStore(pool, embedding_provider=_echo_embedder)
+        store = MemoryStore(pool, embedding_provider=_echo_embedder, enable_chunking=False)
 
         def _boom_search(*args: Any, **kwargs: Any) -> list[Any]:
             raise RuntimeError("db unavailable")
