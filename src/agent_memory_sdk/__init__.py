@@ -30,6 +30,7 @@ from agent_memory_sdk.db.migrate import SchemaPolicy
 from agent_memory_sdk.exceptions import (
     InvalidMetadataFilterError,
     SchemaPolicyError,
+    ScopeMismatchError,
     StaleWriteError,
 )
 from agent_memory_sdk.models import (
@@ -74,6 +75,7 @@ __all__ = [
     "SupersedeDecision",
     "StaleWriteError",
     "InvalidMetadataFilterError",
+    "ScopeMismatchError",
     "SchemaPolicyError",
     "SchemaPolicy",
     "ContextCard",

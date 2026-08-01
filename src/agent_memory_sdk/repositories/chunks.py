@@ -42,6 +42,8 @@ from typing import Any
 
 from agent_memory_sdk.models import MemoryScope
 from agent_memory_sdk.repositories.base import (
+    _parse_dt,
+    _parse_vector,
     _require_agent_id,
     _scope_predicates,
     _vec_to_str,
@@ -242,6 +244,100 @@ class ChunkRepository:
 
         logger.info("erase_by_scope memory_chunks scope=%s deleted=%d", scope, deleted)
         return int(deleted)
+
+    # ------------------------------------------------------------------
+    # PIPE-6: enumerate all chunks for a scope (export_scope() support)
+    # ------------------------------------------------------------------
+
+    def list_all(
+        self,
+        scope: MemoryScope,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List every chunk row within *scope*, ordered by created_at then chunk_index.
+
+        Unlike :meth:`BaseRepository.list_all`, ``memory_chunks`` has no
+        ``deleted_at`` lifecycle column of its own — chunk rows are hard-deleted
+        and rewritten wholesale by :meth:`delete_by_source` whenever their
+        parent record is updated, so there is nothing to filter here. This
+        method always returns every chunk row matching *scope*.
+
+        Used by :meth:`~agent_memory_sdk.store.MemoryStore.export_scope`
+        (PIPE-6) to enumerate ``memory_chunks`` rows for backup/portability.
+        There is no ``ChunkRepository``-specific Pydantic model (chunks are
+        an implementation detail of the per-type repositories), so rows are
+        returned as plain dicts rather than model instances.
+
+        Args:
+            scope:  Must include at minimum agent_id.
+            limit:  Max rows to return (capped at 1000).
+            offset: Rows to skip (for pagination).
+
+        Returns:
+            A list of dicts, one per chunk row, with keys: ``id``,
+            ``source_table``, ``source_id``, ``chunk_index``, ``chunk_text``,
+            ``embedding`` (``list[float]``), ``tenant_id``, ``agent_id``,
+            ``user_id``, ``thread_id``, ``created_at`` (``datetime | None``).
+
+        Raises:
+            ValueError: if scope.agent_id is missing.
+        """
+        _require_agent_id(scope)
+        scope_sql, scope_params = _scope_predicates(scope)
+        limit = min(limit, 1000)
+
+        select_cols = (
+            "id, source_table, source_id, chunk_index, chunk_text, "
+            "VECTOR_SERIALIZE(embedding) AS embedding, "
+            "tenant_id, agent_id, user_id, thread_id, created_at"
+        )
+
+        if offset > 0:
+            sql = f"""
+                SELECT * FROM (
+                    SELECT {select_cols},
+                           ROW_NUMBER() OVER (ORDER BY created_at ASC, chunk_index ASC) AS rn
+                    FROM memory_chunks
+                    WHERE {scope_sql}
+                ) WHERE rn > ? AND rn <= ?
+            """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; scope_sql contains only literal column=? fragments from _scope_predicates (all values bound). DECISIONS.md VER-5.
+            params: list[Any] = [*scope_params, offset, offset + limit]
+        else:
+            sql = f"""
+                SELECT {select_cols}
+                FROM memory_chunks
+                WHERE {scope_sql}
+                ORDER BY created_at ASC, chunk_index ASC
+                FETCH FIRST ? ROWS ONLY
+            """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; scope_sql contains only literal column=? fragments from _scope_predicates (all values bound). DECISIONS.md VER-5.
+            params = [*scope_params, limit]
+
+        with self._pool.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            (
+                id_, source_table, source_id, chunk_index, chunk_text,
+                embedding_str, tenant_id, agent_id, user_id, thread_id, created_at,
+            ) = row[:11]
+            result.append({
+                "id": id_,
+                "source_table": source_table,
+                "source_id": source_id,
+                "chunk_index": chunk_index,
+                "chunk_text": chunk_text,
+                "embedding": _parse_vector(embedding_str),
+                "tenant_id": tenant_id,
+                "agent_id": agent_id,
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "created_at": _parse_dt(created_at),
+            })
+        return result
 
     # ------------------------------------------------------------------
     # Search
