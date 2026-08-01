@@ -42,8 +42,21 @@ from agent_memory_sdk.store import MemoryStore
 
 
 class _FakeCursor:
-    def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
+    def __init__(
+        self,
+        rows: list[tuple[Any, ...]] | None = None,
+        rows_sequence: list[list[tuple[Any, ...]]] | None = None,
+    ) -> None:
+        """``rows`` (default): every execute() sees the same fixed row set —
+        fine for the single-query-per-test adapters (LangChain/OpenAI/MCP).
+
+        ``rows_sequence``: when a test issues more than one SQL round trip
+        per call (e.g. agent_framework's before_run(), which lists working
+        turns then searches facts), pass one row-set per expected execute()
+        call in order; each execute() pops the next one off the front.
+        """
         self.rows = rows or []
+        self._sequence = list(rows_sequence) if rows_sequence is not None else None
         self.last_sql: str = ""
         self.last_params: list[Any] = []
         self.rowcount = len(self.rows)
@@ -55,6 +68,9 @@ class _FakeCursor:
         self.last_params = params or []
         self.all_sqls.append(sql)
         self.all_params.append(list(self.last_params))
+        if self._sequence is not None:
+            self.rows = self._sequence.pop(0) if self._sequence else []
+            self.rowcount = len(self.rows)
 
     def fetchone(self) -> tuple[Any, ...] | None:
         return self.rows[0] if self.rows else None
@@ -79,8 +95,12 @@ class _FakeConn:
 
 
 class _FakePool:
-    def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
-        self.cursor = _FakeCursor(rows)
+    def __init__(
+        self,
+        rows: list[tuple[Any, ...]] | None = None,
+        rows_sequence: list[list[tuple[Any, ...]]] | None = None,
+    ) -> None:
+        self.cursor = _FakeCursor(rows, rows_sequence)
         self.conn = _FakeConn(self.cursor)
 
     @contextmanager
@@ -710,8 +730,10 @@ class TestAgentFrameworkAdapter:
             if cached_af_mod is not None:
                 sys.modules[mod_name] = cached_af_mod
 
-    def _make_context_provider(self, af, rows=None, agent_id="test-agent", **kwargs):
-        pool = _FakePool(rows)
+    def _make_context_provider(
+        self, af, rows=None, rows_sequence=None, agent_id="test-agent", **kwargs
+    ):
+        pool = _FakePool(rows, rows_sequence)
         store = MemoryStore(pool)
         provider = af.MemoryStoreContextProvider(store=store, agent_id=agent_id, **kwargs)
         return provider, store, pool
@@ -743,8 +765,12 @@ class TestAgentFrameworkAdapter:
         assert not any(c[0] == "agent-memory-sdk:working" for c in calls)
 
     def test_before_run_injects_facts_when_query_embedding_present(self, af):
+        # before_run() issues two round trips: get_context_card() lists
+        # working turns first (empty here — this test only cares about the
+        # facts branch), then facts.search() — each execute() call must see
+        # a row-set matching that specific query's expected shape.
         fact_row = _fact_row(content="user prefers dark mode")
-        provider, store, pool = self._make_context_provider(af, rows=[fact_row])
+        provider, store, pool = self._make_context_provider(af, rows_sequence=[[], [fact_row]])
         context = MagicMock()
         state: dict[str, Any] = {"thread_id": "sess-1", "query_embedding": _VEC}
         asyncio.run(provider.before_run(agent=None, session=None, context=context, state=state))

@@ -9,13 +9,12 @@ Run:
 
 from __future__ import annotations
 
+from _embedding import fake_embedding
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent_memory_sdk import MemoryScope, MemoryStore
 from agent_memory_sdk.adapters.langchain import Db2ChatMessageHistory
 from agent_memory_sdk.db.connection import ConnectionPool
-
-from _embedding import fake_embedding
 
 pool = ConnectionPool()  # reads DB2_* env vars
 store = MemoryStore(pool, embedding_provider=fake_embedding)

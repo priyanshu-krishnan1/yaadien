@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import asyncio
 
+from _embedding import fake_embedding
+
 from agent_memory_sdk import MemoryScope, MemoryStore
 from agent_memory_sdk.adapters.openai_agents import Db2Session
 from agent_memory_sdk.db.connection import ConnectionPool
-
-from _embedding import fake_embedding
 
 pool = ConnectionPool()  # reads DB2_* env vars
 store = MemoryStore(pool, embedding_provider=fake_embedding)

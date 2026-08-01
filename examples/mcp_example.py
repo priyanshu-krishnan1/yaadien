@@ -13,11 +13,11 @@ stdio to an MCP host, run `python -m agent_memory_sdk.adapters.mcp_server`
 
 from __future__ import annotations
 
+from _embedding import fake_embedding
+
 from agent_memory_sdk import MemoryScope, MemoryStore, WorkingMemory
 from agent_memory_sdk.adapters.mcp_server import create_server
 from agent_memory_sdk.db.connection import ConnectionPool
-
-from _embedding import fake_embedding
 
 pool = ConnectionPool()  # reads DB2_* env vars
 store = MemoryStore(pool, embedding_provider=fake_embedding)
