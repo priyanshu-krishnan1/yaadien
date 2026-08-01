@@ -3848,3 +3848,60 @@ once Db2 is accessible — the tooling to do so is now in place.
 **Supersedes:** Nothing — this is the first and only BENCH-5 entry.
 
 ---
+
+## 2026-08-03 — PIPE-1: hybrid retrieval via RRF-fused keyword + vector search
+
+### What was built
+
+Added an optional `hybrid: bool = False` parameter to `BaseRepository.search()` and `BaseRepository._search_via_chunks()` in `src/agent_memory_sdk/repositories/base.py`.
+
+When `hybrid=True`, the search flow becomes:
+
+1. **Vector ranking (unchanged SQL path)** — Db2's `VECTOR_DISTANCE` query returns the nearest candidates in the usual two-step ID-rank → full-row-fetch pattern (the Db2 12.1.5 fp0 compatibility workaround already in place).  When `hybrid=True`, the step-1 fetch is expanded to `min(top_k * 4, 800)` candidates instead of `top_k`, providing the keyword ranker a richer candidate pool to reorder before the final slice.
+
+2. **Keyword ranking (pure Python, no new SQL)** — Over the same fetched row set, each candidate's `content` (column index 5 in the row tuple) is tokenised by `_keyword_tokens()`: `re.findall(r"[a-z0-9]+", text.lower())` produces a `frozenset` of lowercase alphanumeric tokens.  Token-set intersection with the tokenised `query_text` gives an integer overlap count per candidate.  Candidates are ranked by descending overlap count.
+
+3. **Reciprocal Rank Fusion** — The two ranked lists (vector order, keyword order) are fused by `_rrf_fuse()`:
+
+   ```
+   rrf_score(d) = Σ  1 / (k + rank_i(d))
+   ```
+
+   where the sum is over every ranked list containing `d`, `rank_i(d)` is its 1-based rank in that list, and `k = 60` (the standard constant from Cormack, Clarke & Buettcher 2009 — chosen because it is the near-universal industry default for RRF, used as-is by MS MARCO baselines, Elasticsearch, Weaviate, and the literature; it smooths out the contribution of top-ranked documents so that a rank-1 item in one list does not completely dominate results when the other list disagrees).
+
+   The fused result is returned in descending RRF-score order, then sliced to `top_k`.
+
+When `hybrid=False` (the default), the code path is **identical to the pre-PIPE-1 path** — the new parameters are ignored and the behaviour is unchanged.  `hybrid=True` with `query_text=""` (the parameter default) also degenerates safely: the empty token set produces zero overlap for every candidate, so both lists are identical and the RRF output preserves the original vector order.
+
+### Keyword-scoring design choices
+
+- **Token-set overlap (not BM25/TF-IDF)** — BM25 requires per-term document frequencies across the corpus, which would need either a pre-built index or an extra aggregate SQL query.  Token-set overlap (intersection size) requires only the content strings already fetched in step 2 and the query string — zero additional infrastructure, zero additional SQL, consistent with the Step 0 principle.  The Oracle AI Agent Memory 26.6 release notes describe their newly-GA hybrid mode as "combining semantic and keyword retrieval in the same search flow"; this implementation is precisely that, without mandating any separate search engine.
+
+- **`query_text` is a separate parameter from `query_embedding`** — The embedding is a float vector; the raw text needed for tokenisation is a different type.  Making them separate parameters keeps the existing `search()` signature backward-compatible and explicit about what each is used for.
+
+- **Column index 5 hardcoded for content** — The `_SELECT_COLS` constant has a well-documented index map (see the module-level comment in `base.py`); index 5 is `content`.  Using the index directly avoids re-parsing the row into a model object just to read content for scoring — the model construction happens only for the final returned records.
+
+### RRF constant: k = 60
+
+`_RRF_K = 60` is declared as a module-level constant.  This is the original constant from the Cormack et al. 2009 paper and is the value used by virtually every production implementation of RRF (Elasticsearch, OpenSearch, Weaviate, the TREC baselines, etc.).  It was not hand-tuned for this dataset; it was adopted as the universal standard default, which is exactly what the task specification required ("k=60 as the standard RRF default").
+
+### Db2 Text Search Extender — confirmed non-dependency
+
+**This story deliberately does not depend on Db2's Text Search Extender** (`CONTAINS`/`SCORE`/`CONTAINS_ANY`/`CONTAINS_ALL`).
+
+The EPIC-7 backlog entry (dated 2026-07-31) recorded that the 12.1 documentation for the extender could not be confidently confirmed at the time.  A fresh check before implementing this story confirmed that situation is unchanged: IBM's own "How to enable TEXT SEARCH for a DB2 database" support article describes the Text Search Extender as an installable component — historically opt-in, not a core SQL feature enabled by default.  Whether a given Db2 12.1+ instance has it enabled depends on the DBA's installation choices, not on the version number alone.
+
+If Db2 Text Search Extender availability is later confirmed on a real 12.1+ instance in this project's target environment, that could replace the Python-side token overlap with a proper `CONTAINS`/`SCORE`-based keyword ranking operating directly in SQL over the full table (not just the vector-search candidate set).  That would be a documented upgrade path — a single-file change to `_search_via_chunks` / `search()` replacing the Python scoring block — not something this story needs to block on.  The Python-side fusion is not a workaround to be ashamed of: it is directly comparable to how Mem0 and Oracle describe "hybrid = semantic + keyword in the same flow" without mandating a separate search service.
+
+### Files changed
+
+- `src/agent_memory_sdk/repositories/base.py` — `_RRF_K` constant, `_keyword_tokens()`, `_rrf_fuse()` helpers; `hybrid` + `query_text` params on `search()` and `_search_via_chunks()`; over-fetch when `hybrid=True`; RRF fusion path in both methods.
+- `tests/test_pipe1_hybrid.py` — 25 new unit tests covering: `_keyword_tokens` (7 cases), `_rrf_fuse` (8 cases), `search()` hybrid=False regression guard (2 cases), `search()` hybrid=True (4 cases), `_search_via_chunks()` hybrid paths (3 cases).
+- `project-management/BOARD.html` — PIPE-1 status → Done with comment.
+- `project-management/DECISIONS.md` — this entry.
+
+**Made during:** PIPE-1 (EPIC-7 hybrid retrieval).
+
+**Supersedes:** Nothing — this is the first and only PIPE-1 entry.
+
+---

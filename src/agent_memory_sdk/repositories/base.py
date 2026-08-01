@@ -452,6 +452,65 @@ def _parse_dt(val: Any) -> datetime | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Hybrid retrieval helpers (PIPE-1)
+# ---------------------------------------------------------------------------
+
+#: Standard RRF constant — rank 1 contributes 1/(60+1), rank 60 contributes
+#: 1/(60+60) = 1/120.  60 is the widely-cited default (Cormack et al. 2009).
+_RRF_K: int = 60
+
+
+def _keyword_tokens(text: str) -> frozenset[str]:
+    """Tokenise *text* into a frozenset of lowercase alphanumeric tokens.
+
+    Splitting on any non-alphanumeric character produces tokens that are
+    robust to punctuation and whitespace variations.  The frozenset allows
+    fast set-intersection in :func:`_rrf_fuse`.
+
+    Args:
+        text: Any string — query or record content.
+
+    Returns:
+        Frozenset of lowercase word tokens.  Empty string → empty frozenset.
+    """
+    return frozenset(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _rrf_fuse(
+    vector_order: list[str],
+    keyword_order: list[str],
+    k: int = _RRF_K,
+) -> list[str]:
+    """Fuse two ranked ID lists via Reciprocal Rank Fusion (RRF).
+
+    RRF score for a document ``d`` is::
+
+        score(d) = sum( 1 / (k + rank_i(d)) )
+
+    where the sum is taken over every ranked list that contains ``d`` and
+    ``rank_i(d)`` is its 1-based position in that list.  Documents absent
+    from a list contribute nothing for that list.  The fused result is
+    returned in descending score order (highest-scoring first).
+
+    Args:
+        vector_order:  IDs ordered by ascending vector distance
+                       (nearest = rank 1 = highest contribution).
+        keyword_order: IDs ordered by descending keyword-overlap score
+                       (most overlap = rank 1 = highest contribution).
+        k:             RRF smoothing constant (default :data:`_RRF_K` = 60).
+
+    Returns:
+        Deduplicated list of IDs in descending RRF-score order.
+    """
+    scores: dict[str, float] = {}
+    for rank, id_ in enumerate(vector_order, start=1):
+        scores[id_] = scores.get(id_, 0.0) + 1.0 / (k + rank)
+    for rank, id_ in enumerate(keyword_order, start=1):
+        scores[id_] = scores.get(id_, 0.0) + 1.0 / (k + rank)
+    return sorted(scores, key=lambda i: scores[i], reverse=True)
+
+
 class BaseRepository(ABC, Generic[M]):
     """Abstract base for all five memory-type repositories.
 
@@ -1286,6 +1345,8 @@ class BaseRepository(ABC, Generic[M]):
         min_confidence: float = 0.0,
         search_chunks: bool | None = None,
         metadata_filter: dict[str, Any] | None = None,
+        hybrid: bool = False,
+        query_text: str = "",
     ) -> list[M]:
         """Semantic search via Db2 VECTOR_DISTANCE.
 
@@ -1350,6 +1411,44 @@ class BaseRepository(ABC, Generic[M]):
         This reuses the two-step reorder-after-fetch pattern from the standard
         search path (Step 7 Db2 12.1.5 fp0 compatibility workaround).
 
+        **PIPE-1: hybrid retrieval (``hybrid`` / ``query_text`` parameters)**
+
+        When ``hybrid=True``, the final result order is determined by
+        Reciprocal Rank Fusion (RRF) of two ranked lists:
+
+        1. **Vector ranking** — the vector-distance order returned by Db2
+           (step 1 above), exactly as today.
+        2. **Keyword ranking** — a Python-side token-set overlap score
+           computed over the **same candidate set already fetched** — no
+           additional SQL query.  Each candidate's ``content`` is tokenised
+           (lowercase alphanumeric tokens) and the overlap with the tokenised
+           *query_text* is counted; candidates are ranked by descending overlap
+           count.
+
+        The two ranked lists are then fused via::
+
+            rrf_score(d) = 1 / (_RRF_K + vector_rank(d))
+                         + 1 / (_RRF_K + keyword_rank(d))
+
+        where :data:`_RRF_K` = 60 (the widely-cited standard constant from
+        Cormack et al. 2009) and a document absent from a list contributes
+        zero for that list.  The final result is returned in descending
+        RRF-score order (highest first).
+
+        When ``hybrid=True`` and *query_text* is an empty string (the
+        default), the keyword ranking is computed against an empty token set,
+        which assigns zero overlap to every candidate — the RRF score then
+        contains only the vector contribution, giving the same result order
+        as ``hybrid=False``.  Callers should pass the raw query string via
+        *query_text* to get a meaningful keyword signal.
+
+        **No new SQL query is issued for the keyword ranking** — the keyword
+        score is computed in Python over the full rows fetched in step 2.
+        This keeps hybrid search zero-mandatory-infrastructure: it requires
+        no Db2 Text Search Extender, no full-text index, no external search
+        engine — just the existing vector search plus a pure-Python
+        tokenisation pass.
+
         Args:
             query_embedding: The embedding to search against.
             scope:           Must include at minimum agent_id.
@@ -1385,10 +1484,20 @@ class BaseRepository(ABC, Generic[M]):
                              :exc:`~agent_memory_sdk.exceptions.InvalidMetadataFilterError`.
                              ``None`` (default) disables filtering — full backward
                              compatibility.
+            hybrid:          When ``True``, fuse the vector-distance ranking
+                             with a Python-side keyword-overlap ranking via
+                             Reciprocal Rank Fusion (RRF, k=60).  Default
+                             ``False`` — pure vector search, unchanged behavior.
+            query_text:      Raw query string used for keyword tokenisation
+                             when ``hybrid=True``.  Ignored when
+                             ``hybrid=False``.  Default ``""`` (empty string
+                             produces a zero keyword signal — equivalent to
+                             pure vector ordering).
 
         Returns:
             A list of model instances ordered by ascending distance
-            (nearest first).
+            (nearest first) when ``hybrid=False``, or by descending RRF score
+            (best match first) when ``hybrid=True``.
 
         Raises:
             ValueError: if scope.agent_id is missing or query_embedding is empty.
@@ -1415,6 +1524,8 @@ class BaseRepository(ABC, Generic[M]):
                 include_expired=include_expired,
                 min_confidence=min_confidence,
                 metadata_filter=metadata_filter,
+                hybrid=hybrid,
+                query_text=query_text,
             )
         _require_agent_id(scope)
         if not query_embedding:
@@ -1451,6 +1562,11 @@ class BaseRepository(ABC, Generic[M]):
         #           reorder to restore the original nearest-first ordering.
         supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
 
+        # PIPE-1: when hybrid=True, over-fetch candidates so the keyword
+        # ranking has a larger pool to reorder from before the top_k slice.
+        # For hybrid=False, fetch exactly top_k (unchanged behavior).
+        fetch_k = min(top_k * 4, 800) if hybrid else top_k
+
         sql_ids = f"""
             SELECT id
             FROM {self._TABLE}
@@ -1463,7 +1579,7 @@ class BaseRepository(ABC, Generic[M]):
             ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})
             FETCH FIRST ? ROWS ONLY{approx_clause}
         """  # nosec B608 — _TABLE hardcoded; vec_str from _vec_to_str() (float() guard, DECISIONS.md VER-5); metric.value is a DistanceMetric enum (hardcoded strings); scope_sql/supersession_sql/extra/conf_sql/meta_sql are hardcoded or validated fragments with bound params.
-        id_params = [*scope_params, *conf_params, *meta_params, top_k]
+        id_params = [*scope_params, *conf_params, *meta_params, fetch_k]
 
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
@@ -1485,13 +1601,41 @@ class BaseRepository(ABC, Generic[M]):
             cur.execute(sql_rows, ordered_ids)
             raw_rows = cur.fetchall()
 
-        # Reorder to restore nearest-first ordering from step 1.
+        # Build a stable id→row map for both the pure-vector and hybrid paths.
         row_map = {r[0]: r for r in raw_rows}
-        return [
-            self._model_from_row(row_map[id_])
-            for id_ in ordered_ids
-            if id_ in row_map
-        ]
+
+        if not hybrid:
+            # Pure-vector path (unchanged behaviour): restore nearest-first
+            # ordering from step 1, then return.
+            return [
+                self._model_from_row(row_map[id_])
+                for id_ in ordered_ids
+                if id_ in row_map
+            ]
+
+        # PIPE-1: hybrid path — fuse vector rank with keyword rank via RRF.
+        # The vector ranking is already in ordered_ids (nearest first).
+        # Build the keyword ranking over the full candidate set:
+        query_tokens = _keyword_tokens(query_text)
+        # Only candidates we actually have full rows for (step 2 may drop some
+        # if they were concurrently deleted between the two queries).
+        live_ids = [id_ for id_ in ordered_ids if id_ in row_map]
+        if query_tokens:
+            keyword_scores: dict[str, int] = {
+                id_: len(query_tokens & _keyword_tokens(row_map[id_][5]))
+                for id_ in live_ids
+            }
+            keyword_order = sorted(
+                live_ids,
+                key=lambda i: keyword_scores[i],
+                reverse=True,
+            )
+        else:
+            # No query text → no keyword signal; keyword_order same as vector.
+            keyword_order = list(live_ids)
+
+        fused_ids = _rrf_fuse(live_ids, keyword_order)[:top_k]
+        return [self._model_from_row(row_map[id_]) for id_ in fused_ids]
 
     # ------------------------------------------------------------------
     # ORC-2: chunk-based search helpers
@@ -1507,6 +1651,8 @@ class BaseRepository(ABC, Generic[M]):
         include_expired: bool = False,
         min_confidence: float = 0.0,
         metadata_filter: dict[str, Any] | None = None,
+        hybrid: bool = False,
+        query_text: str = "",
     ) -> list[M]:
         """Search via the ``memory_chunks`` table, then resolve to parent records.
 
@@ -1514,13 +1660,18 @@ class BaseRepository(ABC, Generic[M]):
         :meth:`search`.  Only called when ``self._chunk_repo is not None`` and
         ``search_chunks=True`` was passed to :meth:`search`.
 
+        When ``hybrid=True``, the final result order is determined by RRF fusion
+        of the chunk-distance ranking and a Python-side keyword-overlap ranking
+        (see :meth:`search` for the full description of the hybrid mode).
+
         Args:
-            (same as :meth:`search`, ``search_chunks`` and ``metadata_filter``
-            are forwarded here without change)
+            (same as :meth:`search`, ``search_chunks`` is not forwarded here;
+            ``hybrid`` and ``query_text`` are forwarded from :meth:`search`)
 
         Returns:
             A list of at most *top_k* parent-record model instances, ordered by
-            their best-matching chunk distance (ascending, nearest first).
+            their best-matching chunk distance (ascending, nearest first) when
+            ``hybrid=False``, or by descending RRF score when ``hybrid=True``.
         """
         if not query_embedding:
             raise ValueError("query_embedding must be a non-empty list of floats.")
@@ -1528,8 +1679,10 @@ class BaseRepository(ABC, Generic[M]):
 
         top_k = min(top_k, 200)
 
-        # Step 1 — rank memory_chunks by distance, over-fetch (×4) to ensure
-        # we see enough distinct parents after dedup.
+        # Step 1 — rank memory_chunks by distance.
+        # For hybrid=True, over-fetch a larger candidate pool (same factor as
+        # the standard search path) so the keyword reranking has more material
+        # to work with before the top_k slice.
         overfetch = min(top_k * 4, 800)
         chunk_hits = self._chunk_repo.search_chunks(  # type: ignore[union-attr]
             query_embedding=query_embedding,
@@ -1550,10 +1703,13 @@ class BaseRepository(ABC, Generic[M]):
             if source_id not in seen or distance < seen[source_id]:
                 seen[source_id] = distance
 
-        # Sort by best-chunk distance, ascending (nearest first), take top_k.
-        ranked_ids: list[str] = [
+        # Sort by best-chunk distance, ascending (nearest first).
+        # For hybrid=False, slice to top_k here.
+        # For hybrid=True, keep all candidates; the RRF step will slice.
+        all_ranked_ids: list[str] = [
             sid for sid, _ in sorted(seen.items(), key=lambda x: x[1])
-        ][:top_k]
+        ]
+        ranked_ids = all_ranked_ids if hybrid else all_ranked_ids[:top_k]
 
         if not ranked_ids:
             return []
@@ -1593,11 +1749,31 @@ class BaseRepository(ABC, Generic[M]):
             cur.execute(sql_rows, [*ranked_ids, *scope_params, *conf_params, *meta_params])
             raw_rows = cur.fetchall()
 
-        # Re-rank by the chunk-distance order from step 2, then apply
-        # any confidence filter that may have dropped rows.
         row_map = {r[0]: r for r in raw_rows}
-        return [
-            self._model_from_row(row_map[id_])
-            for id_ in ranked_ids
-            if id_ in row_map
-        ]
+
+        if not hybrid:
+            # Pure chunk-distance ordering (unchanged behaviour).
+            return [
+                self._model_from_row(row_map[id_])
+                for id_ in ranked_ids
+                if id_ in row_map
+            ]
+
+        # PIPE-1: hybrid path — fuse chunk-distance rank with keyword rank via RRF.
+        query_tokens = _keyword_tokens(query_text)
+        live_ids = [id_ for id_ in ranked_ids if id_ in row_map]
+        if query_tokens:
+            keyword_scores: dict[str, int] = {
+                id_: len(query_tokens & _keyword_tokens(row_map[id_][5]))
+                for id_ in live_ids
+            }
+            keyword_order = sorted(
+                live_ids,
+                key=lambda i: keyword_scores[i],
+                reverse=True,
+            )
+        else:
+            keyword_order = list(live_ids)
+
+        fused_ids = _rrf_fuse(live_ids, keyword_order)[:top_k]
+        return [self._model_from_row(row_map[id_]) for id_ in fused_ids]
