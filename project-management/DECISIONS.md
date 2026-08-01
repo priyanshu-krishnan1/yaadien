@@ -3950,3 +3950,86 @@ Full suite: 615 passed, 77 skipped (integration tests requiring a live Db2 insta
 **Supersedes:** Nothing — this is the first and only PIPE-5 entry.
 
 ---
+
+## 2026-08-02 — EPIC-8 backlog: conversational-ergonomics gap vs. Oracle AI Agent Memory's How-to Guides
+
+### Research source
+
+A conversational review (this session, 2026-08-02) fetched two live Oracle
+sources not covered by the July 2026 competitive-analysis snapshot that
+`EPIC-3`/`ORC-1..4` were originally scoped from:
+
+- `https://pypi.org/project/oracleagentmemory/` (package summary).
+- `https://docs.oracle.com/en/database/oracle/agent-memory/26.4/agmea/` —
+  the full **How-to Guides** table of contents (rendered via browser, the
+  page is JS-driven and not readable via plain fetch): *Run Oracle AI
+  Database Locally*, *Store and Search Memory*, *Use Agent Memory with an
+  MCP Server*, *Use Agent Memory with WayFlow*, *Use Agent Memory with
+  LangGraph*, *Use Agent Memory Short-Term APIs with LangGraph*, plus the
+  *Quick Reference Code Samples* page, which was read in full (verbatim
+  code examples for every lifecycle call: `create_thread`, `get_thread`,
+  `delete_thread`, `add_user`, `add_agent`, `add_memory` (global/scoped/
+  custom-id), `thread.add_messages`/`get_messages`/`delete_message`,
+  `thread.add_memory`/`delete_memory`, `get_context_card`, `get_summary`
+  (`except_last`, `token_budget`), and `memory.search`/`thread.search`
+  with `SearchScope`/`record_types`).
+
+### Gap analysis against the current SDK
+
+Cross-checked every documented call against `src/agent_memory_sdk/store.py`,
+`models.py`, and `types.py` as they exist today (post-`EPIC-7`). Confirmed
+covered-or-ahead: `get_context_card()` (`ORC-1`/`PIPE-4` already implement
+Oracle 26.6's per-type minimum-result balancing — `store.py:1318` literally
+cites Oracle 26.6 by name), and `erase_all()`/`export_scope()`/
+`import_scope()` (`PIPE-5`/`PIPE-6`) exceed Oracle's own documented erasure
+story. Confirmed six genuine gaps, all ergonomic/convenience-layer (the
+underlying primitives — `remember()`, `search()`, scoped repositories —
+already do the necessary work; nothing here is a new storage capability):
+
+1. No first-class `Thread` object (`create_thread`/`get_thread`/
+   `delete_thread` with cascade) — threads exist only implicitly as
+   `MemoryScope(thread_id=...)`.
+2. No batch message API (`add_messages`/`get_messages(start, end)`/
+   `delete_message`) — `WorkingMemory` rows are the message-equivalent but
+   there's no dedicated write/read/delete surface for them.
+3. No thin `add_memory()`/`add_user()`/`add_agent()` convenience wrappers
+   — callers must construct a `SemanticFact`/`EntityProfile` model instance
+   and call `remember()` directly.
+4. No automatic LLM-driven memory extraction on message ingest (Oracle's
+   `extract_memories=True` default) — distinct from `PIPE-2`'s
+   `IngestResolver`, which classifies a candidate the *caller* already
+   decided to write; nothing today triggers extraction from raw messages.
+5. No token-budget-aware thread summary (`get_summary(except_last=,
+   token_budget=)`) — only the LLM-based `Summarizer` hook inside
+   `get_context_card()` exists, which is a different mechanism (pluggable
+   narrative summary, not a budget-truncated raw-message view).
+6. No raw-text `search()` facade — `BaseRepository.search()` and
+   `search_chunks()` both take a pre-computed `query_embedding`, not a text
+   string; every caller must embed manually and pick a single repository.
+
+### Story breakdown and parallel-execution design
+
+Six stories, `THRD-1` through `THRD-6`, tracked as `EPIC-8`. Deliberately
+partitioned so four are independent (new methods on `MemoryStore`, each
+instructed to append its own clearly-delimited banner-comment section at
+the end of the class — the same pattern `ORC-1`'s `get_context_card()`
+banner already established — rather than editing a shared block, to keep
+parallel diffs additive and minimize merge conflicts when run as separate
+subagents/worktrees): `THRD-1` (messages), `THRD-2` (add_memory/add_user/
+add_agent), `THRD-3` (search facade), `THRD-4` (get_summary). `THRD-5`
+(auto-extraction) depends on `THRD-1`'s `add_messages()` existing as the
+hook point. `THRD-6` (the `Thread` facade object) is sequenced last —
+it's pure composition over the other five and touches every method they
+add, so it cannot start until they've landed.
+
+Each story's `MemoryStore.__init__` signature change (new optional
+keyword-only-by-convention constructor params) is additive-only and
+independently reviewable even if two land in the same PR out of order —
+none removes or renames an existing parameter.
+
+**Made during:** EPIC-8 backlog planning (conversational-ergonomics gap
+analysis, this session).
+
+**Supersedes:** Nothing — first EPIC-8 entry.
+
+---

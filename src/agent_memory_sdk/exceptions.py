@@ -75,6 +75,19 @@ class ScopeMismatchError(ValueError):
     """
 
 
+class ScopeImportError(ScopeMismatchError):
+    """Raised by :meth:`~agent_memory_sdk.store.MemoryStore.import_scope` when an
+    imported record's stored scope does not match the target import scope.
+
+    This is a subclass of :class:`ScopeMismatchError` (and therefore also a
+    :class:`ValueError`) — callers that already catch :class:`ScopeMismatchError`
+    will continue to catch it without modification.
+
+    See :class:`ScopeMismatchError` for the full reasoning behind why this check
+    is performed before any ``create()`` / ``insert_chunk()`` call.
+    """
+
+
 class SchemaPolicyError(RuntimeError):
     """Raised when :class:`~agent_memory_sdk.db.migrate.SchemaPolicy.REQUIRE_EXISTING`
     validation fails.
