@@ -77,11 +77,46 @@ the polling pattern.
 
 See :class:`~agent_memory_sdk.types.Consolidator` for the full protocol
 documentation and an LLM-based example.
+
+PIPE-2 — ingest resolver (ADD/UPDATE/DELETE/NOOP at write time)
+-----------------------------------------------------------------
+The default is :class:`~agent_memory_sdk.types.NoOpIngestResolver`, which
+always returns ``ADD`` — ``remember()`` inserts the candidate exactly as it
+did before this feature existed, with no added overhead (the similarity
+``search()`` call is skipped entirely when this default is in use).
+
+Supply a real implementation at construction time to opt in::
+
+    store = MemoryStore(pool, ingest_resolver=MyLLMIngestResolver(), resolver_k=5)
+
+When an ``ingest_resolver`` is configured, ``remember()`` runs the following
+*before* writing anything:
+
+1. Embed the candidate (using its own ``embedding`` if already set, else the
+   configured ``embedding_provider``).
+2. ``search()`` the same-type repository, scoped to the candidate's scope,
+   with ``top_k=resolver_k``, to find the most similar existing records.
+3. Pair each result with its cosine distance to the candidate and call the
+   configured :class:`~agent_memory_sdk.types.IngestResolver` with
+   ``(candidate, similar)``.
+4. Act on the returned :class:`~agent_memory_sdk.types.IngestDecision`:
+   ``ADD`` inserts as today; ``UPDATE`` merges the candidate's content into
+   the ``target_id`` row via the existing optimistic-concurrency ``update()``;
+   ``DELETE`` calls ``forget()`` on ``target_id`` (the candidate itself is not
+   written); ``NOOP`` skips the write entirely.
+
+This is a **write-time** classifier over the top-k most-similar candidates by
+cosine distance — distinct from :class:`~agent_memory_sdk.types.Reconciler`,
+which runs later, in batches, over already-written non-superseded facts,
+looking for contradictions *between* them. See
+:class:`~agent_memory_sdk.types.IngestResolver` for the full protocol
+documentation and an LLM-based example.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from agent_memory_sdk.exceptions import StaleWriteError as StaleWriteError  # re-export
@@ -100,9 +135,46 @@ from agent_memory_sdk.repositories.facts import SemanticFactRepository
 from agent_memory_sdk.repositories.procedural import ProceduralMemoryRepository
 from agent_memory_sdk.repositories.profiles import EntityProfileRepository
 from agent_memory_sdk.repositories.working import WorkingMemoryRepository
-from agent_memory_sdk.types import ContextCard, NoOpConsolidator, NoOpReconciler, NoOpSummarizer
+from agent_memory_sdk.types import (
+    ContextCard,
+    IngestAction,
+    IngestDecision,
+    NoOpConsolidator,
+    NoOpIngestResolver,
+    NoOpReconciler,
+    NoOpSummarizer,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _cosine_distance(a: list[float], b: list[float]) -> float:
+    """Return ``1 - cosine_similarity(a, b)``, matching Db2's ``VECTOR_DISTANCE``
+    ``COSINE`` semantics (see :class:`~agent_memory_sdk.types.DistanceMetric`).
+
+    This is computed in pure Python because :meth:`BaseRepository.search`
+    (PIPE-2's ``similar`` results) returns typed model instances, not
+    distances — both the candidate's and each result's ``embedding`` field
+    are already available in Python, so no extra SQL round-trip is needed.
+
+    Returns ``1.0`` (maximum distance) when either vector is empty, the
+    vectors have mismatched dimensions, or either vector has zero norm (e.g.
+    the ORC-2 zero-vector chunking sentinel) — cosine similarity is undefined
+    in those cases, and treating them as maximally dissimilar is the safe
+    default for a classifier deciding whether to merge/replace a record.
+    """
+    if not a or not b or len(a) != len(b):
+        return 1.0
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 1.0
+    similarity = dot / (norm_a * norm_b)
+    # Clamp for floating-point rounding just outside [-1, 1].
+    similarity = max(-1.0, min(1.0, similarity))
+    return 1.0 - similarity
+
 
 # Map from memory model class → repository attribute name
 _MODEL_TO_REPO_ATTR: dict[type, str] = {
@@ -202,6 +274,21 @@ class MemoryStore:
         chunk_size:    Maximum characters per chunk.  Default 800.
         chunk_overlap: Overlap in characters between adjacent chunks.
               Default 200.
+        ingest_resolver: An :class:`~agent_memory_sdk.types.IngestResolver`
+              implementation (any callable matching the protocol).  When
+              configured, :meth:`remember` runs a similarity ``search()``
+              (``top_k=resolver_k``) against the same-type repository before
+              writing, and acts on the returned
+              :class:`~agent_memory_sdk.types.IngestDecision` (``ADD`` /
+              ``UPDATE`` / ``DELETE`` / ``NOOP``) instead of unconditionally
+              inserting.  Defaults to
+              :class:`~agent_memory_sdk.types.NoOpIngestResolver`, which
+              always returns ``ADD`` — with this default, ``remember()``
+              skips the similarity search entirely and behaves exactly as it
+              did before PIPE-2 (zero added overhead).
+        resolver_k: ``top_k`` passed to the similarity ``search()`` run
+              before the configured ``ingest_resolver`` is invoked.  Ignored
+              when ``ingest_resolver`` is not configured.  Default ``5``.
     """
 
     def __init__(
@@ -217,6 +304,8 @@ class MemoryStore:
         chunk_threshold: int = 2000,
         chunk_size: int = 800,
         chunk_overlap: int = 200,
+        ingest_resolver: Any | None = None,
+        resolver_k: int = 5,
     ) -> None:
         # Build the shared ChunkRepository when chunking is enabled and
         # an embedding provider has been supplied — otherwise it stays None
@@ -280,6 +369,9 @@ class MemoryStore:
         self._consolidator = consolidator if consolidator is not None else NoOpConsolidator()
         self._reconciler = reconciler if reconciler is not None else NoOpReconciler()
         self._summarizer = summarizer if summarizer is not None else NoOpSummarizer()
+        self._ingest_resolver = (
+            ingest_resolver if ingest_resolver is not None else NoOpIngestResolver()
+        )
 
         if consolidate_every_n < 1:
             raise ValueError(
@@ -291,17 +383,35 @@ class MemoryStore:
         # multiple app instances — see the class docstring for the implication.
         self._consolidate_counters: dict[tuple[str | None, ...], int] = {}
 
+        if resolver_k < 1:
+            raise ValueError(f"resolver_k must be >= 1; got {resolver_k!r}.")
+        self._resolver_k: int = resolver_k
+
     # ------------------------------------------------------------------
     # remember() — primary write entry point
     # ------------------------------------------------------------------
 
     def remember(self, record: _MemoryBase, scope: MemoryScope) -> _MemoryBase:
-        """Write a memory record and optionally run consolidation.
+        """Write a memory record and optionally run ingest resolution + consolidation.
 
-        Determines the target repository from the record's type, calls
-        ``create()``, then — if the memory type is ``working`` or
-        ``episodic`` — calls the configured
-        :attr:`consolidator` synchronously with the written record.
+        Determines the target repository from the record's type.
+
+        **PIPE-2 — ingest resolution:** when a real ``ingest_resolver`` is
+        configured (anything other than the default
+        :class:`~agent_memory_sdk.types.NoOpIngestResolver`), this method
+        first runs a similarity ``search()`` against the same-type repository
+        (``top_k=resolver_k``) and calls the resolver with the candidate plus
+        those results before deciding whether to insert, merge, discard, or
+        skip the write — see :meth:`_resolve_and_act` and
+        :class:`~agent_memory_sdk.types.IngestResolver` for the full flow.
+        With the default resolver, this step is skipped entirely and
+        ``create()`` is called unconditionally — byte-for-byte the pre-PIPE-2
+        behavior.
+
+        Then — if the memory type is ``working`` or ``episodic`` and a new
+        row was actually inserted (an ``ADD`` decision, or the default
+        always-ADD path) — calls the configured :attr:`consolidator`
+        synchronously with the written record.
 
         Any derived memories returned by the consolidator are persisted
         immediately via the appropriate repository (facts, profiles, or
@@ -313,8 +423,12 @@ class MemoryStore:
             scope:  Must include at minimum agent_id.
 
         Returns:
-            The persisted record (same object, with ``id``, ``created_at``,
-            etc. populated by the repository).
+            The persisted record for ``ADD``/``UPDATE`` decisions (the newly
+            created row, or the merged-into target row, respectively, each
+            with ``id``/``version``/timestamps as returned by the
+            repository).  For ``DELETE``/``NOOP`` decisions — where the
+            candidate itself is never written — returns the candidate
+            *as passed in*, unmodified and unpersisted.
 
         Raises:
             TypeError:    if ``record`` is not one of the five known model types.
@@ -329,13 +443,131 @@ class MemoryStore:
             )
 
         repo = getattr(self, repo_attr)
-        stored: _MemoryBase = repo.create(record, scope)
 
-        # Run consolidation only for working / episodic writes.
-        if repo_attr in ("working", "episodic") and self._should_consolidate(scope):
+        if isinstance(self._ingest_resolver, NoOpIngestResolver):
+            # Fast path — unchanged pre-PIPE-2 behavior, no similarity search.
+            stored: _MemoryBase = repo.create(record, scope)
+            did_add = True
+        else:
+            stored, did_add = self._resolve_and_act(repo, record, scope)
+
+        # Run consolidation only for working / episodic writes where a new
+        # row was actually inserted (ADD).
+        if did_add and repo_attr in ("working", "episodic") and self._should_consolidate(scope):
             self._run_consolidator([stored], scope)
 
         return stored
+
+    def _resolve_and_act(
+        self, repo: Any, record: _MemoryBase, scope: MemoryScope
+    ) -> tuple[_MemoryBase, bool]:
+        """Run the configured IngestResolver and act on its decision (PIPE-2).
+
+        Args:
+            repo:   The type repository resolved from ``record``'s type
+                    (``self.working``, ``self.facts``, etc.).
+            record: The candidate record about to be remembered.
+            scope:  Must include at minimum agent_id.
+
+        Returns:
+            ``(stored_record, did_add)`` — ``did_add`` is True only when a
+            new row was actually inserted (``ADD``, including the fallbacks
+            below), so :meth:`remember` knows whether to also run the
+            consolidator.
+        """
+        candidate_embedding = self._candidate_embedding(repo, record)
+
+        similar: list[tuple[_MemoryBase, float]] = []
+        if candidate_embedding:
+            try:
+                neighbors = repo.search(
+                    candidate_embedding, scope, top_k=self._resolver_k
+                )
+                similar = [
+                    (n, _cosine_distance(candidate_embedding, n.embedding))
+                    for n in neighbors
+                ]
+            except Exception:
+                logger.exception(
+                    "IngestResolver: search() for similar records raised; "
+                    "proceeding with an empty similar-records list."
+                )
+                similar = []
+
+        try:
+            decision = self._ingest_resolver(record, similar)
+        except Exception:
+            logger.exception(
+                "IngestResolver raised an exception; falling back to ADD."
+            )
+            decision = IngestDecision(action=IngestAction.ADD)
+
+        if decision.action == IngestAction.ADD:
+            return repo.create(record, scope), True
+
+        if decision.action == IngestAction.UPDATE:
+            if not decision.target_id:
+                logger.warning(
+                    "IngestResolver returned UPDATE with no target_id; falling back to ADD."
+                )
+                return repo.create(record, scope), True
+            target = repo.get_by_id(decision.target_id, scope)
+            if target is None:
+                logger.warning(
+                    "IngestResolver UPDATE target_id=%s not found (wrong scope or "
+                    "already deleted); falling back to ADD.",
+                    decision.target_id,
+                )
+                return repo.create(record, scope), True
+            target.content = record.content
+            target.metadata = record.metadata
+            target.embedding = record.embedding
+            target.confidence = record.confidence
+            updated: _MemoryBase = repo.update(target, scope)
+            return updated, False
+
+        if decision.action == IngestAction.DELETE:
+            if decision.target_id:
+                ok = repo.forget(decision.target_id, scope)
+                if not ok:
+                    logger.warning(
+                        "IngestResolver DELETE target_id=%s not found or already "
+                        "deleted; nothing forgotten.",
+                        decision.target_id,
+                    )
+            else:
+                logger.warning(
+                    "IngestResolver returned DELETE with no target_id; nothing forgotten."
+                )
+            return record, False
+
+        # NOOP (or any unrecognized action — treated conservatively as NOOP):
+        # the candidate is not written.
+        return record, False
+
+    def _candidate_embedding(self, repo: Any, record: _MemoryBase) -> list[float]:
+        """Return the embedding to use for the PIPE-2 similarity search.
+
+        Uses ``record.embedding`` if the caller already set it; otherwise
+        computes one via the repository's configured ``embedding_provider``
+        (the same provider wired in via ``MemoryStore(embedding_provider=…)``).
+        Returns ``[]`` (no similarity search will be run) when neither is
+        available, or if the provider raises.
+        """
+        if record.embedding:
+            return record.embedding
+        provider = getattr(repo, "_embedding_provider", None)
+        if provider is None:
+            return []
+        try:
+            embedding: list[float] = provider(record.content)
+            return embedding
+        except Exception:
+            logger.exception(
+                "IngestResolver: embedding_provider raised while embedding the "
+                "candidate; skipping similarity search for this write."
+            )
+            return []
 
     def _should_consolidate(self, scope: MemoryScope) -> bool:
         """Return True if the inline consolidator should fire for this write.
