@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from agent_memory_sdk.models import SemanticFact, WorkingMemory, _MemoryBase
+    from agent_memory_sdk.models import EntityProfile, SemanticFact, WorkingMemory, _MemoryBase
 
 # ---------------------------------------------------------------------------
 # EmbeddingProvider
@@ -393,26 +393,44 @@ class ContextCard:
     Returned by :meth:`~agent_memory_sdk.store.MemoryStore.get_context_card`.
 
     Attributes:
-        turns:          Recent working-memory records in **chronological order**
-                        (oldest first), up to ``max_turns``.  Each element is a
-                        fully-populated :class:`~agent_memory_sdk.models.WorkingMemory`
-                        instance.
-        turn_count:     Total number of turns returned (``len(turns)``).
-        latest_at:      Timestamp of the most-recently created turn, or ``None``
-                        if there are no turns at all.
-        summary:        Optional narrative produced by a configured
-                        :class:`Summarizer`.  ``None`` when no summarizer is
-                        configured (the default).
+        turns:              Recent working-memory records in **chronological
+                            order** (oldest first), up to ``max_turns``.  Each
+                            element is a fully-populated
+                            :class:`~agent_memory_sdk.models.WorkingMemory`
+                            instance.
+        turn_count:         Total number of turns returned (``len(turns)``).
+        latest_at:          Timestamp of the most-recently created turn, or
+                            ``None`` if there are no turns at all.
+        summary:            Optional narrative produced by a configured
+                            :class:`Summarizer`.  ``None`` when no summarizer is
+                            configured (the default).
+        relevant_facts:     **PIPE-4.**  Durable :class:`~agent_memory_sdk.models.SemanticFact`
+                            records retrieved by relevance to the ``query``
+                            passed to :meth:`~agent_memory_sdk.store.MemoryStore.get_context_card`,
+                            backfilled with the most-recent facts when the
+                            relevance search returns fewer than the configured
+                            minimum.  ``None`` unless the caller passed both
+                            ``query`` and ``include_long_term=True`` — this
+                            keeps the field absent (not merely empty) for the
+                            default, ORC-1-compatible call shape.
+        relevant_profiles:  **PIPE-4.**  Same as ``relevant_facts`` but for
+                            :class:`~agent_memory_sdk.models.EntityProfile`
+                            records.  ``None`` unless long-term blending was
+                            requested.
 
     The ``summary`` field is intentionally separate from ``turns`` so callers
     who need structured access to individual messages can still use ``turns``
-    even when a summarizer is configured.
+    even when a summarizer is configured.  ``relevant_facts``/``relevant_profiles``
+    follow the same separation-of-concerns principle: the raw recent-turns
+    view is never mutated by long-term blending, it is only ever supplemented.
     """
 
     turns: list[WorkingMemory] = field(default_factory=list)
     turn_count: int = 0
     latest_at: datetime | None = None
     summary: str | None = None
+    relevant_facts: list[SemanticFact] | None = None
+    relevant_profiles: list[EntityProfile] | None = None
 
 
 class Summarizer(Protocol):
