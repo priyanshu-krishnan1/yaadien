@@ -28,7 +28,6 @@ from benchmarks.common.scope_gen import make_scope, marker_for, new_run_id
 from benchmarks.common.timing import LatencySamples
 from benchmarks.retrieval_quality.dataset import ABILITY_CATEGORIES, generate_dataset
 
-
 # ---------------------------------------------------------------------------
 # scope_gen
 # ---------------------------------------------------------------------------

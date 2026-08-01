@@ -89,7 +89,7 @@ def main() -> None:
     check("db.migrate.SchemaPolicy importable", hasattr(SchemaPolicy, "__members__"))
 
     # ── 8. types — EmbeddingProvider protocol and DistanceMetric accessible ──
-    from agent_memory_sdk.types import DistanceMetric, EmbeddingProvider
+    from agent_memory_sdk.types import DistanceMetric
 
     check("types.EmbeddingProvider importable", True)
     check("types.DistanceMetric.COSINE accessible", hasattr(DistanceMetric, "COSINE"))

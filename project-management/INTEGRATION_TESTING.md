@@ -23,11 +23,12 @@ docker run -d \
   --name db2-dev \
   -e DB2INST1_PASSWORD=passw0rd \
   -e LICENSE=accept \
-  -e DBNAME=TESTDB \
   -p 50000:50000 \
   --privileged \
   icr.io/db2_community/db2:12.1.5.0
 ```
+
+> **Do not pass `-e DBNAME=TESTDB`** — the auto-created database uses Db2's default 4 KB page size, which is too small to hold a `VECTOR(1536,FLOAT32)` index (each vector is 6 144 bytes).  Create the database manually with a 32 KB page size after the instance starts (step 1b below).
 
 > **Image tag:** `12.1.5.0` is pinned here (and in `.github/workflows/ci.yml`) because `CREATE VECTOR INDEX` became GA in **Db2 12.1.5** and untagged `:latest` is not reproducible in unattended CI.  Update both places together when upgrading.
 
@@ -37,32 +38,31 @@ docker run -d \
 > **Apple Silicon (M1/M2/M3):** add `--platform=linux/amd64` to the `docker run` command above,
 > as this image is x86-64 only and requires Rosetta/QEMU emulation on ARM hosts.
 
-The first start takes 3–5 minutes as Db2 initialises the database.
+The first start takes 3–5 minutes as Db2 initialises the instance.
 Monitor progress with:
 
 ```bash
 docker logs -f db2-dev
 ```
 
-Wait until you see:
+Wait until you see `(*) Setup has completed.`, then continue to step 1b.
 
-```
-(*) Setup has completed.
-```
+### 1b — Create the database with 32 KB pages
 
-For **CI / unattended use**, poll with the connectivity check below instead of
-tailing logs (the CI job retries every 15 s for up to 10 minutes):
+Once the instance is running, create `TESTDB` manually so the page size is large enough for vector indexes:
 
 ```bash
-for i in $(seq 1 40); do
-  if docker exec db2-dev bash -c \
-      "su - db2inst1 -c 'db2 connect to TESTDB'" \
-      > /dev/null 2>&1; then
-    echo "Db2 is ready (attempt $i)"; break
-  fi
-  echo "  attempt $i/40 — not ready yet, sleeping 15s…"; sleep 15
-done
+docker exec db2-dev bash -c \
+  "su - db2inst1 -c 'db2 create database TESTDB using codeset UTF-8 territory US pagesize 32768'"
 ```
+
+Verify the connection works:
+
+```bash
+docker exec db2-dev bash -c "su - db2inst1 -c 'db2 connect to TESTDB'"
+```
+
+For **CI / unattended use**, the CI job polls `db2 list db directory` every 15 s for instance readiness, then creates the database, then polls `db2 connect` for TCP readiness — see `.github/workflows/ci.yml` for the exact loop.
 
 ### 2 — Verify connectivity
 
