@@ -94,25 +94,34 @@ Key points this diagram encodes (see DECISIONS.md for the reasoning):
 - Embeddings are supplied by the caller via `EmbeddingProvider`; the SDK
   doesn't ship a specific embedding model.
 
-Actual module paths (as of ORC-3):
+Actual module paths (as of PIPE-5):
 - `src/agent_memory_sdk/types.py` — `EmbeddingProvider` (Protocol),
   `Consolidator` (Protocol), `NoOpConsolidator` (default no-op),
   `Summarizer` (Protocol), `NoOpSummarizer` (default no-op),
-  `ContextCard` (dataclass), `DistanceMetric` (enum), `SearchMode` (enum)
+  `ContextCard` (dataclass), `ErasureReport` (dataclass, PIPE-5),
+  `DistanceMetric` (enum), `SearchMode` (enum)
 - `src/agent_memory_sdk/exceptions.py` — `StaleWriteError`, `InvalidMetadataFilterError`
 - `src/agent_memory_sdk/models.py` — `MemoryScope`, `WorkingMemory`,
   `EpisodicMemory`, `SemanticFact`, `EntityProfile`, `ProceduralMemory`
 - `src/agent_memory_sdk/repositories/base.py` — `BaseRepository` ABC
   (includes `forget`, `update`, `purge_expired` since Step 4; `_build_metadata_filter()`,
-  `_escape_json_path_value()` since ORC-3)
+  `_escape_json_path_value()` since ORC-3; `erase_all()` since PIPE-5 — unconditional
+  scope-predicated hard-delete, bypassing the `deleted_at`/`expires_at` gating that
+  `purge_expired()` still respects)
 - `src/agent_memory_sdk/repositories/working.py` — `WorkingMemoryRepository`
 - `src/agent_memory_sdk/repositories/episodic.py` — `EpisodicMemoryRepository`
 - `src/agent_memory_sdk/repositories/facts.py` — `SemanticFactRepository`
 - `src/agent_memory_sdk/repositories/profiles.py` — `EntityProfileRepository`
 - `src/agent_memory_sdk/repositories/procedural.py` — `ProceduralMemoryRepository`
+- `src/agent_memory_sdk/repositories/chunks.py` — `ChunkRepository`
+  (includes `erase_by_scope()` since PIPE-5 — the `memory_chunks` counterpart
+  to `BaseRepository.erase_all()`, since chunk rows carry no tombstone
+  lifecycle of their own)
 - `src/agent_memory_sdk/store.py` — `MemoryStore` facade
-  (includes `remember`, `forget`, `purge_expired` since Step 4, plus
-  `get_context_card` since ORC-1)
+  (includes `remember`, `forget`, `purge_expired` since Step 4, `get_context_card`
+  since ORC-1, and `erase_all()` since PIPE-5 — hard-deletes every row matching
+  a scope across all five repositories plus `memory_chunks` and returns an
+  `ErasureReport`)
 - `src/agent_memory_sdk/adapters/__init__.py` — adapter package (docstring only)
 - `src/agent_memory_sdk/adapters/langchain.py` — `Db2ChatMessageHistory`
   (LangChain `BaseChatMessageHistory` backed by `store.working`) +
@@ -435,6 +444,49 @@ FETCH FIRST ? ROWS ONLY
 
 In `search()`, the metadata predicates are in the **step-1 SQL** (the
 ID-ranking pass) so filtered-out rows do not consume `top_k` slots.
+
+---
+
+## 7. Erasure lifecycle: `forget()` vs. `purge_expired()` vs. `erase_all()` (PIPE-5)
+
+_Last updated: PIPE-5 — `erase_all()` / `ErasureReport` added_
+
+Three distinct guarantees exist side by side, each on `BaseRepository` and
+mirrored on the `MemoryStore` facade. They are deliberately **not**
+interchangeable:
+
+```mermaid
+flowchart LR
+    A[forget record_id, scope] -->|"UPDATE ... SET deleted_at = now()"| B[(row stays,\ntombstoned)]
+    C[purge_expired scope] -->|"DELETE WHERE deleted_at IS NOT NULL AND scope"| D[(tombstoned rows\nremoved)]
+    E[erase_all scope] -->|"DELETE WHERE scope\n(no deleted_at/expires_at check)"| F[(every matching row\nremoved, irreversibly)]
+```
+
+| Method | Scope | What's removed | Reversible? | Intended use |
+|---|---|---|---|---|
+| `forget(record_id, scope)` | one row, one table | nothing physically — sets `deleted_at` | Yes (row still present) | Routine, everyday memory lifecycle ("forget this one thing") |
+| `purge_expired(scope)` | every row in scope, per table | only rows *already* tombstoned (`deleted_at IS NOT NULL`) | No | Maintenance cleanup of previously-`forget()`-ed rows (cron job) |
+| `erase_all(scope)` | every row in scope, **all six tables** | every matching row, tombstoned or not, expired or not | **No** | Compliance / "right to erasure" requests only |
+
+`erase_all()` is implemented as:
+- `BaseRepository.erase_all(scope) -> int` (`repositories/base.py`) — one per
+  repository (`working`, `episodic`, `facts`, `profiles`, `procedures`).
+  `DELETE FROM <table> WHERE <scope predicates>` — no other predicate.
+- `ChunkRepository.erase_by_scope(scope) -> int` (`repositories/chunks.py`) —
+  the `memory_chunks` equivalent, since chunk rows have no tombstone column
+  of their own.
+- `MemoryStore.erase_all(scope) -> ErasureReport` (`store.py`) — calls all
+  six and assembles the results.
+
+`ErasureReport` (`types.py`) is the return value: `rows_deleted: dict[str,
+int]` (one entry per table, always all six keys present), `total_deleted:
+int` (the sum), `erased_at: datetime` (UTC completion timestamp) — the
+auditable record a compliance erasure request requires. Scoping enforcement
+is identical to every other repository method (`_require_agent_id`,
+`_scope_predicates` — see DECISIONS.md VER-5 entry); `erase_all()` does not
+introduce a new scoping rule, it reuses the existing minimum-`agent_id`
+contract that `purge_expired()` already uses, narrowed by the caller
+(typically by setting `user_id`) to target exactly one person's data.
 
 ## Where design docs live vs. Bob's MCP tools
 
