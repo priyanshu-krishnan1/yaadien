@@ -339,6 +339,40 @@ class ChunkRepository:
             })
         return result
 
+    def list_all_for_scope(self, scope: MemoryScope) -> list[dict]:
+        """Return all ``memory_chunks`` rows for *scope* as plain dicts (for export).
+
+        This is the export-facing alias for :meth:`list_all` used by
+        :meth:`~agent_memory_sdk.store.MemoryStore.export_scope` (PIPE-6).
+        Returns raw column dicts with keys: ``id``, ``source_table``,
+        ``source_id``, ``chunk_index``, ``chunk_text``, ``embedding``
+        (``list[float]``), ``tenant_id``, ``agent_id``, ``user_id``,
+        ``thread_id``, ``created_at``.  Does NOT go through a Pydantic model —
+        chunks are exported as raw dicts tagged with ``_type: "memory_chunk"``
+        by the caller.
+
+        Args:
+            scope: Must include at minimum agent_id.
+
+        Returns:
+            All matching rows (no internal page cap — iterates via
+            :meth:`list_all` in 1000-row pages until exhausted).
+
+        Raises:
+            ValueError: if scope.agent_id is missing.
+        """
+        _require_agent_id(scope)
+        results: list[dict] = []
+        offset = 0
+        page_size = 1000
+        while True:
+            page = self.list_all(scope, limit=page_size, offset=offset)
+            results.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return results
+
     # ------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------

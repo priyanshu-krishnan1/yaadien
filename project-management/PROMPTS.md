@@ -1476,3 +1476,534 @@ CLI scripts added. In BOARD.html, set PIPE-6's status to "Done" and add a
 comment summarizing what you built. Then
 `git add -A && git commit -m "pipe-6: memory export/import for portability and backup"`.
 ```
+
+---
+
+# Epic 8 — Conversational ergonomics: a Thread/session API layer
+
+Tracked as `EPIC-8` in [`BOARD.html`](BOARD.html) (Stories `THRD-1` through
+`THRD-6`). Distinct from `EPIC-3` (Oracle-inspired, Done) and `EPIC-7`
+(fresh 2026 pipeline research, Done) — both already closed other gaps
+against Oracle AI Agent Memory (`ORC-1`/`PIPE-4`'s context-card blending,
+`PIPE-5`'s erasure, `PIPE-6`'s export/import). This epic is grounded in a
+direct, dated review of Oracle's live **How-to Guides**
+(`https://docs.oracle.com/en/database/oracle/agent-memory/26.4/agmea/`,
+specifically *Store and Search Memory*, *Use Agent Memory with an MCP
+Server*, and the *Quick Reference Code Samples* page) — see the
+"2026-08-02 — EPIC-8 backlog" entry in `DECISIONS.md` for the full gap
+writeup and what's already confirmed at parity or ahead.
+
+Six genuine, purely ergonomic gaps were found — the underlying primitives
+(`remember()`, `search()`, scoped repositories) already do the work;
+nothing in this epic is a new storage capability:
+
+1. No first-class `Thread` object (`create_thread`/`get_thread`/
+   `delete_thread` with cascade).
+2. No batch message API (`add_messages`/`get_messages(start, end)`/
+   `delete_message`).
+3. No thin `add_memory()`/`add_user()`/`add_agent()` convenience wrappers
+   over `remember()`.
+4. No automatic LLM-driven memory extraction on message ingest.
+5. No token-budget-aware thread summary (`get_summary(except_last=,
+   token_budget=)`).
+6. No raw-text `search()` facade (today's `search()` takes a pre-computed
+   embedding only).
+
+Same working agreement as every other epic: read `DECISIONS.md` first,
+update it + `BOARD.html` before finishing, commit each story separately.
+Same Step 0 philosophy: Db2-only, zero mandatory new infrastructure,
+developer-controlled writes by default — every new hook here
+(`MemoryExtractor`, `extract_memories=`) is opt-in and must leave today's
+default behavior byte-for-byte unchanged when not configured.
+
+## Designed for parallel subagents
+
+**Fully independent — safe to run as four separate subagents/worktrees at
+the same time:** `THRD-1`, `THRD-2`, `THRD-3`, `THRD-4`. Each adds new
+methods to `MemoryStore` only — no story edits a method another story
+touches. To keep parallel diffs additive rather than overlapping, **each
+story must append its new method(s) as its own clearly-delimited
+banner-comment section at the end of the `MemoryStore` class**, exactly the
+pattern `get_context_card()` already uses at `store.py:1258` (`# ------
+get_context_card() ... (ORC-1) ------`) — do not interleave a new method
+into the middle of an existing section. If running these via separate git
+worktrees, expect all four branches to touch `store.py` and `__init__.py`
+(new exports) — merge them one at a time; conflicts should be limited to
+adjacent-line insertions, not overlapping logic, if the banner-comment
+convention is followed.
+
+**Sequenced — depends on another story in this epic:**
+- `THRD-5` depends on `THRD-1` (`add_messages()` must exist as the hook
+  point for auto-extraction). Do not start `THRD-5` until `THRD-1` is
+  merged.
+- `THRD-6` depends on **all** of `THRD-1` through `THRD-5` — it's a pure
+  composition layer (a `Thread` object that thinly wraps each of their new
+  methods bound to one scope). Run it last, against a merged base
+  containing all five.
+
+Suggested execution: launch `THRD-1`/`THRD-2`/`THRD-3`/`THRD-4` together
+(4 parallel subagents), merge all four, then launch `THRD-5` (1 subagent),
+merge, then run `THRD-6` alone.
+
+---
+
+## THRD-1 — Message ingestion primitives: add_messages / get_messages / delete_message
+
+```
+Before starting: in BOARD.html, set THRD-1's status to "In Progress".
+
+Oracle's OracleThread exposes add_messages(list[Message|dict]),
+get_messages(start=, end=), and delete_message(id) as first-class,
+non-embedding-only operations over conversation turns. This SDK has no
+equivalent — WorkingMemory rows are the message-equivalent (see
+models.py:120's docstring, "Typically created once per agent
+message/response pair") but there's no dedicated write/read/delete surface
+for them; callers must construct WorkingMemory instances and call
+remember()/forget() directly, and there's no start/end slicing over a
+thread's turns.
+
+Add three methods to MemoryStore (store.py), each in its own new
+banner-comment section appended at the end of the class (do not touch any
+existing method):
+
+1. `add_messages(messages: list[dict[str, Any]], scope: MemoryScope) ->
+   list[str]` — each dict has a required `content` key and optional
+   `role`, `id`, `timestamp`, `metadata` keys (document the exact accepted
+   shape in the docstring — a dataclass/TypedDict `Message` type in
+   types.py is fine if you prefer strong typing over a raw dict, your
+   call, justify the choice in DECISIONS.md). For each message, build a
+   WorkingMemory record (content=content, metadata={"role": role,
+   **(metadata or {})}, id=id if the caller supplied one — _MemoryBase
+   already allows a caller-supplied id via its default_factory, confirm
+   this and use it), call remember() with the given scope, and collect the
+   returned ids in input order. Embed each message's content via the
+   configured embedding_provider exactly like every other remember() path
+   already does — no new embedding logic.
+2. `get_messages(scope: MemoryScope, start: int = 0, end: int | None =
+   None) -> list[WorkingMemory]` — fetch via store.working.list_all()
+   (documented today as newest-first), reverse to chronological
+   (oldest-first) order, then apply Python list-slice semantics
+   `[start:end]` (end=None means "to the end", matching Oracle's
+   documented behavior in the Quick Reference page).
+3. `delete_message(message_id: str, scope: MemoryScope) -> int` — soft-
+   deletes (via the existing working.forget()) the single WorkingMemory
+   row matching message_id AND scope; returns 1 if a row was tombstoned, 0
+   if no matching row was found (including a message_id that belongs to a
+   different scope — do not leak whether the id exists elsewhere).
+   Document explicitly in the docstring that this deliberately stays a
+   soft-delete (consistent with this SDK's forget()/tombstone lifecycle
+   philosophy) rather than Oracle's hard-delete — a documented, deliberate
+   divergence, not an oversight. Note in the docstring that (like Oracle's
+   own delete_message) this does not cascade to any derived
+   facts/profiles produced from this message — only erase_all() does that
+   kind of cascade.
+
+## Acceptance Criteria
+
+- `add_messages()` accepts a list of message dicts, returns ids in the
+  same order as input, and every returned id round-trips via
+  `store.working.get_by_id()`.
+- `add_messages()` on an empty list returns `[]` without touching the
+  database.
+- `get_messages()` returns messages in chronological (oldest-first) order
+  regardless of `list_all()`'s underlying storage order.
+- `get_messages(start=1, end=3)` returns exactly the same slice Python's
+  `list[1:3]` would over the full chronological list; `end=None` returns
+  through the end of the list.
+- `get_messages()` on a scope with zero messages returns `[]`, not an
+  error.
+- `delete_message()` returns 1 and the message no longer appears in
+  `get_messages()` afterward (still fetchable directly by id only via a
+  scope-and-tombstone-aware lookup, i.e. the standard forget() contract).
+- `delete_message()` on an id belonging to a *different* scope returns 0
+  and does not delete the row.
+- Default behavior of every pre-existing MemoryStore method is unchanged
+  (no existing test regresses).
+- New unit tests added in `tests/test_thrd1_messages.py` covering every
+  bullet above, using the existing fake/mock repository pattern (no live
+  Db2 required).
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the exact `Message` input shape accepted and confirm
+the soft-delete-not-hard-delete decision. In BOARD.html, set THRD-1's
+status to "Done" and add a comment summarizing what you built. Then
+`git add -A && git commit -m "thrd-1: message ingestion primitives (add_messages/get_messages/delete_message)"`.
+```
+
+---
+
+## THRD-2 — add_memory() / add_user() / add_agent() convenience wrappers
+
+```
+Before starting: in BOARD.html, set THRD-2's status to "In Progress".
+
+Oracle's memory.add_memory(content, user_id=, agent_id=, thread_id=,
+memory_id=), memory.add_user(user_id, profile_text), and
+memory.add_agent(agent_id, profile_text) are thin, single-call convenience
+wrappers. This SDK's equivalent capability already exists (remember() plus
+SemanticFact/EntityProfile model construction) but requires every caller to
+build the Pydantic model instance by hand — there is no thin wrapper.
+
+Add three methods to MemoryStore (store.py), in their own new
+banner-comment section appended at the end of the class (do not touch
+THRD-1's section or any existing method):
+
+1. `add_memory(content: str, scope: MemoryScope, *, memory_id: str | None
+   = None, metadata: dict | None = None) -> str` — builds a SemanticFact
+   (id=memory_id if given, else the model's default uuid factory) and
+   calls remember(record, scope); returns record.id (which, per
+   content_hash dedup already in create() — see ENH-2 — may be an
+   *existing* row's id if the content already exists in this scope; this
+   is correct/expected behavior, not a bug, document it).
+2. `add_user(user_id: str, profile_text: str, scope: MemoryScope | None =
+   None) -> str` and `add_agent(agent_id: str, profile_text: str, scope:
+   MemoryScope | None = None) -> str` — upsert semantics: look up an
+   existing EntityProfile for (agent_id, user_id) with no thread_id set
+   (matching EntityProfile's own docstring at models.py:198, "Typically
+   one row per (agent_id, user_id) pair"); if found, update() its content
+   to profile_text (bump version per the existing optimistic-concurrency
+   path); if not found, create() a new EntityProfile. Return the
+   profile's id. If `scope` is omitted, build one from the given
+   user_id/agent_id (document exactly how — likely
+   MemoryScope(agent_id=agent_id, user_id=user_id) for add_user, and
+   MemoryScope(agent_id=agent_id) for add_agent, since an agent profile
+   isn't inherently user-scoped).
+
+## Acceptance Criteria
+
+- `add_memory()` returns an id that round-trips via `store.facts.get_by_id()`.
+- Calling `add_memory()` twice with identical content in the same scope
+  returns the **same** id both times (content_hash dedup already applies —
+  confirm, don't reimplement).
+- `add_memory(memory_id="custom_001", ...)` returns exactly `"custom_001"`.
+- `add_user()` called twice for the same user_id/agent_id with different
+  profile_text results in exactly one EntityProfile row for that scope,
+  with the second call's content — not two rows.
+- `add_user()`/`add_agent()` called for the first time on a fresh scope
+  creates exactly one new row.
+- `add_agent()` scope does not require a user_id.
+- Default behavior of every pre-existing MemoryStore method is unchanged.
+- New unit tests added in `tests/test_thrd2_convenience.py` covering every
+  bullet above.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the upsert lookup key used for add_user/add_agent
+and the default-scope construction rule when `scope` is omitted. In
+BOARD.html, set THRD-2's status to "Done" and add a comment summarizing
+what you built. Then
+`git add -A && git commit -m "thrd-2: add_memory/add_user/add_agent convenience wrappers"`.
+```
+
+---
+
+## THRD-3 — Raw-text search() facade across record types
+
+```
+Before starting: in BOARD.html, set THRD-3's status to "In Progress".
+
+Oracle's memory.search(query="text", scope=SearchScope(...),
+record_types=["memory"], metadata_filter={...}) takes raw query text and
+fans out across whichever record types the caller asks for. This SDK's
+BaseRepository.search()/search_chunks() (repositories/base.py:1393) both
+require a pre-computed query_embedding and operate on exactly one
+repository — every caller must embed manually and pick a single type.
+
+Add a `SearchResult` dataclass to types.py (parallel in shape to
+`ErasureReport`/`ContextCard`): `id: str`, `content: str`, `record_type:
+str` (one of "working"/"episodic"/"facts"/"profiles"/"procedures"),
+`distance: float`, `record: _MemoryBase` (the full model instance).
+
+Add `MemoryStore.search(query: str, scope: MemoryScope, record_types:
+list[str] | None = None, max_results: int = 10, metadata_filter: dict |
+None = None) -> list[SearchResult]` in its own new banner-comment section
+appended at the end of the class:
+1. Raise a clear, actionable error if no embedding_provider was configured
+   at construction time (this method has no way to embed query text
+   without one).
+2. Embed `query` once via the configured embedding_provider.
+3. `record_types` defaults to all five ("working", "episodic", "facts",
+   "profiles", "procedures"); reject unrecognized names with a clear
+   error (mirroring ORC-3's "reject unrecognized operator keys" pattern).
+4. For each requested type, call that repository's existing search()
+   (passing metadata_filter through untouched — ORC-3's operators already
+   work here for free) with a generous top_k so cross-type merging has
+   enough candidates, wrap each hit in a SearchResult tagged with its
+   record_type.
+5. Merge all results, sort by ascending distance, truncate to
+   max_results.
+
+## Acceptance Criteria
+
+- `search()` with no embedding_provider configured raises a clear
+  exception naming the missing configuration, not a generic AttributeError.
+- `search("query", scope)` with default record_types returns results from
+  more than one repository when relevant matches exist in more than one.
+- `search("query", scope, record_types=["facts"])` returns only
+  SearchResult entries with record_type == "facts".
+- `search("query", scope, record_types=["not_a_real_type"])` raises a
+  clear error before touching the database.
+- Results are sorted by ascending distance across the merged set (not just
+  within each type).
+- `len(results) <= max_results` always holds.
+- `metadata_filter` passed through to search() is honored (reuse an
+  existing ORC-3 test fixture/pattern to confirm).
+- Default behavior of every pre-existing MemoryStore method is unchanged.
+- New unit tests added in `tests/test_thrd3_search.py` covering every
+  bullet above.
+
+Before starting: read DECISIONS.md in full, including the ORC-3 entry for
+the metadata_filter operator set. Before finishing: append a dated entry
+recording the SearchResult shape and the per-type top_k over-fetch factor
+chosen. In BOARD.html, set THRD-3's status to "Done" and add a comment
+summarizing what you built. Then
+`git add -A && git commit -m "thrd-3: raw-text search() facade across record types"`.
+```
+
+---
+
+## THRD-4 — Token-budget-aware thread summary: get_summary()
+
+```
+Before starting: in BOARD.html, set THRD-4's status to "In Progress".
+
+Oracle's thread.get_summary(except_last=N, token_budget=N) returns a
+plain-text, role-labeled transcript of a thread's messages — a distinct,
+simpler mechanism from get_context_card()'s optional LLM-based Summarizer
+hook (ORC-1): no LLM call, just a deterministic, budget-truncated raw-text
+view. This SDK has no equivalent.
+
+Add a `Summary` dataclass to types.py: `content: str`, `message_count:
+int` (messages actually included after except_last/token_budget were
+applied), `truncated: bool` (True if token_budget cut the transcript
+short).
+
+Add `MemoryStore.get_summary(scope: MemoryScope, except_last: int = 0,
+token_budget: int | None = None) -> Summary` in its own new
+banner-comment section appended at the end of the class:
+1. Fetch chronological messages the same way THRD-1's get_messages()
+   does (do not require THRD-1 to be merged first — duplicate the
+   minimal list_all()-plus-reverse logic here if THRD-1 isn't available
+   yet in your branch; note in DECISIONS.md if you later dedupe this
+   against THRD-1's helper once both are merged).
+2. If except_last > 0, drop the last N messages from the chronological
+   list before formatting.
+3. Format each remaining message as `"{role} (-): {content}"` (matching
+   the exact format shown in Oracle's Quick Reference example — the "(-)"
+   is a literal timestamp placeholder when no real timestamp is tracked;
+   if a message has a real timestamp in its metadata, use it in place of
+   "-", document which).
+4. If token_budget is set, use a simple whitespace-token approximation
+   (`len(text.split())`) — not a real tokenizer, document this
+   explicitly as an approximation, not a hard dependency on tiktoken or
+   similar — and truncate the formatted transcript to fit, setting
+   truncated=True. Without a real tokenizer, over-estimating length is
+   safer than under-estimating (never exceed budget); justify your exact
+   rounding rule in DECISIONS.md.
+
+## Acceptance Criteria
+
+- `get_summary()` with no arguments returns every message in the scope,
+  chronologically formatted, truncated=False.
+- `get_summary(except_last=1)` excludes exactly the last chronological
+  message from the output.
+- `get_summary(token_budget=N)` never returns a transcript whose
+  whitespace-token count exceeds N, and sets truncated=True whenever
+  truncation actually occurred (False if the full transcript already fit).
+- `message_count` accurately reflects how many messages appear in
+  `content` after both except_last and token_budget are applied.
+- `get_summary()` on a scope with zero messages returns an empty-content
+  Summary, not an error.
+- `except_last` larger than the total message count returns an
+  empty-content Summary, not a negative-index error.
+- Default behavior of every pre-existing MemoryStore method is unchanged.
+- New unit tests added in `tests/test_thrd4_summary.py` covering every
+  bullet above.
+
+Before starting: read DECISIONS.md in full. Before finishing: append a
+dated entry recording the exact transcript line format, the token-counting
+approximation and its rounding rule, and confirm this is a distinct
+mechanism from get_context_card()'s Summarizer hook (cross-reference the
+ORC-1 entry). In BOARD.html, set THRD-4's status to "Done" and add a
+comment summarizing what you built. Then
+`git add -A && git commit -m "thrd-4: token-budget-aware get_summary()"`.
+```
+
+---
+
+## THRD-5 — MemoryExtractor: automatic LLM-driven memory extraction on message ingest
+
+```
+Before starting: in BOARD.html, set THRD-5's status to "In Progress".
+Depends on THRD-1 — do not start until add_messages() is merged.
+
+Oracle's OracleThread.add_messages() automatically extracts durable
+memories from recent thread messages via a configured LLM, on by default
+(extract_memories=True), with an explicit opt-out. This SDK has no
+equivalent — the existing Consolidator (ENH stories) processes raw
+working/episodic writes generically, and PIPE-2's IngestResolver
+classifies a candidate the *caller* already decided to write; neither is
+triggered automatically by add_messages() itself.
+
+Add a `MemoryExtractor` Protocol to types.py, parallel in shape to
+`Consolidator`/`Reconciler`/`IngestResolver` (read all three existing
+protocols in types.py first — Consolidator at types.py:65, Reconciler at
+types.py:236, IngestResolver at types.py:432 — and match their docstring
+style exactly, including a comparison paragraph explaining how
+MemoryExtractor differs from each of the other three):
+
+    (messages: list[WorkingMemory], scope: MemoryScope) -> list[_MemoryBase]
+
+returning zero or more derived SemanticFact/EntityProfile records to
+persist. Ship a `NoOpMemoryExtractor` default (returns `[]` always),
+matching the NoOpConsolidator/NoOpReconciler/NoOpIngestResolver pattern
+exactly (same file, same style).
+
+Add an optional `memory_extractor: Any | None = None` constructor param on
+MemoryStore (defaults to NoOpMemoryExtractor — additive, no existing
+param renamed or removed) and an `extract_memories: bool = True` parameter
+on THRD-1's `add_messages()` (mirroring Oracle's own per-call escape
+hatch). When `extract_memories` is True AND a non-NoOp extractor is
+configured: after inserting the messages, call the extractor with the
+newly-added WorkingMemory records and scope, then remember() each derived
+record through the *existing* remember() path — meaning PIPE-2's
+IngestResolver (if also configured) and ENH-2's content-hash dedup already
+apply to extracted memories for free; do not duplicate that logic here.
+Extractor errors must be caught and logged, never propagated (matching the
+Summarizer error-handling pattern in get_context_card() — errors degrade
+gracefully, they don't fail the write).
+
+With the default NoOpMemoryExtractor (no real extractor configured),
+add_messages()'s behavior must be identical to THRD-1's original
+behavior — confirm this with a regression test.
+
+## Acceptance Criteria
+
+- `MemoryExtractor` Protocol and `NoOpMemoryExtractor` added to types.py,
+  matching the existing three protocols' docstring conventions.
+- With no memory_extractor configured (the default), add_messages()'s
+  return value and side effects are byte-for-byte identical to THRD-1's
+  pre-THRD-5 behavior — an explicit regression test proves this.
+- With a test double MemoryExtractor configured that returns one
+  SemanticFact per call, add_messages() results in that fact being
+  persisted and retrievable via store.facts.
+- add_messages(..., extract_memories=False) skips extraction even when a
+  real extractor is configured.
+- An extractor that raises is caught and logged; add_messages() still
+  returns the message ids successfully (the write itself never fails due
+  to an extractor error).
+- Extracted records pass through remember() — if an IngestResolver is
+  also configured, confirm (via test double) it is invoked for each
+  extracted candidate exactly as it would be for any other remember()
+  call.
+- New unit tests added in `tests/test_thrd5_extraction.py` covering every
+  bullet above.
+
+Before starting: read DECISIONS.md in full, including THRD-1's entry.
+Before finishing: append a dated entry recording the MemoryExtractor
+protocol shape and the exact comparison against Consolidator/Reconciler/
+IngestResolver, and confirm the no-extractor-configured default path is
+unchanged. In BOARD.html, set THRD-5's status to "Done" and add a comment
+summarizing what you built. Then
+`git add -A && git commit -m "thrd-5: automatic memory extraction on message ingest via MemoryExtractor"`.
+```
+
+---
+
+## THRD-6 — Thread facade: a bound-scope convenience object
+
+```
+Before starting: in BOARD.html, set THRD-6's status to "In Progress".
+Depends on THRD-1 through THRD-5 — do not start until all five are merged.
+
+Oracle's memory.create_thread(thread_id=, user_id=, agent_id=) returns a
+Thread handle whose methods (add_messages, get_messages, delete_message,
+add_memory, delete_memory, search, get_summary, get_context_card) are all
+pre-bound to that thread's scope, so callers don't repeat
+MemoryScope(...) on every call. This SDK has no such object — every method
+added in THRD-1..5 (plus the existing get_context_card()) takes an
+explicit scope argument every time.
+
+Add a new file `src/agent_memory_sdk/thread.py` with a `Thread` class:
+constructed with a `MemoryStore` reference and a bound `MemoryScope`
+(must include thread_id). Its methods are thin pass-throughs, binding
+`self._scope` automatically:
+- `add_messages(messages, extract_memories=True) -> list[str]`
+- `get_messages(start=0, end=None) -> list[WorkingMemory]`
+- `delete_message(message_id) -> int`
+- `add_memory(content, *, memory_id=None, metadata=None) -> str`
+- `delete_memory(memory_id) -> int` (thin wrapper over store.facts.forget,
+  scoped — mirrors Oracle's thread.delete_memory)
+- `search(query, max_results=10, record_types=None, metadata_filter=None)
+  -> list[SearchResult]`
+- `get_summary(except_last=0, token_budget=None) -> Summary`
+- `get_context_card(**kwargs) -> ContextCard` (pass-through to the
+  existing MemoryStore.get_context_card(), binding scope)
+
+Add `MemoryStore.create_thread(thread_id: str | None = None, user_id: str
+| None = None, agent_id: str | None = None, tenant_id: str | None = None)
+-> Thread`: generates a thread_id (uuid) if not given, builds the
+MemoryScope, returns a bound Thread. Per the Step 0 "zero mandatory new
+infrastructure" principle, prefer a schema-less implementation — a thread
+with zero writes simply has no rows yet; document this explicitly as a
+known, deliberate limitation (a thread cannot be "re-opened" via
+get_thread() until it has at least one message or memory written to it).
+If you judge a minimal registry table is actually necessary to make
+get_thread() work for a zero-write thread, that's a valid call, but it
+requires a new migration and must be justified in DECISIONS.md against
+the schema-less alternative — don't add one silently.
+
+Add `MemoryStore.get_thread(thread_id: str, scope_hint: MemoryScope |
+None = None) -> Thread`: re-opens an existing thread by looking up its
+most recent WorkingMemory row (or, if using a registry table, the
+registry) to recover its full scope (tenant_id/agent_id/user_id), then
+returns a bound Thread. Raise a clear error (not a bare KeyError) if no
+thread with that id can be found in scope_hint (or globally, if
+scope_hint is None and your implementation can search that broadly —
+document which).
+
+Add `MemoryStore.delete_thread(scope: MemoryScope) -> ErasureReport`:
+requires scope.thread_id to be set (raise otherwise); this can be a
+one-line call to the existing `self.erase_all(scope)` (PIPE-5) — erase_all
+already hard-deletes every matching row across all five repositories plus
+memory_chunks for the given scope, which is exactly Oracle's documented
+delete_thread cascade (thread + messages + memories + chunk rows) done
+already. Confirm this reuse works before writing any new deletion logic;
+do not duplicate erase_all's loop.
+
+Export `Thread` from `agent_memory_sdk/__init__.py`.
+
+## Acceptance Criteria
+
+- `store.create_thread(user_id="u1", agent_id="a1")` returns a Thread
+  whose `.thread_id` is a non-empty string, and whose scope has
+  user_id="u1"/agent_id="a1".
+- `thread.add_messages([...])` followed by `thread.get_messages()`
+  round-trips without the caller passing scope anywhere.
+- `store.get_thread(existing_thread_id)` returns a Thread whose scope
+  matches the original create_thread() call, after at least one message
+  has been written to it.
+- `store.get_thread("nonexistent_id")` raises a clear, actionable error.
+- `store.delete_thread(scope)` with no thread_id set on scope raises
+  before touching the database.
+- `store.delete_thread(scope)` with thread_id set hard-deletes every row
+  for that scope (reuse erase_all — confirm via its existing test
+  coverage pattern) and returns an ErasureReport with total_deleted > 0
+  when messages/memories existed.
+- `thread.search(...)`, `thread.get_summary(...)`, and
+  `thread.get_context_card(...)` each return results identical to calling
+  the equivalent MemoryStore method directly with the Thread's bound
+  scope (a direct-call-vs-thread-call equivalence test for each).
+- `Thread` is importable as `from agent_memory_sdk import Thread`.
+- New unit tests added in `tests/test_thrd6_thread.py` covering every
+  bullet above.
+
+Before starting: read DECISIONS.md in full, including all five prior
+THRD entries. Before finishing: append a dated entry recording whether you
+chose the schema-less or registry-table approach for get_thread() (and
+why), and confirm delete_thread() reuses erase_all() without duplicating
+its logic. Update section 1 (system overview) of ARCHITECTURE.md to add
+the Thread box if it's a large enough addition to warrant one — your call,
+note the decision either way. In BOARD.html, set THRD-6's status to "Done"
+and add a comment summarizing what you built. Then
+`git add -A && git commit -m "thrd-6: Thread facade object (create_thread/get_thread/delete_thread)"`.
+```
