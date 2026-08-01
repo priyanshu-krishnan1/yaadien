@@ -221,8 +221,12 @@ class MemoryStore:
               callable (``text -> list[float]``).  When provided, it is
               injected into every repository and used to produce per-chunk
               embeddings for long content (ORC-2 chunking).  Also used by
-              the default ``recall()`` path for on-the-fly query embedding.
-              Defaults to ``None`` — no chunking, callers embed manually.
+              the default ``recall()`` path for on-the-fly query embedding,
+              and by :meth:`get_context_card` (PIPE-4) to embed the ``query``
+              string when ``include_long_term=True``.  Defaults to ``None``
+              — no chunking, callers embed manually; ``get_context_card``
+              raises ``ValueError`` if ``include_long_term=True`` is
+              requested without an embedding_provider configured.
         consolidator: A :class:`~agent_memory_sdk.types.Consolidator`
               implementation (any callable matching the protocol).  Called
               synchronously after every ``remember()`` write to
@@ -365,6 +369,11 @@ class MemoryStore:
         ):
             repo.EMBEDDING_DIM = embedding_dim
             repo._embedding_provider = embedding_provider
+
+        # PIPE-4: kept on the facade itself (in addition to being propagated to
+        # every repo above) so get_context_card() can embed a query string
+        # without reaching into a specific repo's private attribute.
+        self._embedding_provider: Any | None = embedding_provider
 
         self._consolidator = consolidator if consolidator is not None else NoOpConsolidator()
         self._reconciler = reconciler if reconciler is not None else NoOpReconciler()
@@ -829,13 +838,28 @@ class MemoryStore:
         return applied
 
     # ------------------------------------------------------------------
-    # get_context_card() — structured recent-turns view (ORC-1)
+    # get_context_card() — structured recent-turns view (ORC-1),
+    # extended with long-term blending (PIPE-4)
     # ------------------------------------------------------------------
+
+    #: PIPE-4: recognized keys for ``min_results_by_type`` — the two long-term
+    #: sections ContextCard supports, plus their alternate spellings (mirrors
+    #: the module-level ``_ALIAS_TO_ATTR`` used by ``forget()``/``_resolve_repo``).
+    _LONG_TERM_ALIAS_TO_ATTR: dict[str, str] = {
+        "facts": "facts",
+        "semantic_facts": "facts",
+        "profiles": "profiles",
+        "entity_profiles": "profiles",
+    }
 
     def get_context_card(
         self,
         scope: MemoryScope,
         max_turns: int = 20,
+        query: str | None = None,
+        include_long_term: bool = False,
+        min_results_by_type: dict[str, int] | None = None,
+        long_term_top_k: int = 5,
     ) -> ContextCard:
         """Return a structured view of recent working-memory turns for the active thread.
 
@@ -857,15 +881,70 @@ class MemoryStore:
         returned with ``summary=None`` on failure, so the caller always
         receives a valid card even if the LLM is unavailable.
 
+        **PIPE-4 — blending durable long-term memory into the card:**
+
+        By default (``query=None`` or ``include_long_term=False``, both of
+        which are the defaults) this method's behavior is **byte-for-byte
+        identical to ORC-1** — ``relevant_facts``/``relevant_profiles`` stay
+        ``None`` and no long-term repository is touched.
+
+        Pass both ``query`` (a raw text string describing the current thread's
+        topic) and ``include_long_term=True`` to also populate
+        :attr:`~agent_memory_sdk.types.ContextCard.relevant_facts` and
+        :attr:`~agent_memory_sdk.types.ContextCard.relevant_profiles`:
+
+        1. *query* is embedded via the ``embedding_provider`` supplied at
+           :class:`MemoryStore` construction time.
+        2. ``store.facts.search()`` / ``store.profiles.search()`` are run
+           against that embedding, scoped identically to the working-memory
+           fetch above, each capped at *long_term_top_k* results.
+        3. **Per-type minimum balancing** (Oracle 26.6's "Context Card Minimum
+           Results by Type"): *min_results_by_type* maps a type name
+           (``"facts"``/``"semantic_facts"`` or ``"profiles"``/``"entity_profiles"``)
+           to the minimum number of results that section must contain. If the
+           relevance search for a type returns fewer than its configured
+           minimum, the section is backfilled with that type's *most-recent*
+           (not most-relevant) records — via ``list_all()`` — until the
+           minimum is met or the type's records are exhausted. This keeps a
+           thin/early-scope conversation (few or no relevant hits yet) from
+           surfacing an empty facts/profiles section. Relevant results always
+           sort before backfilled ones; a type absent from
+           *min_results_by_type* has a minimum of 0 (no forced backfill).
+
+        Embedding failures (``embedding_provider`` raises) are logged and
+        degrade gracefully to a recency-only view for both sections — the
+        card is still returned, never raised from a transient embedding error.
+        Requesting ``include_long_term=True`` with no ``embedding_provider``
+        configured at all is treated as a caller configuration error and
+        raises ``ValueError`` immediately (there is nothing to degrade to).
+
         Args:
-            scope:     Must include at minimum ``agent_id``.  If
-                       ``thread_id`` is set on the scope, only turns for
-                       that thread are returned — this is the typical usage
-                       for a single active conversation.  Passing a scope
-                       without ``thread_id`` returns all working-memory turns
-                       for the agent (useful for cross-thread summaries).
-            max_turns: Maximum number of turns to include (default 20).
-                       Must be >= 1.
+            scope:               Must include at minimum ``agent_id``.  If
+                                 ``thread_id`` is set on the scope, only turns
+                                 for that thread are returned — this is the
+                                 typical usage for a single active
+                                 conversation.  Passing a scope without
+                                 ``thread_id`` returns all working-memory
+                                 turns for the agent (useful for cross-thread
+                                 summaries).  The same scope is used for the
+                                 long-term ``facts``/``profiles`` lookups.
+            max_turns:           Maximum number of turns to include
+                                 (default 20).  Must be >= 1.
+            query:               Optional raw query string describing the
+                                 current thread's topic.  ``None`` (default)
+                                 disables long-term blending entirely,
+                                 regardless of *include_long_term*.
+            include_long_term:   When ``True`` *and* *query* is non-empty,
+                                 populate ``relevant_facts``/``relevant_profiles``
+                                 as described above.  Default ``False``.
+            min_results_by_type: Optional dict, e.g. ``{"facts": 2, "profiles": 1}``,
+                                 setting the per-type minimum result count
+                                 used for backfill.  Ignored unless long-term
+                                 blending is active.  Unrecognized keys raise
+                                 ``ValueError``.
+            long_term_top_k:     Max results requested from each of
+                                 ``facts.search()``/``profiles.search()``
+                                 before backfill.  Default 5.  Must be >= 1.
 
         Returns:
             A :class:`~agent_memory_sdk.types.ContextCard` with:
@@ -877,12 +956,20 @@ class MemoryStore:
               if there are no turns.
             * ``summary`` — narrative string from the :class:`~agent_memory_sdk.types.Summarizer`,
               or ``None`` if no summarizer is configured.
+            * ``relevant_facts`` / ``relevant_profiles`` — populated only when
+              long-term blending is active (see above); ``None`` otherwise.
 
         Raises:
-            ValueError: if ``max_turns < 1`` or ``scope.agent_id`` is missing.
+            ValueError: if ``max_turns < 1`` or ``long_term_top_k < 1``;
+                if ``scope.agent_id`` is missing; if *min_results_by_type*
+                contains an unrecognized key or a negative value; or if
+                long-term blending is requested without an
+                ``embedding_provider`` configured on this ``MemoryStore``.
         """
         if max_turns < 1:
             raise ValueError(f"max_turns must be >= 1; got {max_turns!r}.")
+        if long_term_top_k < 1:
+            raise ValueError(f"long_term_top_k must be >= 1; got {long_term_top_k!r}.")
 
         # list_all() returns newest-first by default; cap at max_turns and
         # reverse to get chronological order for context window consumption.
@@ -901,12 +988,143 @@ class MemoryStore:
                     "Summarizer raised an exception; ContextCard.summary set to None."
                 )
 
+        relevant_facts: list[SemanticFact] | None = None
+        relevant_profiles: list[EntityProfile] | None = None
+
+        # PIPE-4: only touch facts/profiles when the caller explicitly opts in
+        # to both a query AND include_long_term — this is what keeps the
+        # no-query default path identical to ORC-1.
+        if query and include_long_term:
+            relevant_facts, relevant_profiles = self._assemble_long_term_sections(
+                scope=scope,
+                query=query,
+                min_results_by_type=min_results_by_type or {},
+                top_k=long_term_top_k,
+            )
+
         return ContextCard(
             turns=turns,
             turn_count=len(turns),
             latest_at=latest_at,
             summary=summary,
+            relevant_facts=relevant_facts,
+            relevant_profiles=relevant_profiles,
         )
+
+    def _assemble_long_term_sections(
+        self,
+        scope: MemoryScope,
+        query: str,
+        min_results_by_type: dict[str, int],
+        top_k: int,
+    ) -> tuple[list[SemanticFact], list[EntityProfile]]:
+        """PIPE-4 helper: build the ``relevant_facts``/``relevant_profiles`` sections.
+
+        Validates *min_results_by_type*, embeds *query* (degrading to
+        recency-only on embedding failure, raising on missing configuration),
+        then delegates the actual search-plus-backfill logic to
+        :meth:`_relevant_with_backfill` for each of ``facts``/``profiles``.
+        """
+        facts_min = self._resolve_min_results(min_results_by_type, "facts")
+        profiles_min = self._resolve_min_results(min_results_by_type, "profiles")
+
+        if self._embedding_provider is None:
+            raise ValueError(
+                "get_context_card(query=..., include_long_term=True) requires "
+                "MemoryStore to be constructed with an embedding_provider= "
+                "callable; none was configured."
+            )
+
+        query_embedding: list[float] | None
+        try:
+            query_embedding = self._embedding_provider(query)
+        except Exception:
+            logger.exception(
+                "get_context_card: embedding_provider raised while embedding "
+                "query=%r; falling back to recency-only long-term sections.",
+                query,
+            )
+            query_embedding = None
+
+        relevant_facts = self._relevant_with_backfill(
+            self.facts, scope, query_embedding, top_k, facts_min
+        )
+        relevant_profiles = self._relevant_with_backfill(
+            self.profiles, scope, query_embedding, top_k, profiles_min
+        )
+        return relevant_facts, relevant_profiles
+
+    @staticmethod
+    def _resolve_min_results(min_results_by_type: dict[str, int], attr: str) -> int:
+        """Look up the configured minimum for *attr* (``"facts"``/``"profiles"``).
+
+        Accepts either spelling recognized by ``_LONG_TERM_ALIAS_TO_ATTR``
+        (e.g. both ``"facts"`` and ``"semantic_facts"`` resolve to ``"facts"``).
+        Keys that don't resolve to a known long-term type raise ``ValueError``
+        so typos surface immediately rather than silently no-op'ing. Defaults
+        to 0 (no forced backfill) when *attr* has no entry at all.
+        """
+        minimum = 0
+        found = False
+        for key, value in min_results_by_type.items():
+            resolved = MemoryStore._LONG_TERM_ALIAS_TO_ATTR.get(key)
+            if resolved is None:
+                raise ValueError(
+                    f"Unknown min_results_by_type key {key!r}. Expected one of: "
+                    f"{', '.join(sorted(MemoryStore._LONG_TERM_ALIAS_TO_ATTR))}."
+                )
+            if resolved == attr:
+                if value < 0:
+                    raise ValueError(
+                        f"min_results_by_type[{key!r}] must be >= 0; got {value!r}."
+                    )
+                minimum = value
+                found = True
+        return minimum if found else 0
+
+    @staticmethod
+    def _relevant_with_backfill(
+        repo: Any,
+        scope: MemoryScope,
+        query_embedding: list[float] | None,
+        top_k: int,
+        minimum: int,
+    ) -> list[Any]:
+        """Run ``repo.search()`` and backfill with recent records if under *minimum*.
+
+        Relevant (search-ranked) results always come first; backfilled
+        records are appended afterward, most-recent first, skipping any id
+        already present in the relevant results, until *minimum* total
+        results are reached or the type's records are exhausted.
+
+        A ``None`` *query_embedding* (embedding provider failed at call time)
+        skips the search step entirely and goes straight to a recency-only
+        list — this is the graceful-degradation path.
+        """
+        results: list[Any] = []
+        if query_embedding:
+            try:
+                results = repo.search(
+                    query_embedding=query_embedding, scope=scope, top_k=top_k
+                )
+            except Exception:
+                logger.exception(
+                    "get_context_card: %s.search() raised; falling back to "
+                    "recency-only for this section.",
+                    getattr(repo, "_TABLE", repo.__class__.__name__),
+                )
+                results = []
+
+        if len(results) >= minimum:
+            return results
+
+        seen_ids = {record.id for record in results}
+        needed = minimum - len(results)
+        # Over-fetch enough rows that, even after dropping ids already present
+        # in `results`, at least `needed` fresh records remain (when they exist).
+        recent = repo.list_all(scope, limit=needed + len(seen_ids))
+        backfill = [record for record in recent if record.id not in seen_ids][:needed]
+        return results + backfill
 
     # ------------------------------------------------------------------
     # Internal helpers
