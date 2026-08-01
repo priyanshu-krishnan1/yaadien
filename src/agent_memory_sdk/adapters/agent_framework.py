@@ -166,8 +166,8 @@ try:
 
     _AGENT_FRAMEWORK_AVAILABLE = True
 except ImportError:  # pragma: no cover — exercised via patch.dict(sys.modules, ...)
-    _ContextProviderBase = object  # type: ignore[assignment, misc]
-    _HistoryProviderBase = object  # type: ignore[assignment, misc]
+    _ContextProviderBase = object  # noqa: F841
+    _HistoryProviderBase = object  # noqa: F841
     _AGENT_FRAMEWORK_AVAILABLE = False
 
 
@@ -258,7 +258,7 @@ def _extract_turn_messages(context: Any, state: dict[str, Any]) -> list[Any]:
 # ---------------------------------------------------------------------------
 
 
-class MemoryStoreContextProvider(_ContextProviderBase):  # type: ignore[misc, valid-type]
+class MemoryStoreContextProvider(_ContextProviderBase):  # type: ignore[misc]
     """``agent_framework.ContextProvider`` backed by :class:`MemoryStore`.
 
     One instance is constructed per **agent** (fixed ``agent_id``) and
@@ -386,7 +386,7 @@ class MemoryStoreContextProvider(_ContextProviderBase):  # type: ignore[misc, va
 # ---------------------------------------------------------------------------
 
 
-class MemoryStoreHistoryProvider(_HistoryProviderBase):  # type: ignore[misc, valid-type]
+class MemoryStoreHistoryProvider(_HistoryProviderBase):  # type: ignore[misc]
     """``agent_framework.HistoryProvider`` backed by :class:`MemoryStore`.
 
     ``HistoryProvider`` is documented as a specialised ``ContextProvider``
