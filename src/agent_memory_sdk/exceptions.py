@@ -55,6 +55,26 @@ class InvalidMetadataFilterError(ValueError):
     """
 
 
+class ScopeMismatchError(ValueError):
+    """Raised by :meth:`~agent_memory_sdk.store.MemoryStore.import_scope` when an
+    imported record's scope columns don't match the target scope.
+
+    ``BaseRepository.create()`` unconditionally overwrites a record's
+    ``tenant_id``/``agent_id``/``user_id``/``thread_id`` fields with the
+    *target* scope's values before inserting — so without an explicit check,
+    importing a record captured under one scope (e.g. ``user_id="alice"``)
+    into a different target scope (e.g. ``user_id="bob"``) would silently
+    rewrite the record's scope rather than surfacing the mismatch.
+    :meth:`~agent_memory_sdk.store.MemoryStore.import_scope` checks every
+    record's scope against the target scope *before* calling ``create()``
+    (or ``insert_chunk()`` for ``memory_chunks`` records) and raises this
+    error instead of proceeding.
+
+    The caller should either re-export from the correct scope, or call
+    ``import_scope()`` once per distinct scope present in the record stream.
+    """
+
+
 class SchemaPolicyError(RuntimeError):
     """Raised when :class:`~agent_memory_sdk.db.migrate.SchemaPolicy.REQUIRE_EXISTING`
     validation fails.
