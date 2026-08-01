@@ -383,6 +383,225 @@ class NoOpReconciler:
 
 
 # ---------------------------------------------------------------------------
+# IngestAction, IngestDecision, IngestResolver, NoOpIngestResolver
+# ---------------------------------------------------------------------------
+
+class IngestAction(str, enum.Enum):
+    """The four actions an :class:`IngestResolver` can choose for an incoming write.
+
+    ADD    — insert the candidate as a brand-new row (today's unchanged behavior).
+    UPDATE — merge the candidate into an existing record identified by
+             ``IngestDecision.target_id`` via the optimistic-concurrency
+             ``update()`` path; no new row is inserted.
+    DELETE — the candidate contradicts/invalidates an existing record; that
+             record (``IngestDecision.target_id``) is tombstoned via
+             ``forget()``; the candidate itself is not written.
+    NOOP   — the candidate is redundant with an existing record; the write is
+             skipped entirely, nothing is persisted.
+    """
+
+    ADD = "ADD"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    NOOP = "NOOP"
+
+
+@dataclass
+class IngestDecision:
+    """A single ingest-time classification produced by an :class:`IngestResolver`.
+
+    Attributes:
+        action:     One of :class:`IngestAction` — ``ADD``, ``UPDATE``,
+                    ``DELETE``, or ``NOOP``.
+        target_id:  ``id`` of the existing record this decision applies to.
+                    Required (non-``None``) for ``UPDATE`` and ``DELETE`` —
+                    :meth:`~agent_memory_sdk.store.MemoryStore.remember` logs
+                    a warning and falls back to ``ADD`` if it is missing.
+                    Ignored for ``ADD`` and ``NOOP``.
+        reason:     Human-readable explanation, e.g.
+                    ``"duplicate of existing preference fact"`` or
+                    ``"contradicts existing record: user moved cities"``.
+                    Defaults to ``""``.
+    """
+
+    action: IngestAction
+    target_id: str | None = None
+    reason: str = ""
+
+
+class IngestResolver(Protocol):
+    """Protocol for pluggable ingest-time ADD/UPDATE/DELETE/NOOP classification.
+
+    An ``IngestResolver`` is called synchronously by
+    :meth:`~agent_memory_sdk.store.MemoryStore.remember`, **before** anything
+    is written.  It receives the candidate record about to be remembered and
+    the top-``resolver_k`` most-similar *existing* records already stored in
+    the same scoped table (ranked by ascending cosine distance), and decides
+    what should actually happen to the incoming write.
+
+    Shape::
+
+        (candidate: _MemoryBase, similar: list[tuple[_MemoryBase, float]]) -> IngestDecision
+
+    This protocol is parallel in shape to :class:`Consolidator` and
+    :class:`Reconciler`:
+
+    * **Consolidator** — receives raw working/episodic writes *after* they
+      land, returns derived semantic records to persist.
+    * **Reconciler** — runs later, in batches, over already-written
+      non-superseded facts, looking for contradictions *between* them.
+    * **IngestResolver** — runs once, at write time, *before* the candidate
+      is persisted, against the top-k most-similar existing records by
+      cosine distance (not a batch scan), and can choose to merge / update /
+      discard / no-op the incoming write itself.  This is the real-time
+      classify-against-existing-similar-memories step Mem0's ingestion
+      pipeline is built around.
+
+    **How `MemoryStore.remember()` uses this:**
+
+    1. Embed the candidate's content (using the record's own ``embedding``
+       if already set, or the configured ``embedding_provider`` otherwise).
+    2. Run ``search()`` against the same-type repository, scoped to the
+       candidate's scope, with ``top_k=resolver_k``, to find the most
+       similar existing records.
+    3. Pair each result with its cosine distance to the candidate, in
+       ascending-distance (most-similar-first) order, and call the
+       ``IngestResolver`` with ``(candidate, similar)``.
+    4. Act on the returned :class:`IngestDecision`:
+
+       - ``ADD``    — ``repo.create(candidate, scope)`` (today's behavior).
+       - ``UPDATE`` — fetch ``target_id`` via ``get_by_id()``, copy the
+         candidate's ``content``/``metadata``/``embedding``/``confidence``
+         onto it, and call ``repo.update()`` (optimistic concurrency).
+       - ``DELETE`` — ``repo.forget(target_id, scope)``; the candidate is
+         not written.
+       - ``NOOP``   — nothing is written.
+
+    **Sync path (default)**
+    -----------------------
+    Pass an ``IngestResolver`` to :class:`~agent_memory_sdk.store.MemoryStore`
+    at construction time::
+
+        store = MemoryStore(pool, ingest_resolver=MyLLMIngestResolver(), resolver_k=5)
+
+    The resolver runs **synchronously** on the ``remember()`` call path,
+    blocking until it returns — the same trade-off documented for
+    ``Consolidator``.  The default :class:`NoOpIngestResolver` always returns
+    ``ADD``, so ``remember()`` is byte-for-byte identical to pre-PIPE-2
+    behavior (including skipping the extra ``search()`` round-trip entirely)
+    when no resolver is configured.
+
+    **LLM-based resolver example**
+    -------------------------------
+    ::
+
+        import openai
+        from agent_memory_sdk.types import IngestAction, IngestDecision, IngestResolver
+
+        class LLMIngestResolver:
+            \"\"\"Classify an incoming fact against similar existing facts.\"\"\"
+
+            def __init__(self, client: openai.OpenAI) -> None:
+                self._client = client
+
+            def __call__(self, candidate, similar) -> IngestDecision:
+                if not similar:
+                    return IngestDecision(action=IngestAction.ADD)
+
+                enumerated = "\\n".join(
+                    f"{i}: {rec.content} (distance={dist:.3f})"
+                    for i, (rec, dist) in enumerate(similar)
+                )
+                resp = self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "A new memory is about to be written. Given the "
+                                "new memory and a list of similar existing "
+                                "memories, decide ADD (distinct new fact), "
+                                "UPDATE <index> (the new memory refines an "
+                                "existing one), DELETE <index> (the new memory "
+                                "contradicts and invalidates an existing one), "
+                                "or NOOP (the new memory is redundant). "
+                                "Respond with one word, optionally followed by "
+                                "an index."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"New memory: {candidate.content}\\n\\n"
+                            f"Similar existing memories:\\n{enumerated}",
+                        },
+                    ],
+                )
+                text = (resp.choices[0].message.content or "").strip()
+                parts = text.split()
+                verb = parts[0].upper() if parts else "ADD"
+                if verb in ("UPDATE", "DELETE") and len(parts) > 1:
+                    try:
+                        idx = int(parts[1])
+                        target_id = similar[idx][0].id
+                        return IngestDecision(
+                            action=IngestAction[verb],
+                            target_id=target_id,
+                            reason=f"LLM classified as {verb}",
+                        )
+                    except (ValueError, IndexError):
+                        pass
+                if verb == "NOOP":
+                    return IngestDecision(action=IngestAction.NOOP)
+                return IngestDecision(action=IngestAction.ADD)
+
+        # Wire in at store construction:
+        store = MemoryStore(pool, ingest_resolver=LLMIngestResolver(openai.OpenAI()))
+    """
+
+    def __call__(
+        self,
+        candidate: _MemoryBase,
+        similar: list[tuple[_MemoryBase, float]],
+    ) -> IngestDecision:
+        """Classify an incoming write against similar existing records.
+
+        Args:
+            candidate: The record about to be written (not yet persisted;
+                       ``id``/``created_at``/``version`` may be pre-populated
+                       defaults, not server-assigned values).
+            similar:   Up to ``resolver_k`` ``(existing_record, cosine_distance)``
+                       tuples for the most similar existing records in the same
+                       scoped table, in ascending-distance (most-similar-first)
+                       order.  Empty when no existing records were found (or no
+                       embedding could be computed for the candidate).
+
+        Returns:
+            An :class:`IngestDecision` naming the action to take.
+        """
+        ...
+
+
+class NoOpIngestResolver:
+    """Default ingest resolver: always ``ADD``.
+
+    This is the default used by :class:`~agent_memory_sdk.store.MemoryStore`
+    when no ``ingest_resolver`` argument is supplied — callers opt in to
+    ingest-time classification explicitly.  Because this default always
+    returns ``ADD``, and :meth:`~agent_memory_sdk.store.MemoryStore.remember`
+    special-cases this exact class to skip the similarity ``search()`` call
+    entirely, using the default reproduces today's unchanged ADD-only
+    write behavior with zero added overhead.
+    """
+
+    def __call__(
+        self,
+        candidate: _MemoryBase,
+        similar: list[tuple[_MemoryBase, float]],
+    ) -> IngestDecision:
+        return IngestDecision(action=IngestAction.ADD)
+
+
+# ---------------------------------------------------------------------------
 # ContextCard, Summarizer, NoOpSummarizer
 # ---------------------------------------------------------------------------
 
