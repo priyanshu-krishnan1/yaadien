@@ -48,7 +48,7 @@ langchain = [
     "langchain-core>=0.2",
 ]
 openai-agents = [
-    "openai-agents>=0.0.10",
+    "openai-agents>=0.19.1",
 ]
 mcp = [
     "mcp>=1.0",
