@@ -76,7 +76,7 @@ dev = [
     "python-dotenv>=1.0",
     # Security scanning (PH-4)
     "bandit>=1.7",
-    "pip-audit>=2.7",
+    "pip-audit>=2.10.1",
 ]
 # Optional real embedding/judge providers for benchmarks/ — see benchmarks/README.md.
 # Not required to run the harness (the "hashing"/"keyword" fallbacks need nothing
