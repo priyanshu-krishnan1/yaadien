@@ -328,7 +328,7 @@ class ChunkRepository:
             sql = f"""
                 SELECT * FROM (
                     SELECT {select_cols},
-                           ROW_NUMBER() OVER (ORDER BY created_at ASC, chunk_index ASC) AS rn
+                           ROW_NUMBER() OVER (ORDER BY source_id ASC, chunk_index ASC) AS rn
                     FROM memory_chunks
                     WHERE {scope_sql}
                 ) WHERE rn > ? AND rn <= ?
@@ -339,7 +339,7 @@ class ChunkRepository:
                 SELECT {select_cols}
                 FROM memory_chunks
                 WHERE {scope_sql}
-                ORDER BY created_at ASC, chunk_index ASC
+                ORDER BY source_id ASC, chunk_index ASC
                 FETCH FIRST ? ROWS ONLY
             """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; scope_sql contains only literal column=? fragments from _scope_predicates (all values bound). DECISIONS.md VER-5.
             params = [*scope_params, limit]

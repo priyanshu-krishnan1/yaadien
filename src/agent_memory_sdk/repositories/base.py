@@ -227,59 +227,96 @@ _KNOWN_OPERATORS: frozenset[str] = frozenset(
 )
 
 
+def _escape_sql_string(val: Any) -> str:
+    """Escape *val* for safe inline use as a SQL single-quoted string literal.
+
+    Returns the value as a SQL string representation suitable for use in a
+    comparison like ``JSON_VALUE(...) = <result>``:
+
+    - **str** — single-quoted with internal single-quotes doubled (``''``).
+    - **int / float** — returned as a single-quoted numeric string (e.g.
+      ``'42'``).  JSON_VALUE always returns VARCHAR, so numeric JSON values
+      are compared as their string representation.
+    - **bool** — returned as ``'true'`` or ``'false'`` (JSON boolean text as
+      stored in VARCHAR by JSON_VALUE).
+    - **None** — returns the literal ``NULL`` (no quotes) so the caller can
+      use ``IS NULL`` instead of ``= NULL``.
+
+    The result is safe to interpolate into SQL because:
+      - Field names are validated by the caller before this is reached.
+      - Single-quote doubling prevents SQL injection through string values.
+      - Numeric and boolean values are intrinsically injection-free.
+    """
+    if isinstance(val, bool):
+        return "'true'" if val else "'false'"
+    if isinstance(val, (int, float)):
+        return f"'{val}'"
+    if val is None:
+        return "NULL"
+    s = str(val)
+    s = s.replace("'", "''")   # ' → '' (SQL literal single-quote doubling)
+    return f"'{s}'"
+
+
 def _build_metadata_filter(
     metadata_filter: dict[str, Any] | None,
 ) -> tuple[str, list[Any]]:
     """Translate a ``metadata_filter`` dict into SQL predicates on the ``metadata`` column.
 
-    The ``metadata`` column is ``VARCHAR(4096)`` JSON text.  Db2 12.1 requires
-    ``JSON_EXISTS(col FORMAT JSON, '$.field?(@ == "value")')`` — the
-    ``FORMAT JSON`` clause is mandatory to inform the SQL engine that the
-    column value should be parsed as JSON.  Without it, ``JSON_EXISTS``
-    evaluates to NULL for every row (even rows that contain valid JSON), so the
-    WHERE clause silently drops all rows.
+    The ``metadata`` column is ``VARCHAR(4096)`` JSON text.  This function
+    generates predicates using ``JSON_VALUE`` (for scalar comparisons) and
+    ``JSON_TABLE`` (for array-membership checks), both with the ``FORMAT JSON``
+    clause and ``lax`` path mode so Db2 12.1.5 fp0 parses the column as JSON
+    and tolerates absent fields (returning NULL rather than raising an error).
+
+    ``JSON_EXISTS`` with filter predicates ``?(@ == "value")`` was found to
+    return NULL/false for all rows on Db2 12.1.5 fp0 even when FORMAT JSON is
+    present, regardless of the column value.  ``JSON_VALUE`` comparisons with
+    inlined SQL string literals are used instead; they avoid both the
+    ``JSON_EXISTS`` predicate bug and the ibm_db C-extension segfault that
+    occurs when ``JSON_VALUE(...) = ?`` is used with a bound ``?`` parameter.
 
     **Supported operator set (ORC-3 — deliberately small):**
 
     1. **Exact match** — scalar equality on a top-level field::
 
            {"source": "support"}
-           → JSON_EXISTS(metadata FORMAT JSON, '$.source?(@ == "support")')
-             (bare boolean predicate; value inlined; see security note below)
+           → JSON_VALUE(metadata FORMAT JSON, 'lax $.source') = 'support'
+             (value inlined; see security note below)
 
     2. **$not** — scalar inequality::
 
            {"status": {"$not": "archived"}}
-           → JSON_EXISTS(metadata FORMAT JSON, '$.status?(@ != "archived")')
+           → JSON_VALUE(metadata FORMAT JSON, 'lax $.status') <> 'archived'
              (value inlined; see security note below)
 
     3. **$array_contains** — single value must appear in a JSON array field::
 
            {"tags": {"$array_contains": "urgent"}}
-           → JSON_EXISTS(metadata FORMAT JSON, '$.tags[*]?(@ == "urgent")')
-             (no bound param — value inlined in the path expression; see security note)
+           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'lax $.tags[*]'
+               COLUMNS(v VARCHAR(4096) PATH 'lax $') ERROR ON ERROR) jt
+               WHERE jt.v = 'urgent')
+             (value inlined; see security note)
 
     4. **$array_contains_any** — at least one of the supplied values must
        appear in a JSON array field::
 
            {"tags": {"$array_contains_any": ["urgent", "bug"]}}
-           → ( JSON_EXISTS(metadata FORMAT JSON, '$.tags[*]?(@ == "urgent")')
-               OR JSON_EXISTS(metadata FORMAT JSON, '$.tags[*]?(@ == "bug")') )
-             (no bound params — values inlined; see security note)
+           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'lax $.tags[*]'
+               COLUMNS(v VARCHAR(4096) PATH 'lax $') ERROR ON ERROR) jt
+               WHERE jt.v IN ('urgent', 'bug'))
+             (all values inlined; see security note)
 
-    **Security note — all values are inlined in JSON_EXISTS path expressions:**
-    All four operators use ``JSON_EXISTS`` path expressions (SQL string
-    literals) — ibm_db_dbi on Db2 12.1.5 fp0 does not support binding values
-    into path expressions via ``?``, and attempting to bind values for
-    ``JSON_VALUE(col, path) = ?`` comparisons triggers a segmentation fault in
-    the ``ibm_db`` C extension (null pointer dereference in the C-level
-    statement descriptor lookup).  All values are therefore inlined: any
-    ``'`` (single-quote) is doubled to ``''`` and any ``\\`` is doubled to
-    ``\\\\`` before interpolation.  Non-string values (int, float, bool) are
-    formatted directly and are inherently safe.  As a result,
-    ``_build_metadata_filter`` **never** appends to ``params`` — it always
-    returns an empty params list, eliminating the ibm_db bound-parameter
-    mismatch entirely.
+    **Security note — all values are inlined as SQL string literals:**
+    Binding values via ``?`` for ``JSON_VALUE(col, path) = ?`` comparisons
+    triggers a segmentation fault in the ``ibm_db`` C extension (null pointer
+    dereference in the C-level statement descriptor lookup).  All values are
+    therefore inlined via ``_escape_sql_string``, which doubles single-quotes
+    and wraps the result in single-quotes.  Non-string values (int, float,
+    bool) are rendered as their string form (JSON_VALUE always returns VARCHAR).
+    Field names are validated against ``^[A-Za-z_][A-Za-z0-9_.]*$`` before
+    interpolation.  As a result, ``_build_metadata_filter`` **never** appends
+    to ``params`` — it always returns an empty params list.
 
     **Field-name safety:**
     Field names are validated against the pattern ``^[A-Za-z_][A-Za-z0-9_.]*$``
@@ -303,8 +340,8 @@ def _build_metadata_filter(
         ``(sql_fragment, params)`` where *sql_fragment* is zero or more
         ``AND <predicate>`` clauses (leading space included) ready to be
         appended to an existing WHERE clause, and *params* is always an empty
-        list (all filter values are inlined in JSON path expressions — no ``?``
-        placeholders are emitted by this function).
+        list (all filter values are inlined — no ``?`` placeholders are emitted
+        by this function).
 
     Raises:
         InvalidMetadataFilterError: if a field name is invalid, a value dict
@@ -346,16 +383,28 @@ def _build_metadata_filter(
 
             if "$not" in operand:
                 val = operand["$not"]
-                escaped = _escape_json_path_value(val)
-                parts.append(
-                    f"JSON_EXISTS(metadata FORMAT JSON, '$.{field}?(@ != {escaped})')"
-                )
+                sql_val = _escape_sql_string(val)
+                if val is None:
+                    # $not: None means "field must not be null / absent"
+                    parts.append(
+                        f"JSON_VALUE(metadata FORMAT JSON, 'lax $.{field}') IS NOT NULL"
+                    )
+                else:
+                    parts.append(
+                        f"JSON_VALUE(metadata FORMAT JSON, 'lax $.{field}') <> {sql_val}"
+                    )
 
             elif "$array_contains" in operand:
                 val = operand["$array_contains"]
-                escaped = _escape_json_path_value(val)
+                sql_val = _escape_sql_string(val)
+                # Use JSON_TABLE to unnest the array; EXISTS returns true when
+                # at least one element matches.  ERROR ON ERROR ensures that a
+                # non-array field value causes a predictable error rather than
+                # silently returning no rows.
                 parts.append(
-                    f"JSON_EXISTS(metadata FORMAT JSON, '$.{field}[*]?(@ == {escaped})')"
+                    f"EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON,"
+                    f" 'lax $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'lax $')"
+                    f" ERROR ON ERROR) jt WHERE jt.v = {sql_val})"
                 )
 
             elif "$array_contains_any" in operand:
@@ -365,28 +414,33 @@ def _build_metadata_filter(
                         f"$array_contains_any on field {field!r} requires a "
                         f"non-empty list of values; got {vals!r}."
                     )
-                sub_parts = [
-                    f"JSON_EXISTS(metadata FORMAT JSON, '$.{field}[*]?(@ == {_escape_json_path_value(v)})')"
-                    for v in vals
-                ]
-                parts.append("(" + " OR ".join(sub_parts) + ")")
+                in_list = ", ".join(_escape_sql_string(v) for v in vals)
+                parts.append(
+                    f"EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON,"
+                    f" 'lax $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'lax $')"
+                    f" ERROR ON ERROR) jt WHERE jt.v IN ({in_list}))"
+                )
 
         elif isinstance(operand, bool):
             # bool must be checked before int/float because bool is an int subclass.
-            # Use JSON_EXISTS FORMAT JSON to avoid ibm_db segfault with bound params
-            # on JSON_VALUE, and FORMAT JSON to ensure Db2 12.1 parses the column as JSON.
-            # Without FORMAT JSON, JSON_EXISTS evaluates to NULL for all rows.
-            escaped = _escape_json_path_value(operand)
+            # JSON_VALUE returns VARCHAR; booleans stored in JSON are 'true'/'false'.
+            sql_val = _escape_sql_string(operand)
             parts.append(
-                f"JSON_EXISTS(metadata FORMAT JSON, '$.{field}?(@ == {escaped})')"
+                f"JSON_VALUE(metadata FORMAT JSON, 'lax $.{field}') = {sql_val}"
             )
-        elif isinstance(operand, (str, int, float)) or operand is None:
-            # Exact match — use JSON_EXISTS FORMAT JSON (inlined value) to avoid
-            # the ibm_db segfault and to ensure Db2 12.1 parses the column as JSON.
-            # Without FORMAT JSON, JSON_EXISTS evaluates to NULL for all rows.
-            escaped = _escape_json_path_value(operand)
+        elif operand is None:
+            # Exact match for null: the field must be absent or explicitly null.
             parts.append(
-                f"JSON_EXISTS(metadata FORMAT JSON, '$.{field}?(@ == {escaped})')"
+                f"JSON_VALUE(metadata FORMAT JSON, 'lax $.{field}') IS NULL"
+            )
+        elif isinstance(operand, (str, int, float)):
+            # Exact match — use JSON_VALUE with an inlined SQL string literal.
+            # Avoids the ibm_db segfault that occurs with JSON_VALUE(...) = ?
+            # (bound param), and avoids the JSON_EXISTS filter predicate bug
+            # where ?(@ == "val") always evaluates to NULL on Db2 12.1.5 fp0.
+            sql_val = _escape_sql_string(operand)
+            parts.append(
+                f"JSON_VALUE(metadata FORMAT JSON, 'lax $.{field}') = {sql_val}"
             )
 
         else:
