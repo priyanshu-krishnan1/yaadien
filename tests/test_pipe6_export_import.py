@@ -438,16 +438,33 @@ class TestImportScope:
         with pytest.raises(ScopeMismatchError):
             store.import_scope([record], _SCOPE)
 
-    def test_scope_mismatch_does_not_call_create(self):
-        """The critical safety property: reject before any INSERT is issued."""
+    def test_mixed_agent_stream_raises_scope_mismatch_error(self):
+        """A stream containing records from two different source agents must raise.
+
+        agent_id migration (one consistent source → different target) is allowed,
+        but mixing records from multiple source agents in the same stream is rejected
+        because it indicates a wrong-destination import.
+        """
+        pool = _CaptureSqlPool()
+        store = MemoryStore(pool)
+        records = [
+            _exported_working_memory(id="wm-a", agent_id="agent-X"),
+            _exported_working_memory(id="wm-b", agent_id="agent-Y"),  # different source
+        ]
+
+        with pytest.raises(ScopeMismatchError):
+            store.import_scope(records, _SCOPE)
+
+    def test_single_record_agent_migration_succeeds(self):
+        """Importing a single record from a different source agent into a new target
+        scope is the explicit agent-migration use case and must succeed."""
         pool = _CaptureSqlPool()
         store = MemoryStore(pool)
         record = _exported_working_memory(agent_id="some-other-agent")
 
-        with pytest.raises(ScopeMismatchError):
-            store.import_scope([record], _SCOPE)
+        counts = store.import_scope([record], _SCOPE)
 
-        assert pool.cursor.all_sqls == []
+        assert counts["working_memory"] == 1
 
     def test_scope_mismatch_on_tenant_id_is_detected(self):
         pool = _CaptureSqlPool()

@@ -128,12 +128,12 @@ class ChunkRepository:
                 tenant_id, agent_id, user_id, thread_id,
                 created_at
             ) VALUES (
-                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, CAST(? AS CLOB(4096)),
                 CAST('{vec_str}' AS VECTOR({self.embedding_dim},FLOAT32)),
                 ?, ?, ?, ?,
                 ?
             )
-        """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; vec_str from _vec_to_str() (float() coercion guard, DECISIONS.md VER-5); embedding_dim is an int constant; all other values are bound params.
+        """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; vec_str from _vec_to_str() (float() coercion guard, DECISIONS.md VER-5); embedding_dim is an int constant; all other values are bound params. CAST(? AS CLOB) avoids ibm_db SQL_CHAR binding truncation on Db2 12.1.
         params = [
             chunk_id,
             source_table,

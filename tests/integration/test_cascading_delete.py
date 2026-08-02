@@ -88,13 +88,14 @@ def _make_scope(agent_id: str, user_id: str, thread_id: str | None = None):
 
 
 def _seed_thread(store, agent_id: str, user_id: str, thread_id: str) -> None:
-    """Seed one thread's worth of data: 2 WorkingMemory, 1 SemanticFact,
-    1 ProceduralMemory, and 1 chunk via ChunkRepository.
+    """Seed one thread's worth of data: 2 WorkingMemory, 1 EpisodicMemory,
+    1 SemanticFact, 1 ProceduralMemory, and 1 chunk via ChunkRepository.
 
     The EntityProfile is seeded once *per user* (not per thread) by the
     caller, so it is intentionally omitted here.
     """
     from agent_memory_sdk.models import (
+        EpisodicMemory,
         ProceduralMemory,
         SemanticFact,
         WorkingMemory,
@@ -113,6 +114,17 @@ def _seed_thread(store, agent_id: str, user_id: str, thread_id: str) -> None:
             ),
             thread_scope,
         )
+
+    # 1 EpisodicMemory (scoped to thread)
+    store.episodic.create(
+        EpisodicMemory(
+            agent_id=agent_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            content=f"episodic event in {thread_id}",
+        ),
+        thread_scope,
+    )
 
     # 1 SemanticFact (scoped to thread)
     store.facts.create(

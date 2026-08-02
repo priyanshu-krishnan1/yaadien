@@ -458,7 +458,7 @@ class TestDeleteMemory:
         stored = store.remember(profile, profile_scope)
         profile_id = stored.id
 
-        result = store.delete_memory(profile_id, scope)
+        result = store.delete_memory(profile_id, profile_scope)
 
         assert result == 1
         remaining_profiles = store.profiles.list_all(profile_scope)

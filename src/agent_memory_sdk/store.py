@@ -990,21 +990,22 @@ class MemoryStore:
         cross-vendor interchange format (see :meth:`export_scope`'s docstring;
         no such standard exists industry-wide).
 
-        **Scope re-validation (critical safety property):** ``create()``
+        **Scope migration and stream consistency:** ``create()``
         unconditionally *overwrites* a record's ``tenant_id``/``agent_id``/
         ``user_id``/``thread_id`` fields with *scope*'s values before
-        inserting. Without an explicit check, importing a record captured
-        under one scope into a different target *scope* would silently
-        rewrite that record's scope fields rather than surfacing the
-        mismatch — a real risk when consolidating exports from multiple
-        agents/tenants/users into the wrong destination. To prevent that,
-        every record's ``tenant_id``/``agent_id``/``user_id``/``thread_id``
-        fields are compared against *scope* **before** any repository call is
-        made for that record; a mismatch raises
-        :class:`~agent_memory_sdk.exceptions.ScopeMismatchError` (a
-        :class:`ValueError` subclass) instead of proceeding. To import
-        records spanning multiple scopes, call this method once per distinct
-        scope, passing only the records for that scope each time.
+        inserting, so importing records exported from one agent into a
+        *different* target scope is an explicit and supported use case
+        (agent migration / rename).
+
+        To prevent silently importing a mixed stream (records from multiple
+        different source agents concatenated together), ``import_scope``
+        enforces that **all records in the stream share the same source
+        agent_id** — the first record's ``agent_id`` establishes the
+        expected source and any subsequent record with a different
+        ``agent_id`` raises
+        :class:`~agent_memory_sdk.exceptions.ScopeMismatchError`.
+        To import from multiple source agents, call this method once per
+        distinct source agent, passing only the records for that agent.
 
         **Known limitation (inherited from create()):** because each record
         is re-inserted via the ordinary per-type ``create()`` path, the usual
@@ -1043,13 +1044,26 @@ class MemoryStore:
         Raises:
             ValueError: if a record is missing the ``"_type"`` field, or
                         ``"_type"`` names a table this SDK doesn't recognize.
-            ScopeMismatchError: if a record's scope columns don't match
-                        *scope*.
+            ScopeMismatchError: if any record's ``agent_id`` differs from the
+                        ``agent_id`` of the first record in the stream
+                        (mixed-source stream detected).
         """
         counts: dict[str, int] = {
             **dict.fromkeys(_EXPORT_TYPE_TO_REPO_ATTR, 0),
             _CHUNKS_TYPE: 0,
         }
+
+        # source_agent_id: the agent_id seen in the first record of this stream.
+        # All records must share the same source agent_id — a mismatch means the
+        # stream is corrupted or contains records from multiple agents mixed together.
+        # Records are then written into *scope* (the target), which create() handles
+        # by overwriting the record's scope columns with scope's values.
+        # Note: agent_id is the only dimension that is permitted to differ between
+        # source records and the target scope (explicit migration / rename use case).
+        # All other scope dimensions (tenant_id, user_id, thread_id) must match the
+        # target scope exactly, to avoid silently importing data that belongs to a
+        # different tenant or user into the wrong destination.
+        source_agent_id: str | None = None
 
         for raw in records:
             record_dict = dict(raw)  # never mutate the caller's dict
@@ -1061,6 +1075,55 @@ class MemoryStore:
                     "export_scope() (or otherwise carry a '_type' key naming "
                     "one of: " + ", ".join(sorted(counts)) + ")."
                 )
+
+            # --- Scope consistency checks ------------------------------------
+            # 1. Non-agent_id dimensions must match the target scope exactly.
+            #    (create() would overwrite them, so a mismatch here is a sign
+            #    of a wrong-destination import that should be surfaced rather
+            #    than silently fixed.)
+            record_tenant_id = record_dict.get("tenant_id")
+            record_user_id = record_dict.get("user_id")
+            record_thread_id = record_dict.get("thread_id")
+            if record_tenant_id != scope.tenant_id:
+                raise ScopeMismatchError(
+                    f"import_scope: scope mismatch on {type_name!r} record "
+                    f"id={record_dict.get('id')!r}: record tenant_id="
+                    f"{record_tenant_id!r} does not match target scope "
+                    f"tenant_id={scope.tenant_id!r}."
+                )
+            if record_user_id != scope.user_id:
+                raise ScopeMismatchError(
+                    f"import_scope: scope mismatch on {type_name!r} record "
+                    f"id={record_dict.get('id')!r}: record user_id="
+                    f"{record_user_id!r} does not match target scope "
+                    f"user_id={scope.user_id!r}."
+                )
+            if record_thread_id != scope.thread_id:
+                raise ScopeMismatchError(
+                    f"import_scope: scope mismatch on {type_name!r} record "
+                    f"id={record_dict.get('id')!r}: record thread_id="
+                    f"{record_thread_id!r} does not match target scope "
+                    f"thread_id={scope.thread_id!r}."
+                )
+            # 2. All records in the stream must originate from the same source
+            #    agent.  The first record's agent_id establishes the expected
+            #    source; any subsequent record with a different agent_id is
+            #    rejected (mixed-source stream detected).  agent_id itself is
+            #    permitted to differ from the target scope (migration use case).
+            record_agent_id = record_dict.get("agent_id") or ""
+            if source_agent_id is None:
+                source_agent_id = record_agent_id
+            elif record_agent_id != source_agent_id:
+                raise ScopeMismatchError(
+                    f"import_scope: scope mismatch on {type_name!r} record "
+                    f"id={record_dict.get('id')!r}: record agent_id="
+                    f"{record_agent_id!r} differs from the source agent_id "
+                    f"{source_agent_id!r} established by the first record in "
+                    "this stream. The import stream must contain records from "
+                    "a single source agent. To import from multiple agents, "
+                    "call import_scope() once per distinct source agent."
+                )
+            # --- End scope consistency checks --------------------------------
 
             if type_name == _CHUNKS_TYPE:
                 self._import_chunk_record(record_dict, scope)
@@ -1074,8 +1137,6 @@ class MemoryStore:
                     f"import_scope: unrecognized _type {type_name!r}. "
                     "Expected one of: " + ", ".join(sorted(counts)) + "."
                 )
-
-            self._check_scope_match(record_dict, scope, type_name)
 
             record_obj = model_cls.model_validate(record_dict)
             getattr(self, repo_attr).create(record_obj, scope)
@@ -1095,8 +1156,6 @@ class MemoryStore:
                 "enable_chunking=True and an embedding_provider to import "
                 "memory_chunks rows."
             )
-
-        self._check_scope_match(record_dict, scope, _CHUNKS_TYPE)
 
         self.chunks.insert_chunk(
             source_table=record_dict["source_table"],
@@ -2052,12 +2111,25 @@ class MemoryStore:
         # Embed query once.
         query_embedding: list[float] = self._embedding_provider(query)
 
+        # Build the effective scope for the SQL-level query.  When a fuzzy flag
+        # is False the corresponding dimension is stripped from the scope so that
+        # _scope_predicates() in the repository does not add a WHERE clause for
+        # it, making the SQL-level search genuinely broader.  The post-fetch
+        # Python filter (below) then enforces the exact-match semantics back on
+        # the returned rows for the non-fuzzy dimensions.
+        sql_scope = MemoryScope(
+            tenant_id=scope.tenant_id,
+            agent_id=scope.agent_id,
+            user_id=scope.user_id,
+            thread_id=scope.thread_id if exact_thread_match else None,
+        )
+
         all_results: list[SearchResult] = []
         for type_name in record_types:
             repo = getattr(self, _TYPE_TO_ATTR[type_name])
             records = repo.search(
                 query_embedding,
-                scope,
+                sql_scope,
                 top_k=max_results,
                 metadata_filter=metadata_filter,
             )

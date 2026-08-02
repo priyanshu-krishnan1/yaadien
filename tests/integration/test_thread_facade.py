@@ -57,7 +57,7 @@ def _count_semantic_facts(pool, agent_id: str, thread_id: str | None) -> int:
 
 def _count_all_memory_tables(pool, agent_id: str, thread_id: str) -> dict[str, int]:
     """Count rows in all memory tables for a given scope."""
-    tables = ["working_memory", "episodic_memory", "semantic_facts", "entity_profiles", "procedures"]
+    tables = ["working_memory", "episodic_memory", "semantic_facts", "entity_profiles", "procedural_memory"]
     counts = {}
     for table in tables:
         sql = f"SELECT COUNT(*) FROM {table} WHERE agent_id = ? AND thread_id = ?"
