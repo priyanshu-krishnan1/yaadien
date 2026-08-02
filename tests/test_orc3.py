@@ -11,8 +11,8 @@ Coverage:
   - _build_metadata_filter: returns ("", []) when filter is None or {}
   - Exact match → JSON_VALUE(col FORMAT JSON, 'lax $.field') = 'value'
   - $not → JSON_VALUE(col FORMAT JSON, 'lax $.field') <> 'value'
-  - $array_contains → EXISTS (SELECT 1 FROM JSON_TABLE(...) jt WHERE jt.v = 'value')
-  - $array_contains_any → EXISTS (SELECT 1 FROM JSON_TABLE(...) jt WHERE jt.v IN (...))
+  - $array_contains → LOCATE('"value",', REPLACE(JSON_QUERY(col, 'lax $.field'), ']', ',')) > 0
+  - $array_contains_any → OR-joined LOCATE checks for each value
   - Multiple fields in one filter dict
   - Invalid field name → InvalidMetadataFilterError
   - Unrecognized $operator → InvalidMetadataFilterError
@@ -200,25 +200,22 @@ class TestBuildMetadataFilterNot:
 class TestBuildMetadataFilterArrayContains:
     def test_array_contains_string(self) -> None:
         sql, params = _build_metadata_filter({"tags": {"$array_contains": "urgent"}})
-        assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'strict $.tags[*]'" in sql
-        assert "jt.v = 'urgent'" in sql
-        assert "EXISTS" in sql
+        assert "LOCATE('\"urgent\",'" in sql
+        assert "JSON_QUERY(metadata FORMAT JSON, 'lax $.tags')" in sql
+        assert "REPLACE(" in sql
         # No bound params (value inlined)
         assert params == []
 
     def test_array_contains_integer(self) -> None:
         sql, params = _build_metadata_filter({"scores": {"$array_contains": 42}})
-        assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'strict $.scores[*]'" in sql
-        assert "jt.v = '42'" in sql
+        assert "LOCATE('\"42\",'" in sql
+        assert "JSON_QUERY(metadata FORMAT JSON, 'lax $.scores')" in sql
         assert params == []
 
     def test_array_contains_bool(self) -> None:
         sql, params = _build_metadata_filter({"flags": {"$array_contains": True}})
-        assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'strict $.flags[*]'" in sql
-        assert "jt.v = 'true'" in sql
+        assert "LOCATE('\"true\",'" in sql
+        assert "JSON_QUERY(metadata FORMAT JSON, 'lax $.flags')" in sql
         assert params == []
 
 
@@ -227,18 +224,17 @@ class TestBuildMetadataFilterArrayContainsAny:
         sql, params = _build_metadata_filter(
             {"tags": {"$array_contains_any": ["urgent", "bug"]}}
         )
-        assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'strict $.tags[*]'" in sql
-        assert "jt.v IN ('urgent', 'bug')" in sql
-        assert "EXISTS" in sql
+        assert "LOCATE('\"urgent\",'" in sql
+        assert "LOCATE('\"bug\",'" in sql
+        assert "JSON_QUERY(metadata FORMAT JSON, 'lax $.tags')" in sql
         assert params == []
 
     def test_array_contains_any_single_value(self) -> None:
         sql, params = _build_metadata_filter(
             {"tags": {"$array_contains_any": ["critical"]}}
         )
-        assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "jt.v IN ('critical')" in sql
+        assert "LOCATE('\"critical\",'" in sql
+        assert "JSON_QUERY(metadata FORMAT JSON, 'lax $.tags')" in sql
         assert params == []
 
     def test_array_contains_any_empty_list_raises(self) -> None:
@@ -263,8 +259,8 @@ class TestBuildMetadataFilterMultipleOperators:
             {"source": "kb", "tags": {"$array_contains": "urgent"}}
         )
         assert "JSON_VALUE(metadata FORMAT JSON, 'lax $.source') = 'kb'" in sql
-        assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "jt.v = 'urgent'" in sql
+        assert "LOCATE('\"urgent\",'" in sql
+        assert "JSON_QUERY(metadata FORMAT JSON, 'lax $.tags')" in sql
         # All values inlined — no bound params
         assert params == []
 
@@ -272,14 +268,14 @@ class TestBuildMetadataFilterMultipleOperators:
         """Exact-match and $array_contains both inline values; no bound params."""
         # exact-match path → value inlined via JSON_VALUE
         exact_sql, exact_params = _build_metadata_filter({"active": True})
-        # $array_contains path → value inlined via JSON_TABLE
+        # $array_contains path → value inlined via LOCATE/JSON_QUERY
         array_sql, _ = _build_metadata_filter({"flags": {"$array_contains": True}})
         # Both produce no bound params
         assert exact_params == []
         # Exact match uses JSON_VALUE with 'true'
         assert "'true'" in exact_sql
-        # Array contains uses JSON_TABLE with 'true'
-        assert "'true'" in array_sql
+        # Array contains uses LOCATE with "true"
+        assert '"true"' in array_sql
 
     def test_bool_false_exact_and_array_contains_consistent(self) -> None:
         """Same consistency check for False."""
@@ -287,7 +283,7 @@ class TestBuildMetadataFilterMultipleOperators:
         array_sql, _ = _build_metadata_filter({"flags": {"$array_contains": False}})
         assert exact_params == []
         assert "'false'" in exact_sql
-        assert "'false'" in array_sql
+        assert '"false"' in array_sql
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +401,7 @@ class TestListAllWithMetadataFilter:
         sql = pool.cursor.last_sql
         assert "JSON_VALUE" not in sql
         assert "JSON_EXISTS" not in sql
-        assert "JSON_TABLE" not in sql
+        assert "LOCATE" not in sql
 
     def test_exact_match_predicate_in_sql(self) -> None:
         repo, pool = self._make_repo()
@@ -437,7 +433,7 @@ class TestListAllWithMetadataFilter:
         repo, pool = self._make_repo()
         repo.list_all(_SCOPE, metadata_filter={"tags": {"$array_contains": "urgent"}})
         sql = pool.cursor.last_sql
-        assert "JSON_TABLE" in sql
+        assert "LOCATE" in sql
         assert "urgent" in sql
 
     def test_combined_min_confidence_and_metadata_filter(self) -> None:
@@ -485,7 +481,7 @@ class TestSearchWithMetadataFilter:
         sql = pool.cursor.last_sql
         assert "JSON_VALUE" not in sql
         assert "JSON_EXISTS" not in sql
-        assert "JSON_TABLE" not in sql
+        assert "LOCATE" not in sql
 
     def test_exact_match_in_step1_sql(self) -> None:
         """Step-1 (ID-ranking) SQL must contain the metadata predicate."""
@@ -536,7 +532,7 @@ class TestSearchWithMetadataFilter:
             search_chunks=False,
         )
         sql = pool.cursor.last_sql
-        assert "JSON_TABLE" in sql
+        assert "LOCATE" in sql
         assert "urgent" in sql
 
     def test_filter_combined_with_min_confidence(self) -> None:

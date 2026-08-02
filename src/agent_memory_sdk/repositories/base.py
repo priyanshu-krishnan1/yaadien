@@ -258,6 +258,27 @@ def _escape_sql_string(val: Any) -> str:
     return f"'{s}'"
 
 
+def _escape_sql_inner(val: Any) -> str:
+    """Return the SQL-safe raw string representation of *val* (no outer quotes).
+
+    Like :func:`_escape_sql_string` but without the surrounding single-quotes.
+    Used when the caller is building a composite SQL string literal such as
+    ``'"<value>,"'``, where the surrounding quotes are provided by the caller.
+
+    - **str** → internal single-quotes doubled, no wrapping quotes.
+    - **int / float** → their string form (e.g. ``42``).
+    - **bool** → ``true`` or ``false``.
+    - **None** → empty string (caller should not normally pass None here).
+    """
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, (int, float)):
+        return str(val)
+    if val is None:
+        return ""
+    return str(val).replace("'", "''")
+
+
 def _build_metadata_filter(
     metadata_filter: dict[str, Any] | None,
 ) -> tuple[str, list[Any]]:
@@ -265,16 +286,25 @@ def _build_metadata_filter(
 
     The ``metadata`` column is ``VARCHAR(4096)`` JSON text.  This function
     generates predicates using ``JSON_VALUE`` (for scalar comparisons) and
-    ``JSON_TABLE`` (for array-membership checks), both with the ``FORMAT JSON``
-    clause and ``lax`` path mode so Db2 12.1.5 fp0 parses the column as JSON
-    and tolerates absent fields (returning NULL rather than raising an error).
+    ``JSON_QUERY`` + ``LOCATE`` (for array-membership checks), with the
+    ``FORMAT JSON`` clause and ``lax`` path mode so Db2 12.1.5 fp0 parses the
+    column as JSON and tolerates absent fields (returning NULL rather than
+    raising an error).
 
-    ``JSON_EXISTS`` with filter predicates ``?(@ == "value")`` was found to
-    return NULL/false for all rows on Db2 12.1.5 fp0 even when FORMAT JSON is
-    present, regardless of the column value.  ``JSON_VALUE`` comparisons with
-    inlined SQL string literals are used instead; they avoid both the
-    ``JSON_EXISTS`` predicate bug and the ibm_db C-extension segfault that
-    occurs when ``JSON_VALUE(...) = ?`` is used with a bound ``?`` parameter.
+    Known Db2 12.1.5 fp0 limitations that shaped this implementation:
+
+    - ``JSON_EXISTS`` with filter predicates ``?(@ == "value")`` always returns
+      NULL/false on this build regardless of the column value.
+    - ``JSON_TABLE`` with array-navigation paths (e.g. ``'strict $.tags[*]'``)
+      raises SQL0104N (unexpected token) — array path expressions beyond the
+      bare root are rejected by this build of the CLI driver.
+    - ``JSON_VALUE(col, path) = ?`` with a bound ``?`` parameter causes a
+      segmentation fault in the ibm_db C extension.
+
+    All values are therefore inlined via ``_escape_sql_string`` (single-quote
+    doubling).  Array membership uses ``JSON_QUERY`` to extract the raw JSON
+    array text followed by ``LOCATE``-based substring matching with quote
+    boundaries to detect exact element presence.
 
     **Supported operator set (ORC-3 — deliberately small):**
 
@@ -293,18 +323,19 @@ def _build_metadata_filter(
     3. **$array_contains** — single value must appear in a JSON array field::
 
            {"tags": {"$array_contains": "urgent"}}
-           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'strict $.tags[*]'
-               COLUMNS(v VARCHAR(4096) PATH 'strict $') ERROR ON ERROR) jt
-               WHERE jt.v = 'urgent')
+           → LOCATE('"urgent",',
+                 REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,
+                     'lax $.tags') AS VARCHAR(32672)), '[]'), ']', ',')) > 0
+             The REPLACE turns ']' → ',' so every element is followed by ','
+             regardless of position, allowing a single LOCATE check.
              (value inlined; see security note)
 
     4. **$array_contains_any** — at least one of the supplied values must
        appear in a JSON array field::
 
            {"tags": {"$array_contains_any": ["urgent", "bug"]}}
-           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'strict $.tags[*]'
-               COLUMNS(v VARCHAR(4096) PATH 'strict $') ERROR ON ERROR) jt
-               WHERE jt.v IN ('urgent', 'bug'))
+           → (LOCATE('"urgent",', REPLACE(...)) > 0
+              OR LOCATE('"bug",', REPLACE(...)) > 0)
              (all values inlined; see security note)
 
     **Security note — all values are inlined as SQL string literals:**
@@ -396,16 +427,20 @@ def _build_metadata_filter(
 
             elif "$array_contains" in operand:
                 val = operand["$array_contains"]
-                sql_val = _escape_sql_string(val)
-                # Use JSON_TABLE to unnest the array; EXISTS returns true when
-                # at least one element matches.  ERROR ON ERROR ensures that a
-                # non-array field value causes a predictable error rather than
-                # silently returning no rows.
-                parts.append(
-                    f"EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON,"
-                    f" 'strict $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'strict $')"
-                    f" ERROR ON ERROR) jt WHERE jt.v = {sql_val})"
+                # Build a quoted-element search token, e.g. '"python",'
+                # JSON_QUERY extracts the raw JSON array fragment (e.g.
+                # '["python", "sdk"]').  REPLACE converts ']' → ',' so
+                # every element is uniformly followed by ',' regardless of
+                # position.  LOCATE then finds exact element boundaries:
+                # '"python",' in '["python", "sdk",' matches; '"python",' in
+                # '["python_sdk",' does not (next char is '_', not '"').
+                # Values are inlined; see security note in docstring.
+                search_token = f'\'"{_escape_sql_inner(val)}",' + "'"
+                arr_expr = (
+                    f"REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,"
+                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',')"
                 )
+                parts.append(f"LOCATE({search_token}, {arr_expr}) > 0")
 
             elif "$array_contains_any" in operand:
                 vals = operand["$array_contains_any"]
@@ -414,12 +449,15 @@ def _build_metadata_filter(
                         f"$array_contains_any on field {field!r} requires a "
                         f"non-empty list of values; got {vals!r}."
                     )
-                in_list = ", ".join(_escape_sql_string(v) for v in vals)
-                parts.append(
-                    f"EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON,"
-                    f" 'strict $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'strict $')"
-                    f" ERROR ON ERROR) jt WHERE jt.v IN ({in_list}))"
+                arr_expr = (
+                    f"REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,"
+                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',')"
                 )
+                locate_clauses = " OR ".join(
+                    f"LOCATE('\"{_escape_sql_inner(v)}\",', {arr_expr}) > 0"
+                    for v in vals
+                )
+                parts.append(f"({locate_clauses})")
 
         elif isinstance(operand, bool):
             # bool must be checked before int/float because bool is an int subclass.
