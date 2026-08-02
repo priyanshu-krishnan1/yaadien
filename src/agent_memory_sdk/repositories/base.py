@@ -241,36 +241,42 @@ def _build_metadata_filter(
     1. **Exact match** — scalar equality on a top-level field::
 
            {"source": "support"}
-           → JSON_VALUE(metadata, '$.source') = ?   param: "support"
+           → JSON_EXISTS(metadata, '$.source?(@ == "support")') = 'true'
+             (value inlined; see security note below)
 
     2. **$not** — scalar inequality::
 
            {"status": {"$not": "archived"}}
-           → JSON_VALUE(metadata, '$.status') <> ?  param: "archived"
+           → JSON_EXISTS(metadata, '$.status?(@ != "archived")') = 'true'
+             (value inlined; see security note below)
 
     3. **$array_contains** — single value must appear in a JSON array field::
 
            {"tags": {"$array_contains": "urgent"}}
-           → JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")')
+           → JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")') = 'true'
              (no bound param — value inlined in the path expression; see security note)
 
     4. **$array_contains_any** — at least one of the supplied values must
        appear in a JSON array field::
 
            {"tags": {"$array_contains_any": ["urgent", "bug"]}}
-           → ( JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")')
-               OR JSON_EXISTS(metadata, '$.tags[*]?(@ == "bug")') )
+           → ( JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")') = 'true'
+               OR JSON_EXISTS(metadata, '$.tags[*]?(@ == "bug")') = 'true' )
              (no bound params — values inlined; see security note)
 
-    **Security note — inlined values in JSON_EXISTS path expressions:**
-    ``JSON_VALUE`` predicates use bound ``?`` parameters so the driver handles
-    quoting safely.  ``JSON_EXISTS`` path expressions are SQL string literals —
-    ibm_db_dbi on Db2 12.1.5 fp0 does not support binding values into path
-    expressions via ``?``.  Values inlined in ``$array_contains`` /
-    ``$array_contains_any`` predicates are therefore escaped by this function:
-    any ``'`` (single-quote) is doubled to ``''`` and any ``\\`` is doubled to
+    **Security note — all values are inlined in JSON_EXISTS path expressions:**
+    All four operators use ``JSON_EXISTS`` path expressions (SQL string
+    literals) — ibm_db_dbi on Db2 12.1.5 fp0 does not support binding values
+    into path expressions via ``?``, and attempting to bind values for
+    ``JSON_VALUE(col, path) = ?`` comparisons triggers a segmentation fault in
+    the ``ibm_db`` C extension (null pointer dereference in the C-level
+    statement descriptor lookup).  All values are therefore inlined: any
+    ``'`` (single-quote) is doubled to ``''`` and any ``\\`` is doubled to
     ``\\\\`` before interpolation.  Non-string values (int, float, bool) are
-    formatted directly via ``repr()`` and are inherently safe.
+    formatted directly and are inherently safe.  As a result,
+    ``_build_metadata_filter`` **never** appends to ``params`` — it always
+    returns an empty params list, eliminating the ibm_db bound-parameter
+    mismatch entirely.
 
     **Field-name safety:**
     Field names are validated against the pattern ``^[A-Za-z_][A-Za-z0-9_.]*$``
@@ -293,8 +299,9 @@ def _build_metadata_filter(
     Returns:
         ``(sql_fragment, params)`` where *sql_fragment* is zero or more
         ``AND <predicate>`` clauses (leading space included) ready to be
-        appended to an existing WHERE clause, and *params* is the list of
-        bound parameter values for ``?`` placeholders in that fragment.
+        appended to an existing WHERE clause, and *params* is always an empty
+        list (all filter values are inlined in JSON path expressions — no ``?``
+        placeholders are emitted by this function).
 
     Raises:
         InvalidMetadataFilterError: if a field name is invalid, a value dict
@@ -336,13 +343,11 @@ def _build_metadata_filter(
 
             if "$not" in operand:
                 val = operand["$not"]
-                parts.append(f"JSON_VALUE(metadata, '$.{field}') <> ?")
-                if isinstance(val, bool):
-                    params.append("true" if val else "false")
-                elif val is None:
-                    params.append("null")
-                else:
-                    params.append(str(val))
+                escaped = _escape_json_path_value(val)
+                parts.append(
+                    f"JSON_EXISTS(metadata, '$.{field}?(@ != {escaped})')"
+                    " = 'true'"
+                )
 
             elif "$array_contains" in operand:
                 val = operand["$array_contains"]
@@ -368,12 +373,21 @@ def _build_metadata_filter(
 
         elif isinstance(operand, bool):
             # bool must be checked before int/float because bool is an int subclass.
-            parts.append(f"JSON_VALUE(metadata, '$.{field}') = ?")
-            params.append("true" if operand else "false")
+            # Use JSON_EXISTS to avoid ibm_db segfault with bound params on JSON_VALUE.
+            escaped = _escape_json_path_value(operand)
+            parts.append(
+                f"JSON_EXISTS(metadata, '$.{field}?(@ == {escaped})')"
+                " = 'true'"
+            )
         elif isinstance(operand, (str, int, float)) or operand is None:
-            # Exact match via JSON_VALUE scalar equality.
-            parts.append(f"JSON_VALUE(metadata, '$.{field}') = ?")
-            params.append(str(operand) if operand is not None else "null")
+            # Exact match — use JSON_EXISTS (inlined value) to avoid the ibm_db
+            # C-extension segfault that occurs when a bound ? parameter is used
+            # with JSON_VALUE(col, path) = ? on Db2 12.1.5 fp0 / ibm_db 3.2.9.
+            escaped = _escape_json_path_value(operand)
+            parts.append(
+                f"JSON_EXISTS(metadata, '$.{field}?(@ == {escaped})')"
+                " = 'true'"
+            )
 
         else:
             raise InvalidMetadataFilterError(
