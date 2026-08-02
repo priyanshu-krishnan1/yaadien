@@ -95,61 +95,77 @@ jobs:
         # Db2 client install is needed on the runner.
         run: pip install -e ".[dev,langchain,openai-agents,mcp]"
 
-      - name: Start Db2 container
-        # --privileged is required by the icr.io/db2_community/db2 image.
-        # DBNAME is intentionally omitted so the container does NOT auto-create
-        # the database — auto-creation uses the default 4KB page size, which
-        # cannot hold a VECTOR(1536,FLOAT32) index (6144 bytes > 4096).  We
-        # create TESTDB manually with PAGESIZE 32768 after the instance starts.
+      - name: Write docker-compose.db2.yml
+        # Inline the compose file so no extra tracked file is needed.
+        # Uses the same proven config as github.com/GeetikaChughIBM/haystack-core-integrations
+        # (integrations/ibm_db/docker-compose.yml) which passes CI reliably.
+        #
+        # DBNAME=TESTDB so the container auto-creates the database on first boot —
+        # this is what the healthcheck polls.  Note: the auto-created DB uses the
+        # container default page size (4 KB), which is too small for
+        # VECTOR(1536,FLOAT32) indexes (need ≥8 KB rows; we use 32 KB).
+        # DB2_CREATE_DB_PAGESIZE does NOT exist in the IBM container's setup
+        # scripts — it is silently ignored.  The page size is fixed in the
+        # "Recreate TESTDB with 32 KB pages" step below after the healthcheck
+        # confirms the instance is fully up.
+        # ARCHIVE_LOGS=false prevents archive-logging setup from blocking startup.
+        # shm_size: "1g" matches the reference; Db2 uses SYSV shared memory.
         run: |
-          docker run -d \
-            --name db2-dev \
-            -e DB2INST1_PASSWORD=passw0rd \
-            -e LICENSE=accept \
-            -p 50000:50000 \
-            --privileged \
-            icr.io/db2_community/db2:12.1.5.0
+          cat > /tmp/docker-compose.db2.yml << 'EOF'
+          services:
+            db2:
+              image: icr.io/db2_community/db2:12.1.5.0
+              platform: linux/amd64
+              privileged: true
+              environment:
+                LICENSE: accept
+                DB2INST1_PASSWORD: passw0rd
+                DBNAME: TESTDB
+                ARCHIVE_LOGS: "false"
+              ports:
+                - "50000:50000"
+              shm_size: "1g"
+              healthcheck:
+                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
+                interval: 30s
+                timeout: 60s
+                retries: 30
+                start_period: 300s
+          EOF
 
-      - name: Wait for Db2 instance and create database
-        # Phase 1: wait for the Db2 instance to start (no DB to connect to yet).
-        # Phase 2: create TESTDB with 32KB pages so VECTOR(1536,FLOAT32) indexes fit.
-        # Phase 3: verify TCP connectivity via the client (proves the port and auth work).
+      - name: Start Db2 and wait for healthy
+        # docker compose up --wait blocks until the healthcheck passes (i.e. the
+        # auto-created 4 KB TESTDB is reachable) or the deadline is reached.
+        # The 300s start_period + 30×30s retries = 15 min max.
+        run: docker compose -f /tmp/docker-compose.db2.yml up -d --wait
+        timeout-minutes: 15
+
+      - name: Recreate TESTDB with 32 KB pages
+        # The auto-created DB uses 4 KB pages — too small for VECTOR(1536,FLOAT32)
+        # column indexes (each row is ~6144 bytes; Db2 requires pagesize ≥ row
+        # width, so 32 KB is the correct choice).  Now that the instance is
+        # healthy we drop the placeholder DB and recreate it with the right page
+        # size.  The integration tests connect to TESTDB so the name stays the same.
+        #
+        # We copy a script into the container with docker cp and run it as db2inst1
+        # to avoid shell quoting complexity.
         run: |
-          echo "Phase 1 — waiting for Db2 instance to start (up to 10 min)…"
-          for i in $(seq 1 40); do
-            if docker exec db2-dev bash -c \
-                "su - db2inst1 -c 'db2 list db directory'" \
-                > /dev/null 2>&1; then
-              echo "  instance ready (attempt $i)"
-              break
-            fi
-            echo "  attempt $i/40 — not ready yet, sleeping 15s…"
-            sleep 15
-            if [ "$i" -eq 40 ]; then
-              echo "ERROR: Db2 instance did not start within 10 minutes"
-              docker logs db2-dev
-              exit 1
-            fi
-          done
+          # Write the recreate script on the runner
+          cat > /tmp/recreate_db.sh << 'EOF'
+          #!/bin/bash
+          . /home/db2inst1/sqllib/db2profile
+          db2 force application all
+          db2 drop database TESTDB
+          db2 create database TESTDB pagesize 32768
+          db2 connect to TESTDB
+          db2 "UPDATE DB CFG FOR TESTDB USING APPLHEAPSZ 1024 AUTOMATIC"
+          db2 connect reset
+          EOF
 
-          echo "Phase 2 — creating TESTDB with PAGESIZE 32768…"
-          docker exec db2-dev bash -c \
-            "su - db2inst1 -c 'db2 create database TESTDB using codeset UTF-8 territory US pagesize 32768'"
-
-          echo "Phase 3 — verifying TCP connectivity…"
-          for i in $(seq 1 10); do
-            if docker exec db2-dev bash -c \
-                "su - db2inst1 -c 'db2 connect to TESTDB'" \
-                > /dev/null 2>&1; then
-              echo "Db2 is ready (attempt $i)"
-              exit 0
-            fi
-            echo "  TCP attempt $i/10 — sleeping 10s…"
-            sleep 10
-          done
-          echo "ERROR: could not connect to TESTDB after creation"
-          docker logs db2-dev
-          exit 1
+          # Copy into the container and execute as db2inst1
+          CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2)
+          docker cp /tmp/recreate_db.sh "$CONTAINER:/tmp/recreate_db.sh"
+          docker exec "$CONTAINER" bash -c "chmod +x /tmp/recreate_db.sh && su - db2inst1 -c 'bash /tmp/recreate_db.sh'"
 
       - name: Run integration tests
         # Override addopts coverage flags — the integration suite covers the live
