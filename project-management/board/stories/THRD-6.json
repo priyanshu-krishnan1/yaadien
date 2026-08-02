@@ -1,0 +1,14 @@
+{
+  "id": "THRD-6",
+  "epic_id": "EPIC-8",
+  "title": "Thread facade: a bound-scope convenience object",
+  "summary": "New Thread class (thread.py) plus MemoryStore.create_thread()/get_thread()/delete_thread(), composing THRD-1..5's methods bound to one scope; delete_thread() reuses erase_all().",
+  "status": "Done",
+  "description": "Oracle's memory.create_thread(thread_id=,user_id=,agent_id=) returns a Thread handle whose methods (add_messages, get_messages, delete_message, add_memory, delete_memory, search, get_summary, get_context_card) are all pre-bound to that thread's scope. This SDK has no such object.\n\nAdd src/agent_memory_sdk/thread.py: a Thread class wrapping a MemoryStore + bound MemoryScope, with thin pass-through methods to THRD-1..5's new methods plus the existing get_context_card(). Add MemoryStore.create_thread(thread_id=,user_id=,agent_id=,tenant_id=) -> Thread (schema-less by default per Step 0 — a thread with zero writes has no rows yet, a documented limitation), MemoryStore.get_thread(thread_id, agent_id, tenant_id=, user_id=) -> Thread (re-opens by locating the most recent WorkingMemory row within that scope), and MemoryStore.delete_thread(scope) -> ErasureReport (a one-line reuse of the existing erase_all(scope) — do not duplicate its cascade logic). Export Thread from __init__.py.\n\nCORRECTED 2026-08-02 (technical-feasibility check): get_thread() requires agent_id as a real parameter, with NO 'search globally across agents' fallback — every read path in this SDK (get_by_id/list_all/search) hard-requires scope.agent_id, the VER-5-audited isolation boundary. An earlier draft of this story suggested an optional scope_hint with a global-lookup fallback; that is infeasible under this SDK's own governance model and was removed. See the dated DECISIONS.md entry.\n\nDepends on THRD-1 through THRD-5 all being merged — this is a pure composition layer over all five and must run last, not in parallel with them.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. src/agent_memory_sdk/thread.py: Thread class wrapping MemoryStore + MemoryScope. Methods: add_messages, get_messages, delete_message (THRD-1), add_memory, delete_memory (THRD-2/8), search (THRD-3), get_summary (THRD-4), get_context_card (ORC-1/PIPE-4). MemoryStore.create_thread/get_thread/delete_thread (last delegates to erase_all). Thread exported from __init__.py. Deferred import pattern to avoid circular import. 63 unit tests in tests/test_thrd6_thread.py."
+    }
+  ]
+}

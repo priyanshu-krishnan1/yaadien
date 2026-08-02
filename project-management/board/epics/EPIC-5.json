@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-5",
+  "title": "Production hardening — CI, security, packaging, and benchmarking",
+  "description": "Everything needed beyond feature completeness for a public release: automated CI enforcement of what today only runs locally (lint, type-check, unit + integration tests), dependency/static security scanning, package-build verification, and an agent-memory-specific benchmarking harness so retrieval quality, latency/cost, and isolation claims are measured and comparable to the platforms surveyed in ai-agent-platform-competitive-analysis.md instead of only asserted. Distinct from EPIC-4 (which verifies already-built features are correct) — this epic builds the missing hardening and measurement infrastructure itself. VER-13's market-fit gap check flagged the absence of CI as part of the overall beta-readiness picture; this epic is the fix.",
+  "comments": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "VER-1",
+  "epic_id": "EPIC-4",
+  "title": "Verify: Step 1: Scaffold",
+  "summary": "Re-verify ConnectionPool, connection string, ibm_db_dbi packaging, scripts/check_connection.py against STEP-1 acceptance criteria.",
+  "status": "Done",
+  "comments": [
+    {
+      "date": "2026-08-02",
+      "text": "PASS. Verified against source code: (1) pyproject.toml uses hatchling, src-layout with packages=[\"src/agent_memory_sdk\"], ibm_db>=3.2.3 only (ibm_db_dbi is bundled inside ibm_db — correct per IBM docs), pydantic>=2.0, python-dotenv; dev extras include pytest/ruff/mypy. (2) db/connection.py: _build_conn_str() reads DB2_DATABASE/HOSTNAME/UID/PWD/PORT/SECURITY env vars with OSError on missing required fields; ODBC keyword-pair format only; ConnectionPool wraps a queue.Queue of raw ibm_db handles; get_connection() context manager re-wraps ibm_db_dbi.Connection per checkout and calls rollback()/pool.put_nowait on exit; Windows DLL guard via os.add_dll_directory when IBM_DB_WIN_DLL_DIR is set. (3) scripts/check_connection.py runs SELECT 1 FROM SYSIBM.SYSDUMMY1. (4) .env.example documents all DB2_* vars. No gaps found. 517 unit tests pass, ruff clean, mypy strict clean."
+    }
+  ]
+}

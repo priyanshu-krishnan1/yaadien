@@ -1,0 +1,14 @@
+{
+  "id": "ENH-1",
+  "epic_id": "EPIC-2",
+  "title": "Confidence scoring on memory records",
+  "summary": "Add a 0.0-1.0 confidence field to every memory type; support min_confidence filtering on read.",
+  "status": "Done",
+  "description": "Add a `confidence` field (float, 0.0-1.0, default 1.0) to `_MemoryBase` and a matching column on all five Db2 tables via a new migration (bundle with ENH-2's content_hash column if practical). Update `create()`/`update()` in `repositories/base.py` to persist it and `_model_from_row()` to read it back. Add an optional `min_confidence: float = 0.0` parameter to `search()` and `list_all()` that appends an `AND confidence >= ?` predicate to the WHERE clause. The pluggable `Consolidator` protocol's derived records can now carry a genuine grounding-certainty score (e.g. an LLM-based consolidator sets confidence=0.6 for a tentative inference vs 0.95 for an explicit user statement) instead of implicitly defaulting to 1.0 for everything it derives.\n\nInspired by: Azure Cosmos DB's Agent Memory Toolkit (github.com/AzureCosmosDB/AgentMemoryToolkit) grades every extracted memory 0.0-1.0 and lets `search_cosmos(..., min_confidence=0.7)` filter low-certainty results out of retrieval.\n\nDb2 feasibility: trivial — one new nullable-with-default numeric column plus one new optional query parameter. No new infrastructure, no schema philosophy change.",
+  "comments": [
+    {
+      "date": "2026-08-01",
+      "text": "Done. Added confidence (DOUBLE NOT NULL DEFAULT 1.0) to all five tables in migration 0003_confidence_and_content_hash.sql (bundled with ENH-2's content_hash column). _MemoryBase.confidence: float = 1.0 in models.py. BaseRepository._SELECT_COLS now includes confidence at index 8; create() and update() persist it as a bound param; _model_from_row() in all five repos reads it back with a None→1.0 guard for pre-migration rows. list_all() and search() both accept min_confidence: float = 0.0 — appends AND confidence >= ? when > 0.0, no predicate at 0.0 (full backward compat). In search(), the predicate is applied in the ID-ranking step 1 so low-confidence rows don't consume top_k slots. Consolidator docstring example updated to show confidence=0.6 for tentative inferences vs 0.95 for explicit user statements. ARCHITECTURE.md section 3 updated; DECISIONS.md entry appended. 12 new unit tests, all 260 unit tests pass; ruff clean; mypy strict clean."
+    }
+  ]
+}

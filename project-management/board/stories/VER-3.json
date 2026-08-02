@@ -1,0 +1,13 @@
+{
+  "id": "VER-3",
+  "epic_id": "EPIC-4",
+  "title": "Verify: Step 3: Core models & repositories",
+  "summary": "Re-verify Pydantic models, per-type repos, scope enforcement on every SQL path, MemoryStore facade against STEP-3 acceptance criteria.",
+  "status": "Done",
+  "comments": [
+    {
+      "date": "2026-08-02",
+      "text": "PASS. Verified against models.py, repositories/base.py, and store.py: (1) Five Pydantic v2 models (WorkingMemory, EpisodicMemory, SemanticFact, EntityProfile, ProceduralMemory) inherit _MemoryBase — all DDL columns represented. MemoryScope is frozen (model_config frozen=True) with agent_id required. (2) BaseRepository ABC: _require_agent_id() guard on all methods; _scope_predicates() always emits agent_id=?, adds tenant/user/thread_id only when non-None. (3) SQL scope enforcement verified on all 7 paths: create() stamps scope cols from scope arg (overrides record fields); get_by_id() pairs id=? with scope; list_all() WHERE scope AND deleted_at IS NULL; search() same; forget() WHERE id=? AND scope AND deleted_at IS NULL; update() WHERE id=? AND scope AND version=? AND deleted_at IS NULL; purge_expired() WHERE deleted_at IS NOT NULL AND scope. (4) Vector SQL: CAST('{vec_str}' AS VECTOR(dim,FLOAT32)) inline literal for INSERT/UPDATE/search (Db2 12.1.5 fp0 binding fix), VECTOR_SERIALIZE() in SELECT. (5) EmbeddingProvider @runtime_checkable Protocol in types.py. (6) MemoryStore facade exposes .working/.episodic/.facts/.profiles/.procedures, propagates embedding_dim. No gaps found."
+    }
+  ]
+}

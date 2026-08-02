@@ -1,0 +1,14 @@
+{
+  "id": "THRD-1",
+  "epic_id": "EPIC-8",
+  "title": "Message ingestion primitives: add_messages / get_messages / delete_message",
+  "summary": "MemoryStore.add_messages()/get_messages(start,end)/delete_message() over WorkingMemory rows, matching Oracle's thread-message API surface without a new schema.",
+  "status": "Done",
+  "description": "Oracle's OracleThread exposes add_messages(list[Message|dict]), get_messages(start=,end=), and delete_message(id) as first-class, non-embedding-only operations over conversation turns. This SDK has no equivalent — WorkingMemory rows are the message-equivalent but there is no dedicated write/read/delete surface for them.\n\nAdd three methods to MemoryStore (store.py), each in its own new banner-comment section appended at the end of the class: (1) add_messages(messages: list[dict], scope) -> list[str] — builds a WorkingMemory record per message (content, metadata={role,...}, caller-supplied id if given) and calls remember(); (2) get_messages(scope, start=0, end=None) -> list[WorkingMemory] — chronological (oldest-first) slice via list_all() reversed, Python list-slice semantics; (3) delete_message(message_id, scope) -> int — soft-deletes via the existing working.forget(), returns 0 for ids in a different scope. Deliberately stays a soft-delete (this SDK's tombstone philosophy), a documented divergence from Oracle's hard-delete.\n\nFully independent of THRD-2/3/4 — safe to run as a parallel subagent alongside them. THRD-5 and THRD-6 depend on this story.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. add_messages(messages, scope) -> list[str] builds WorkingMemory per dict, absorbs extra keys (role etc.) into metadata, honors caller-supplied id, calls remember() for each. get_messages(scope, start=0, end=None) fetches newest-first, reverses to chronological, applies Python list-slice semantics. delete_message(message_id, scope) delegates to working.forget(), returns 1/0 int, soft-delete only (documented divergence from Oracle hard-delete). Banner section in store.py at THRD-1. 19 unit tests in tests/test_thrd1_messages.py, all passing. 758 total tests pass."
+    }
+  ]
+}

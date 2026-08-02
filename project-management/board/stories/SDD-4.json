@@ -1,0 +1,9 @@
+{
+  "id": "SDD-4",
+  "epic_id": "EPIC-9",
+  "title": "Sequence & Flow Diagrams for Core Operations",
+  "summary": "project-management/design/04-sequence-flows.md — five Mermaid sequenceDiagrams (remember() write path, search() read path incl. hybrid RRF, erase_all() cascade, export/import round-trip, reconcile() supersession) with real conditional branches shown, not flattened.",
+  "status": "To Do",
+  "description": "Write project-management/design/04-sequence-flows.md. Extends beyond ARCHITECTURE.md sections 4-7 (do not edit that file) with full Mermaid sequenceDiagram blocks for: (1) remember() incl. IngestResolver branch, chunking gate, Consolidator trigger; (2) search() incl. hybrid=True RRF fusion and search_chunks two-step resolution; (3) erase_all() cascade across all five repos plus chunks; (4) export_scope()/import_scope() round-trip; (5) reconcile() supersession flow.\n\nEach diagram's conditional branches (the 'if configured' points) must appear as real alt/opt Mermaid blocks, cross-checked against store.py's actual method bodies, not flattened into a single happy path.\n\nFully independent of every other SDD story — new file only.",
+  "comments": []
+}

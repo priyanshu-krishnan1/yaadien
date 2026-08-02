@@ -1,0 +1,14 @@
+{
+  "id": "THRD-4",
+  "epic_id": "EPIC-8",
+  "title": "Token-budget-aware thread summary: get_summary()",
+  "summary": "MemoryStore.get_summary(scope, except_last=, token_budget=) returns a deterministic, budget-truncated plain-text transcript — distinct from get_context_card()'s LLM Summarizer hook.",
+  "status": "Done",
+  "description": "Oracle's thread.get_summary(except_last=N, token_budget=N) returns a plain-text, role-labeled transcript of a thread's messages — a distinct, simpler mechanism from get_context_card()'s optional LLM-based Summarizer hook (ORC-1): no LLM call, just a deterministic, budget-truncated raw-text view.\n\nAdd a Summary dataclass to types.py (content, message_count, truncated). Add MemoryStore.get_summary(scope, except_last=0, token_budget=None) -> Summary in its own new banner-comment section: chronological messages, drop the last except_last, format each as \"{role} (-): {content}\", and if token_budget is set, truncate via a documented whitespace-token approximation (never exceed budget), setting truncated=True.\n\nFully independent of THRD-1/2/3 — safe to run as a parallel subagent alongside them.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. Summary dataclass added to types.py (content, message_count, truncated). MemoryStore.get_summary(scope, except_last=0, token_budget=None) -> Summary: chronological, role-labeled transcript with whitespace-token budget truncation. Summary exported from __init__.py. 22 unit tests in tests/test_thrd4_summary.py."
+    }
+  ]
+}

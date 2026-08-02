@@ -1,0 +1,13 @@
+{
+  "id": "VER-2",
+  "epic_id": "EPIC-4",
+  "title": "Verify: Step 2: Schema & migrations",
+  "summary": "Re-verify DDL column types, VECTOR indexes, partial-index removal, migration runner idempotency against STEP-2 acceptance criteria.",
+  "status": "Done",
+  "comments": [
+    {
+      "date": "2026-08-02",
+      "text": "PASS. Verified against 0002_memory_tables.sql and db/migrate.py: (1) All 5 tables have correct column types — id VARCHAR(36), scope cols VARCHAR(128)/nullable except agent_id NOT NULL, content CLOB(65536), metadata VARCHAR(4096) NOT NULL DEFAULT '{}', embedding VECTOR(1536,FLOAT32) NOT NULL (no DEFAULT clause — correct per IBM docs), timestamps, version INTEGER NOT NULL DEFAULT 1, deleted_at nullable. (2) CREATE VECTOR INDEX ... WITH DISTANCE COSINE on all 5 tables — correct metric. (3) Composite scope index, agent-only index, plain (non-partial) expires_at index per table — SQL0104N compatibility note present. (4) Migrator applies .sql files in lexicographic order, tracks versions in schema_migrations, check-before-create bootstrap is idempotent. No gaps found."
+    }
+  ]
+}

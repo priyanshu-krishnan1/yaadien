@@ -1,0 +1,13 @@
+{
+  "id": "VER-4",
+  "epic_id": "EPIC-4",
+  "title": "Verify: Step 4: Lifecycle — TTL, versioning, forget, consolidation",
+  "summary": "Re-verify forget/purge_expired semantics, optimistic concurrency, Consolidator protocol, remember() flow against STEP-4 acceptance criteria.",
+  "status": "Done",
+  "comments": [
+    {
+      "date": "2026-08-02",
+      "text": "PASS. Verified against repositories/base.py and store.py: (1) forget() sets deleted_at=now and version+=1; soft_delete() is an alias delegating to forget(). (2) purge_expired() hard-DELETE WHERE deleted_at IS NOT NULL AND scope — no expires_at predicate (correct: only tombstoned rows eligible, not merely TTL-expired). (3) update() optimistic concurrency: WHERE id=? AND scope AND version=record.version AND deleted_at IS NULL; rowcount==0 raises StaleWriteError; version atomically incremented to record.version+1 in the same UPDATE. (4) Consolidator Protocol + NoOpConsolidator in types.py; MemoryStore.remember() dispatches by model type, runs consolidator only on working/episodic writes, errors caught+logged, never propagated. (5) _should_consolidate() throttle per scope (consolidate_every_n). (6) scripts/purge_expired.py and scripts/consolidate_pending.py exist. StaleWriteError exported from store.py and __init__.py. No gaps found."
+    }
+  ]
+}

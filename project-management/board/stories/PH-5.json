@@ -1,0 +1,14 @@
+{
+  "id": "PH-5",
+  "epic_id": "EPIC-5",
+  "title": "Packaging build verification",
+  "summary": "CI job that builds the sdist/wheel with python -m build, validates with twine check, installs the wheel into a clean venv, and smoke-imports the package — catching packaging breakage before it reaches PyPI.",
+  "status": "Done",
+  "description": "Add a CI job (triggered at minimum on tags/releases, and ideally on every PR since it's cheap) that: runs `python -m build` to produce both sdist and wheel, runs `twine check dist/*`, creates a fresh throwaway venv, `pip install`s the built wheel (not the editable source tree — this is the point, to catch `[tool.hatch.build.targets.wheel] packages = [...]` misconfiguration or missing-file bugs that `pip install -e .` would never surface), and runs a minimal smoke test that imports `agent_memory_sdk` and touches one symbol from each of models/store/db to confirm the package layout is intact. Also verify the three optional extras (`[langchain]`, `[openai-agents]`, `[mcp]`, and `[all]`) each install cleanly from the built wheel.",
+  "comments": [
+    {
+      "date": "2026-08-02",
+      "text": "Done — added .github/workflows/package-check.yml (runs on every PR, every push to main, and every v* tag; 3×Python matrix: 3.10/3.11/3.12).\n\nPipeline: (1) python -m build → sdist + wheel; (2) twine check dist/*; (3) clean throwaway venv + pip install <wheel> (not -e .); (4) scripts/smoke_test.py — 14 assertions covering: top-level import, __version__, models.MemoryScope, models.WorkingMemory, EpisodicMemory/SemanticFact/EntityProfile/ProceduralMemory importable, store.MemoryStore is a class, db.connection.ConnectionPool is a class, db.migrate.SchemaPolicy importable, types.EmbeddingProvider importable, types.DistanceMetric.COSINE accessible, all 21 __all__ symbols present. Each assertion passed locally.\n\nFour extras each tested in their own isolated venv: [langchain] → langchain_core.messages.BaseMessage; [openai-agents] → agents; [mcp] → mcp; [all] → all three together. All install cleanly. DECISIONS.md entry appended (2026-08-02)."
+    }
+  ]
+}

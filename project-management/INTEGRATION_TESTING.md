@@ -207,3 +207,55 @@ docker stop db2-dev && docker rm db2-dev
 | Tests skip silently | `DB2_DATABASE` env var not exported in this shell session |
 | `ConnectionPoolExhausted` | Increase `DB2_POOL_SIZE` (default 5) or check for connection leaks |
 | `SQLSTATE 42613` on migration | Invalid VECTOR column DDL — confirm no `DEFAULT VECTOR_FILL` clause in `0002_memory_tables.sql` (already removed) |
+
+---
+
+## Live-coverage matrix (EPIC-10)
+
+> **Added:** 2026-08-05 by LIVE-19 (post-EPIC-10 audit)
+>
+> All 18 LIVE-* files were added by Epic-10. Combined with the original 3-file baseline (STEP-7), the integration suite now has **21 files and 252 collected tests** that exercise every public MemoryStore, Thread, and repository method against a real Db2 instance.
+
+### New files added by Epic-10
+
+| Test file | Story | Methods exercised / Coverage |
+|---|---|---|
+| `test_dedup_confidence.py` | LIVE-1 | `SemanticFact.create()` with `confidence` 0.3/0.6/0.95/1.0, `list_all(min_confidence=)`, `search(min_confidence=)`, dedup hits for byte-identical and normalized-identical content, cross-scope dedup isolation, `update()` hash recompute, dedup skip on deleted row, dedup skip on superseded row |
+| `test_reconciliation.py` | LIVE-2 | `MemoryStore.reconcile('facts', scope)`, `SemanticFactRepository.supersede()`, `list_all()` excludes superseded, `search()` excludes superseded, guards: entity_profiles/procedural untouched, already-deleted noop, already-superseded noop |
+| `test_consolidation_worker.py` | LIVE-3 | `MemoryStore.consolidate_every_n` throttle, `BaseRepository._claim_consolidated()` real concurrent 2-thread race (20 iterations), worker-script `_fetch_pending()` + idempotency |
+| `test_context_card.py` | LIVE-4 | `MemoryStore.get_context_card(scope, max_turns=)` chronological ordering, `turn_count`, `latest_at`, empty scope, `Summarizer` hook with result and failure fallback; PIPE-4 `include_long_term=True`, `relevant_facts`/`relevant_profiles` backfill via `min_results_by_type` |
+| `test_chunking.py` | LIVE-5 | `ChunkRepository.insert_chunk()`, `list_all_for_scope()`, `list_all()` pagination, `search_chunks()` nearest-neighbour, `delete_by_source()` targeted removal, `erase_by_scope()` full scope erasure |
+| `test_metadata_filters_schema_policy.py` | LIVE-6 | `list_all(metadata_filter=)` exact match / `$not` / `$array_contains` / `$array_contains_any`, no-match empty result, `search(metadata_filter=)` end-to-end, `InvalidMetadataFilterError` raised live, `Migrator(schema_policy=REQUIRE_EXISTING)` passes on migrated schema |
+| `test_hybrid_search.py` | LIVE-7 | `search(hybrid=True, query_text=)` reorders vs. pure vector, RRF formula verified independently, empty `query_text` degenerates to vector-only, no Text Search Extender dependency confirmed by successful execution |
+| `test_ingest_resolver.py` | LIVE-8 | All four `IngestAction` outcomes: ADD (new row), UPDATE (version bumped), DELETE (tombstoned), NOOP (row count unchanged); cross-scope isolation: resolver sees empty `similar` list for foreign-scope rows |
+| `test_agent_framework_integration.py` | LIVE-9 | `MemoryStoreContextProvider.before_run()` / `after_run()` real writes; `MemoryStoreHistoryProvider.save_messages()` / `get_messages()` real round-trip; scope isolation; gated behind `pytest.importorskip("agent_framework")` |
+| `test_erasure.py` | LIVE-10 | `MemoryStore.erase_all()` counts match pre-call raw `SELECT COUNT(*)`, rows truly hard-deleted, sibling scope intact, `delete_thread()` thread-scoped cascade leaves other threads untouched |
+| `test_export_import.py` | LIVE-11 | `export_scope()` streaming Iterator, `import_scope()` full field round-trip (content/metadata/embedding within float32 tolerance/confidence), `_type` discriminator on every record, `ScopeMismatchError` on mismatched import, vector tolerance 1e-4 |
+| `test_thread_primitives.py` | LIVE-12 | `add_messages()` / `get_messages(start, end)` / `delete_message()` (THRD-1); `add_memory()` / `add_user()` upsert / `add_agent()` upsert (THRD-2); `MemoryStore.search(query_text, ...)` with real embedding provider, `record_types` filter, `metadata_filter` passthrough (THRD-3); `delete_memory()` table-agnostic dispatch to facts/profiles/procedures (THRD-8) |
+| `test_thread_summary.py` | LIVE-13 | `get_summary()` full transcript, budget truncation stops before exceeding, oldest-first inclusion, `except_last` exclusion, empty scope empty string |
+| `test_memory_extractor.py` | LIVE-14 | `MemoryExtractor` with `extract_memories=True` writes to `store.facts`, `extract_memories=False` skips, raising extractor caught and logged without failing `add_messages()` |
+| `test_thread_facade.py` | LIVE-15 | `MemoryStore.create_thread()` schema-less, `get_thread()` reopens existing, `get_thread()` empty on nonexistent, all Thread pass-through methods (add_messages/get_messages/delete_message/add_memory/delete_memory/get_summary/get_context_card), `delete_thread()` cascade, thread-scope isolation |
+| `test_cascading_delete.py` | LIVE-16 | `delete_user(cascade=True)` multi-table multi-thread cascade verified by raw counts, sibling user intact, `delete_agent(cascade=True)` clears full agent tree, `cascade=False` removes only EntityProfiles |
+| `test_async_facade.py` | LIVE-17 | `search_async()` produces identical results to sync, `add_messages_async()` real Db2 write, `get_context_card_async()` round-trip, `asyncio.gather()` concurrent calls across two scopes no cross-contamination |
+| `test_scope_matching_modes.py` | LIVE-18 | `exact_agent_match=True` default exhaustive leak detection (multiple agents, multiple record types), `exact_agent_match=False` fuzzy mode broader results; `exact_thread_match=True/False`; unscoped-only query returns only thread_id=None rows; static source scan confirms no hardcoded `False` in production code |
+
+### Pre-existing baseline files (STEP-7)
+
+| Test file | Story | Methods exercised |
+|---|---|---|
+| `test_migration.py` | STEP-7 | Migration idempotency, `schema_migrations` tracking, all 5 tables correct columns + vector indexes |
+| `test_core.py` | STEP-7 | CRUD × 5 types, vector search, scope isolation, forget/tombstone, purge_expired, TTL, StaleWriteError, Consolidator |
+| `test_adapters_integration.py` | STEP-7 | LangChain `Db2ChatMessageHistory`/`Db2MemoryStore`, OpenAI Agents `Db2Session`, MCP tools |
+
+### Methods confirmed intentionally live-untestable
+
+| Method | Reason |
+|---|---|
+| `ConnectionPool._build_conn_str()` | Pure in-process string construction; no Db2 interaction |
+| `Migrator.run()` under `REQUIRE_EXISTING` with empty schema | Requires DBA-provisioned empty schema namespace; the PASS path (migrated schema) is tested; the FAIL path is documented as `xfail` in `test_metadata_filters_schema_policy.py` |
+| `NoOpConsolidator` / `NoOpReconciler` / `NoOpIngestResolver` / `NoOpSummarizer` / `NoOpMemoryExtractor` | No-ops by definition; behavior is `[]` / `''` / `ADD` with no Db2 interaction |
+| `scripts/check_connection.py` | A CLI script, not a library function; verified in STEP-1 |
+
+### CI job coverage
+
+PH-2's `integration-test` job in `.github/workflows/ci.yml` runs `pytest -m integration -v --no-cov`, which collects all 21 `tests/integration/` files (all marked `integration`) automatically. No CI YAML changes are required for the new LIVE-* files. The `agent-framework` extra is excluded from the CI install line; `test_agent_framework_integration.py` gates itself behind `pytest.importorskip` and degrades to a skip rather than an error in that environment.

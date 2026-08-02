@@ -4490,3 +4490,361 @@ OSS-contribution-readiness audit.
 **Supersedes:** Nothing — first entry recording this hardening pass.
 
 ---
+
+## 2026-08-02 — EPIC-10 backlog: live-Db2 integration coverage for everything shipped after STEP-7
+
+### Purpose and scope
+
+STEP-7 built tests/integration/ itself and used it to cover only the
+STEP-1..7 baseline: CRUD round-trips, vector-search nearest-neighbour
+correctness, scope isolation, TTL purge, forget/tombstone, optimistic
+concurrency, and the original three adapters. Every feature shipped in the
+epics since — `EPIC-2` (`ENH-1..4`), `EPIC-3` (`ORC-1..4`), `EPIC-7`
+(`PIPE-1..6`), and `EPIC-8` (`THRD-1..10`) — was verified in its own story
+only against a mocked/fake `ibm_db_dbi` cursor. Confirmed by grep: none of
+`get_context_card`, `content_hash`, `min_confidence`, `reconcile`,
+`consolidated_at`, `hybrid`, `chunk`, `SchemaPolicy`, `IngestResolver`,
+`erase_all`, `export_scope`/`import_scope`,
+`add_messages`/`get_messages`/`delete_message`,
+`add_memory`/`add_user`/`add_agent`, `get_summary`, `MemoryExtractor`, the
+`Thread` class, `delete_user`/`delete_agent`, `delete_memory`, the
+`*_async` methods, or `exact_agent_match`/`exact_thread_match` appear
+anywhere in `tests/integration/*.py`. A mocked cursor cannot catch what
+only a real Db2 engine can: real `VECTOR_DISTANCE`/`TO_VECTOR` SQL
+correctness, real row-level locking under a concurrent claim race
+(`ENH-4`'s `_claim_consolidated`), real JSON-column metadata-filter
+predicates, real `SQLCODE` errors, or an actual cross-scope data leak in
+the `VER-5`-audited isolation core (`THRD-10`'s `exact_agent_match=False`
+fuzzy mode). `EPIC-10` closes that gap — it does not re-litigate whether
+the features work (every one of them is already `Done` and unit-tested);
+it verifies the same claims against a real database instead of a fake
+cursor, and fixes any genuine bug a live run surfaces along the way,
+following `STEP-7`'s own precedent (its base.py docstring fix).
+
+### Why this needed a new epic instead of folding into EPIC-5 (Production hardening)
+
+`EPIC-5`/`PH-2` built the CI *mechanism* that runs the integration suite
+(a live Db2 service container, gated behind the `integration` marker,
+skipped without `DB2_DATABASE`) — it did not audit what the suite actually
+covers. `EPIC-10` is downstream of `PH-2` the same way `EPIC-6` was
+downstream of `PH-6`: the infrastructure to run live tests already exists
+and needs zero changes; what's missing is the tests themselves.
+
+### Story breakdown and parallel-execution design
+
+Nineteen stories, `LIVE-1` through `LIVE-19`, tracked as `EPIC-10`.
+`LIVE-1` through `LIVE-18` are **fully independent** — each authors exactly
+one new file under `tests/integration/`, reads only existing source code,
+and edits no file any other `LIVE-*` story edits. Each story is instructed
+to define any needed fixtures locally inside its own file rather than
+editing the shared `tests/integration/conftest.py`, specifically so the
+"safe to run as N simultaneous subagents" property (the same pattern
+established in `EPIC-8` and `EPIC-9`) holds even though this epic touches
+a shared directory (`tests/integration/`) rather than each story owning an
+isolated new top-level file elsewhere. `LIVE-19` (the coverage audit)
+depends on all eighteen being merged and must run last, playing the same
+role `VER-13` played for `EPIC-4` and `SDD-12` played for `EPIC-9`.
+
+Coverage is grouped by feature area, not 1:1 with every ENH/ORC/PIPE/THRD
+story, to avoid over-fragmenting genuinely small related surfaces:
+`LIVE-1` bundles `ENH-1`+`ENH-2` (both landed in the same migration,
+0003); `LIVE-4` bundles `ORC-1`+`PIPE-4` (the same `get_context_card()`
+method, v1 and v2 behavior); `LIVE-12` bundles `THRD-1`+`THRD-2`+`THRD-3`+
+`THRD-8` (four small store-level convenience wrappers over
+already-live-tested repositories). Every other `ENH`/`ORC`/`PIPE`/`THRD`
+story gets its own dedicated `LIVE-*` story.
+
+### The one deliberately flagged high-risk story
+
+`LIVE-18` (live coverage for `THRD-10`'s `exact_agent_match`/
+`exact_thread_match`) carries forward the exact blast-radius warning
+`EPIC-8`'s own risk note gave `THRD-10` itself: it is scoped as
+strictly read-only test-writing against existing behavior, explicitly
+forbidden from touching `_scope_predicates()` or `MemoryScope`
+(`models.py`), and instructed to treat any failing assertion as a P0
+isolation finding to report, not a test to adjust until it passes.
+
+### Grounding
+
+Every story names its target source file(s) and method(s) directly (e.g.
+`_claim_consolidated()` in `repositories/base.py:1316`,
+`get_context_card()` in `store.py:1282`, the `Thread` class in
+`thread.py`) and the existing `tests/integration/conftest.py` fixtures
+each should reuse (`db2_pool`, `migrated_pool`, `store`, `unique_agent_id`,
+`scope`, `thread_scope`, `vec_dim`, `zero_vec`, `make_unit_vec`), so a
+subagent does not have to rediscover them from scratch — the same
+grounding discipline used for `EPIC-8`/`EPIC-9`.
+
+**Made during:** EPIC-10 backlog planning (this session).
+
+**Supersedes:** Nothing — first EPIC-10 entry.
+
+---
+
+## 2026-08-05 — BOARD.html restructured: generated from sharded per-epic/per-story JSON, not hand-edited
+
+### Problem
+
+`BOARD.html` had grown to 10 epics / 89 stories in a single embedded JSON
+blob — 227 KB, ~56K tokens, already over the 25K-token read limit hit
+directly this session when trying to `Read` the whole file. Every board
+update (a status flip, a completion comment) required grepping the whole
+file for a unique insertion point and editing a fragile single-file JSON
+blob. Worse, this directly worked against the project's own execution
+model: `EPIC-8`, `EPIC-9`, and `EPIC-10` are explicitly designed for many
+simultaneous subagents, but every one of them still had to write its
+"Done" comment into the *same* monolithic file to report status — the
+real bottleneck, not file size alone. Confirmed the in-browser "move
+card"/"add comment" UI was cosmetic only (`toast('Comment added —
+in-memory only')`); the file itself was always the actual source of
+truth.
+
+### Fix
+
+Split the source of truth to one JSON file per record, generate the
+viewable board from it:
+
+- `project-management/board/epics/EPIC-N.json` — one file per epic.
+- `project-management/board/stories/PREFIX-N.json` — one file per story
+  (story-level, not epic-level, specifically because stories *within* one
+  epic are the unit of parallel subagent work — an epic-level split would
+  still contend when N siblings finish at once).
+- `project-management/board/template.html` — the static CSS/render-JS
+  shell, unchanged in substance, with the old "agents edit the JSON
+  below" banner replaced by a "GENERATED FILE, do not hand-edit" one and
+  a `__BOARD_DATA_JSON__` placeholder.
+- `project-management/board/build.py` — glob + validate (required
+  fields, `status` enum, `epic_id` resolves to a real epic, no duplicate
+  ids, comment date format `YYYY-MM-DD`) + natural-sort (`BENCH-3a` <
+  `BENCH-3b` < `BENCH-4`, not lexicographic) + inject into the template +
+  write `../BOARD.html`. `--check` mode regenerates in memory and diffs
+  against the committed file without writing, for CI.
+- `epics/_NEXT_ID.txt` — a one-line counter so two agents proposing a new
+  epic at the same time collide on a trivial single-line file instead of
+  the whole board.
+- `Makefile` gains `make board` / `make board-check`.
+- `ci.yml`'s `lint-typecheck-test` job (3.11 leg only) gains a "Board —
+  check BOARD.html is not stale" step running `build.py --check` —
+  stdlib-only, no extra install needed, catches a PR that edited a shard
+  but forgot to regenerate.
+- `project-management/README.md` and the new `project-management/board/
+  README.md` document the new workflow (update one story file; add a new
+  epic via `_NEXT_ID.txt`; always run `make board` before committing).
+
+### Migration integrity
+
+Verified lossless: extracted straight from the live on-disk `BOARD.html`
+(via `json.loads` → one `json.dumps` per record, no field renaming/
+reordering — two legacy comment shapes already present in the data, a
+bare string on several `VER-*` stories and `{"author","date","body"}` on
+`PIPE-5`, were preserved as-is and the validator extended to tolerate
+them rather than rewriting historical content) — confirmed by diffing
+every pre-existing epic/story against the last commit's `BOARD.html`:
+all 9 pre-existing epics and 70 pre-existing stories matched byte-for-
+byte, with the only additions being `EPIC-10` and `LIVE-1..19` (added
+earlier this session). Visually re-verified in-browser after
+regeneration: epic list, progress counts, search/filter, and a story
+modal (including a legacy-string-comment story) all render identically
+to before.
+
+### What did not change
+
+`BOARD.html` is still committed, still a single self-contained file
+someone double-clicks and opens in a browser — only its authorship moved
+from hand-edited to generated. No board content (epics, stories,
+comments, statuses) was altered by this change, including the `EPIC-10`
+stories that a separate process had already marked `Done` with real
+implementation comments partway through this session.
+
+**Made during:** board restructuring (this session), following up on the
+EPIC-10 backlog entry immediately above.
+
+**Supersedes:** Nothing structural — first entry recording this change.
+The "agents edit the JSON below" instruction in the old inline
+`BOARD.html` comment (present since the file's original creation) is
+superseded by this entry's workflow.
+
+---
+
+## 2026-08-05 — Board restructuring follow-up: the actual instruction surface (PROMPTS.md) was still telling agents to hand-edit BOARD.html
+
+### The gap
+
+The board-restructuring entry immediately above built the sharded
+`board/epics/`+`board/stories/` structure and a `build.py` generator, but
+didn't check whether anything still *instructs* an agent to hand-edit
+`BOARD.html` directly. It does: `PROMPTS.md`'s "Step 0" block — the
+literal text `README.md` says to "paste first, every time you start a new
+agent session on this repo" — said "later steps update its embedded JSON
+directly as work happens," and every one of the 52 individual step
+prompts in the file (104 occurrences) says "In BOARD.html, set X's status
+to Y and add a comment." Twelve of those steps (`SDD-1` through `SDD-12`,
+`EPIC-9`) are still `To Do` and will actually be pasted into a future
+session verbatim — this wasn't stale historical text, it was live
+instructional debt that would have made the very next subagent undo the
+migration by hand-editing the generated file again.
+
+### Fix
+
+Two places needed updating, not the 104 individual step lines:
+
+1. The "Tracking: local board, not Jira MCP" prose section — rewritten to
+   describe the sharded-file workflow as the primary mechanism, not the
+   old direct-edit one.
+2. The Step 0 pasted block itself — added an explicit, unmissable
+   redirect: "BOARD.html ITSELF IS GENERATED — NEVER HAND-EDIT ITS
+   EMBEDDED JSON... Wherever any step below says 'in BOARD.html, set X's
+   status to Y and add a comment', that means: edit
+   project-management/board/stories/X.json ..., then run `make board`."
+
+The 104 individual "In BOARD.html, set X's status..." lines scattered
+through Steps 1–8 / `ENH`/`ORC`/`PH`/`BENCH`/`PIPE`/`THRD`/`SDD` were
+deliberately left untouched rather than rewritten one-by-one: Step 0 is
+unconditionally pasted before any of them, so a single authoritative
+redirect stated once covers every current and future occurrence without
+104 risky, easy-to-mangle edits to near-duplicate prose. This also means
+no future new "Step N"-style story prompt written in this file's voice
+needs to remember the new mechanism explicitly — it inherits Step 0's
+redirect for free.
+
+### Second, structural safeguard: the generated JSON is now minified
+
+Independent of the documentation fix, `build.py`'s embedded JSON in
+`BOARD.html` is now written with `json.dumps(..., separators=(",", ":"))`
+(single line, no indentation) instead of `indent=2` — deliberately, so it
+no longer looks identical in shape/style to the pretty-printed
+`board/epics/*.json` / `board/stories/*.json` shard files. This is
+defense in depth for an agent that skips or doesn't re-read `PROMPTS.md`
+before acting (e.g. one resumed mid-task, or handed a narrow instruction
+like "mark STEP-3 done" without the surrounding session context) — a
+single 226 KB line of JSON is a much weaker invitation to a surgical
+find/replace edit than nicely formatted JSON was. Confirmed
+`BOARD.html` still renders identically (epic list, progress counts,
+search, story modals) after minification — the front-end only
+`JSON.parse()`s the blob, formatting is irrelevant to it — and
+`build.py --check` still passes.
+
+**Made during:** board restructuring follow-up (this session), prompted
+by direct user pushback on whether the restructuring alone would actually
+prevent agent confusion. It wouldn't have — `PROMPTS.md` was the real gap.
+
+**Supersedes:** Nothing further — refines the entry immediately above.
+
+---
+
+## 2026-08-05 — Reverted BOARD.html minification: pretty-printed embedded JSON restored
+
+The immediately-preceding entry's minification of `BOARD.html`'s embedded
+JSON (`separators=(",",":")`, no indent) is reverted — `build.py` now
+writes `json.dumps(data, indent=2, ...)` again, same as before that
+change. In practice it caused exactly the confusion it was meant to
+prevent (a user pointed at the resulting single 200KB+ line and asked why
+the data wasn't loaded from the JSON files directly instead of being
+duplicated inline) and had concrete costs beyond that: a normal
+line-ranged file read of that region failed outright (demonstrated live —
+`Read` with `offset`/`limit` on the surrounding lines still pulled in the
+entire 200,222-character line and exceeded the tool's token cap), `git
+diff` on any single story change would show one opaque unreadable line
+instead of a small localized diff, and `grep -n` context around any match
+became useless. Weighed against those costs, the minification's actual
+benefit was marginal: `BOARD.html` already carries a "GENERATED FILE, do
+not hand-edit" banner immediately above the data, `PROMPTS.md`'s Step 0
+now explicitly redirects every "edit BOARD.html" instruction to the
+correct shard file, and `build.py --check` in CI catches drift
+regardless of formatting. Three independent guardrails already cover the
+"don't hand-edit this" concern without needing the JSON itself to be
+unreadable.
+
+Confirmed live-fetching the shard files directly from BOARD.html instead
+of embedding a generated copy is not a viable alternative, independent of
+formatting: BOARD.html is designed to be opened via `file://` with no
+server (stated explicitly in this project's own docs), and browsers
+(Chrome in particular) block `fetch()`/`XHR` to sibling local files from
+a `file://` page as cross-origin — every `file://` path is its own opaque
+origin. Embedding a build-time-generated copy is the correct pattern
+here, not a workaround for something better.
+
+**Made during:** direct follow-up to a user question asking why the data
+was duplicated instead of loaded from the JSON files, prompting a
+re-examination of the minification trade-off from two entries prior.
+
+**Supersedes:** The minification decision in the "Second, structural
+safeguard" section of the entry two above this one. Everything else in
+that entry and the one before it (the sharded structure itself,
+`PROMPTS.md`'s redirect, the CI drift check) stands unchanged.
+
+---
+
+## 2026-08-05 — Board: agents redirected off BOARD.html entirely (reads, not just writes), plus an auto-rebuilding pre-commit hook
+
+### Reads redirected, not just writes
+
+Every prior board-restructuring entry above only addressed *writing* to
+`BOARD.html` — nothing stopped an agent from *reading* the ~1700-line
+generated file to check a story's status, which defeats the point of
+sharding just as much as a hand-edit would (an agent still has to load
+the whole board to answer a one-story question). Updated every
+instructional surface to redirect reads too:
+`project-management/board/README.md` (new explicit "agents: never
+read/grep BOARD.html" note at the top), `PROMPTS.md` (both the "Tracking"
+prose section and the Step 0 pasted block — "an agent should never
+open/read/grep BOARD.html... read `board/epics/*.json` /
+`board/stories/*.json` directly instead"),
+`audits/beta-readiness-audit-prompt.md` (its file-list item 3, previously
+"open in a browser (or read ... directly)" — a soft either/or — now reads
+the shard files as the *only* correct path for an agent, with BOARD.html
+named explicitly as what NOT to open), and the root
+`project-management/README.md` board entry. `BOARD.html` remains exactly
+what it always was for a human: open it in a browser.
+
+### Pre-commit hook: automatic rebuild-and-stage on a forgotten `make board`
+
+Added `project-management/board/pre_commit_hook.py` (the versioned
+logic) plus a `make install-hooks` target that installs a thin shim at
+`.git/hooks/pre-commit` calling it. On every commit: runs `build.py`; if
+a shard changed but `BOARD.html` wasn't regenerated, rebuilds it and
+`git add`s the result automatically so the commit lands correct without
+anyone remembering to run `make board`; if a shard is invalid, aborts the
+commit with the validation error instead of letting bad data land.
+Verified directly (not via an actual commit, per this session's
+no-unrequested-commits discipline): ran `.git/hooks/pre-commit` standalone
+three times — already-in-sync (no-op, exit 0), a story edited without
+rebuilding (regenerated + staged `BOARD.html`, exit 0, confirmed via `git
+status`), and a deliberately-invalid story status (aborted with the exact
+validation error, exit 1) — then reverted every test edit before moving
+on.
+
+### Why the hook installs at `.git/hooks/pre-commit`, not via `core.hooksPath`
+
+Checked `git config core.hooksPath` before touching anything and found it
+already set to `/opt/vault-radar/hooks` — an IBM-managed, MDM-deployed
+secret-scanning hook (`/opt/vault-radar/hooks/pre-commit`'s own header:
+"Do not modify. Tampering is logged and reviewable by CISO, and the MDM
+platform reinstalls the managed hook on its next converge"). Redirecting
+`core.hooksPath` to a repo-local `.githooks/` directory — the originally
+obvious approach — would have silently disabled that security tool
+instead of adding board automation alongside it. Read the managed hook's
+source instead of guessing: it has its own `probe_chain()`/
+`run_chained_hook()` logic that specifically detects Husky, lefthook, the
+`pre-commit` framework, and — the relevant case — a plain executable
+`.git/hooks/pre-commit`, treating the last as a "custom" chained hook it
+runs *before* its own secret scan, with a nonzero exit from that hook
+correctly reported as "a pre-existing repository hook... blocked this
+commit. This is not a secret finding." So installing at the standard
+`.git/hooks/pre-commit` path — never touching `core.hooksPath` or the
+managed file — is what lets both the board rebuild and the secret scan
+run correctly on every commit. `make install-hooks` also refuses to
+overwrite a `.git/hooks/pre-commit` it didn't itself install (checks for
+its own marker comment first), rather than clobbering some other tool
+that might already be there in a future clone.
+
+**Made during:** direct user request ("make agents not read BOARD.html"
++ "build BOARD.html automatically on commit if I forget") — this session.
+
+**Supersedes:** Nothing structural. Extends (does not replace) the two
+board-restructuring entries above: the sharded source of truth, the
+minified-then-reverted formatting decision, and the CI drift check all
+stand unchanged — this entry adds a local pre-commit layer in front of
+that CI check, and closes the read-side gap the prior entries left open.
+
+---

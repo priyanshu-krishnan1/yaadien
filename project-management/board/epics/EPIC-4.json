@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-4",
+  "title": "Beta release readiness — worldwide public beta verification",
+  "description": "Independent re-verification of every Done story against the actual source code (not DECISIONS.md intent), plus a market-fit gap check against the competitive-analysis study, gating the worldwide public beta go/no-go decision.",
+  "comments": []
+}

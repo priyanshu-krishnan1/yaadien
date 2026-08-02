@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-14",
+  "epic_id": "EPIC-10",
+  "title": "Live: MemoryExtractor automatic extraction on message ingest",
+  "summary": "New tests/integration/test_memory_extractor.py — a real MemoryExtractor wired into add_messages() actually writes extracted facts/profiles to Db2 (THRD-5).",
+  "status": "Done",
+  "description": "THRD-5's MemoryExtractor protocol (types.py) is unit-tested only with a fake cursor. Add tests/integration/test_memory_extractor.py: construct a MemoryStore against the live pool with a small deterministic test MemoryExtractor (no LLM needed — e.g. a callback that extracts a fixed SemanticFact/EntityProfile from specific trigger text in the ingested messages, so the test is reproducible), call add_messages(messages, scope, extract_memories=True) and assert the extracted records actually land in the correct live tables/scope afterward (a real SELECT against store.facts/store.profiles, not just checking the extractor was called); call it again with extract_memories=False and assert nothing beyond the working-memory rows themselves was written; assert an extractor that raises is caught and logged without failing the ingest (same failure-fallback discipline as ORC-1's Summarizer), verified against the real add_messages() call still succeeding and the working-memory rows still landing. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_memory_extractor.py — 3 tests: KeywordSemanticExtractor (EXTRACT: trigger) writes to store.facts live, extract_memories=False produces zero facts, raising extractor caught+logged and working_memory rows still land."
+    }
+  ]
+}

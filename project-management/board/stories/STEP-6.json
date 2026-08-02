@@ -1,0 +1,14 @@
+{
+  "id": "STEP-6",
+  "epic_id": "EPIC-1",
+  "title": "Step 6: Framework adapters",
+  "summary": "LangChain BaseChatMessageHistory, OpenAI Agents SDK Session, MCP tools — all optional extras.",
+  "status": "Done",
+  "description": "Build three thin adapters on top of the Step 3-5 core, each in its own\noptional-dependency submodule (agent_memory_sdk.adapters.langchain,\n.openai_agents, .mcp):\n1. LangChain: implement BaseChatMessageHistory backed by store.working,\n   and optionally a BaseStore implementation for facts/profiles.\n2. OpenAI Agents SDK: implement the Session protocol backed by\n   store.working + store.episodic.\n3. MCP: expose remember/recall/forget/list as MCP tools so any\n   MCP-compatible agent can use the SDK without a Python import.\n\nKeep the core package importable with zero adapter dependencies installed;\ngate each adapter behind an extras_require group in pyproject.toml\n(e.g. `pip install agent-memory-sdk[langchain]`).",
+  "comments": [
+    {
+      "date": "2026-07-31",
+      "text": "Built three thin adapters under src/agent_memory_sdk/adapters/. (1) LangChain: Db2ChatMessageHistory (BaseChatMessageHistory duck-type backed by store.working — messages round-trip through JSON metadata preserving HumanMessage/AIMessage/ToolMessage types) + Db2MemoryStore (BaseStore[str,str] backed by store.facts or store.profiles, keyed by metadata[store_key]). (2) OpenAI Agents SDK: Db2Session (Session protocol backed by store.working, messages stored as JSON dicts; bonus recall_episodes() searches store.episodic at agent+user scope). (3) MCP: create_server(store) factory exposing remember/recall/forget/list_memories tools; recall falls back to recency list when no query_embedding is provided; tools return TextContent(text=json_string). All framework imports deferred behind _require_*() guards — core remains importable with zero adapter deps. pyproject.toml extras groups already present from earlier steps. 48 new unit tests; all 243 tests pass, ruff clean, mypy strict clean."
+    }
+  ]
+}

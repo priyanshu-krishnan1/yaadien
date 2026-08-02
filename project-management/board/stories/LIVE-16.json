@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-16",
+  "epic_id": "EPIC-10",
+  "title": "Live: cascading delete_user() / delete_agent()",
+  "summary": "New tests/integration/test_cascading_delete.py — real multi-table, multi-scope cascade verified by row counts before and after, on a live database (THRD-7).",
+  "status": "Done",
+  "description": "THRD-7's cascading delete_user()/delete_agent() is unit-tested only with a fake cursor, which cannot demonstrate a real cascade across many real rows. Add tests/integration/test_cascading_delete.py: seed one agent with two distinct users, each with two distinct threads, with rows spread across every memory type (including chunks) for every thread; call store.delete_user(agent_id, user_id) for one user and assert, via live row counts, that every row belonging to that user (across both of their threads, across every table) is gone, while the sibling user's rows under the same agent are completely untouched; then call store.delete_agent(agent_id) and assert the remaining sibling user's entire tree (every table, every thread) is now also gone. Use real, independently-issued COUNT queries against Db2 before and after each call as the assertion mechanism, not the SDK's own read methods (to avoid the test trivially passing just because the SDK's own filters happen to hide the rows). Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_cascading_delete.py — 4 tests: delete_user cascade=True (user_1 fully gone across all 6 tables, user_2 intact via raw COUNTs), delete_agent cascade=True (remaining user_2 tree all gone), delete_user cascade=False (only EntityProfile removed), delete_agent cascade=False (only profiles removed)."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "PH-2",
+  "epic_id": "EPIC-5",
+  "title": "CI integration job: live Db2 service container running the marked integration suite",
+  "summary": "Second CI job that boots a Db2 LUW container, sets the DB2_* env vars documented in .env.example, and runs pytest -m integration so the ~77 integration tests execute somewhere instead of always skipping.",
+  "status": "Done",
+  "description": "Add a second job to `.github/workflows/ci.yml` (or a separate workflow file, whichever keeps the fast unit job from being blocked by the slower Db2 boot) using a Db2 community container as a GitHub Actions service (or a `docker run` + wait-for-healthy step, if the service-container health-check model doesn't fit Db2's slow startup). Reuse the exact setup already documented in `project-management/INTEGRATION_TESTING.md` — do not invent a new setup path; if CI needs something the doc doesn't cover (e.g. a different image tag that works unattended in Actions, or a longer startup timeout), update INTEGRATION_TESTING.md to match rather than letting the two drift. Set `DB2_DATABASE`/`DB2_HOSTNAME`/`DB2_UID`/`DB2_PWD`/etc. as job env vars, run migrations via the existing `Migrator`, then `pytest -m integration`. Treat flaky/slow Db2 startup as a real risk — add a retry/wait loop, not a fixed sleep.\n\nThis is the fix for the gap where 77 integration tests exist and pass locally but nothing outside a developer's machine has ever proven `pytest tests/integration/` runs green — the current CI-less state means that suite is untested by anything but honor system.",
+  "comments": [
+    {
+      "date": "2025-07-31",
+      "text": "Done. Added 'integration-test' job to .github/workflows/ci.yml as a parallel job (independent of the 3-matrix unit job so Db2 boot never delays lint/type-check feedback). Container: icr.io/db2_community/db2:12.1.2.0 — pinned tag, minimum version for CREATE VECTOR INDEX. Uses 'docker run --privileged' in a step (not a GitHub Actions service container) because service containers have no --privileged flag in workflow syntax, which the Db2 image requires. Wait strategy: polls 'docker exec db2-dev bash -c \"su - db2inst1 -c db2 connect to TESTDB\"' every 15 s for up to 10 min (40 attempts) — real connectivity proof, no fixed sleep. DB2_* env vars set as job-level env matching .env.example exactly. Install: pip install -e \".[dev,langchain,openai-agents,mcp]\" so adapter integration tests run fully. Test command: pytest -m integration -v. Python 3.11 fixed (unit matrix already covers 3.10/3.11/3.12). INTEGRATION_TESTING.md updated: image tag pinned from :latest → 12.1.2.0, CI polling loop added to section 1. DECISIONS.md entry appended with full rationale for image choice, --privileged approach, wait strategy, and Python version decision."
+    }
+  ]
+}

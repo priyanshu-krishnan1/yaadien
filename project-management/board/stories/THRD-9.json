@@ -1,0 +1,14 @@
+{
+  "id": "THRD-9",
+  "epic_id": "EPIC-8",
+  "title": "Async facade for the LLM/embedder-calling entry points",
+  "summary": "search_async()/add_messages_async()/get_context_card_async() as thin asyncio.to_thread wrappers over their sync counterparts — deliberately NOT a blanket async twin of every MemoryStore method.",
+  "status": "Done",
+  "description": "Oracle pairs nearly every method with an _async twin, specifically for LLM-backed calls that may perform 'remote network I/O.' This SDK is fully synchronous, a real friction point for async frameworks (LangGraph, this SDK's own PIPE-3 Microsoft Agent Framework adapter).\n\nDeliberately do NOT blanket-wrap every method (see EPIC-8-addendum DECISIONS.md entry) — most MemoryStore methods are plain Db2 round-trips with no meaningful latency beyond the DB call. Scope to exactly the three methods that call an LLM or embedder: search() (embeds query text), add_messages() when a real MemoryExtractor is configured (THRD-5), get_context_card() when a real Summarizer is configured (ORC-1/PIPE-4). Each new *_async method is a thin asyncio.to_thread(self.<sync_method>, ...) wrapper, no duplicated logic. If PIPE-3's adapter has ad hoc async wrapping around any of these three, simplify it to call the new methods instead.\n\nDepends on THRD-1, THRD-3, and THRD-5 — do not start until all three are merged.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. search_async(), add_messages_async(), get_context_card_async() added as thin asyncio.to_thread() wrappers. Each forwards all parameters unchanged to its sync counterpart. No blanket-wrapping — only the 3 LLM/embedder-calling methods. 15 unit tests in tests/test_thrd9_async_facades.py."
+    }
+  ]
+}

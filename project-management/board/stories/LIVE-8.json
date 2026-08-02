@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-8",
+  "epic_id": "EPIC-10",
+  "title": "Live: IngestResolver ADD/UPDATE/DELETE/NOOP dispatch",
+  "summary": "New tests/integration/test_ingest_resolver.py — all four IngestAction outcomes exercised against real Db2 rows and real vector-similarity candidate lookup (PIPE-2).",
+  "status": "Done",
+  "description": "PIPE-2's IngestResolver protocol (types.py) and MemoryStore._resolve_and_act()/_candidate_embedding() are unit-tested only with a fake cursor. Add tests/integration/test_ingest_resolver.py against a MemoryStore built on the live pool with a small deterministic test IngestResolver (e.g. one that inspects candidate similarity score and text to decide the action, no LLM needed): exercise all four IngestAction outcomes — ADD (no similar candidate exists in Db2, a new row is actually inserted), UPDATE (a similar existing row's content is actually modified in place, same id, version bumped), DELETE (an existing row is actually removed/tombstoned), NOOP (no write occurs at all — assert row count is unchanged) — verifying each via a real follow-up SELECT against Db2, not just the IngestDecision return value. Confirm the candidate lookup in _candidate_embedding() actually uses real VECTOR_DISTANCE similarity against existing rows in the same scope, not another scope's rows. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_ingest_resolver.py — 5 tests: ADD new row, UPDATE existing (version bumped), DELETE tombstones row, NOOP zero writes, cross-scope isolation (_CaptureResolver sees empty similar list for foreign-scope rows). All four IngestAction outcomes verified via real post-call SELECT."
+    }
+  ]
+}

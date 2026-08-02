@@ -1,0 +1,10 @@
+{
+  "id": "VER-9",
+  "epic_id": "EPIC-4",
+  "title": "Verify: ENH-2: Write-time exact-duplicate rejection via content hash",
+  "summary": "Re-verify SHA-256 dedup, WorkingMemory opt-out, idempotent write, race-condition documentation against ENH-2 acceptance criteria.",
+  "status": "Done",
+  "comments": [
+    "VER-9 PASS. _content_hash() normalization: lowercase → whitespace-collapse (re.sub(r'\\s+', ' ') + strip) → SHA-256 hex. All 3 steps confirmed against spec. Dedup gate: _DEDUP_ON_WRITE=False for WorkingMemoryRepository (append-only log); True for all others. Dedup SELECT: WHERE scope AND content_hash = ? AND deleted_at IS NULL [AND superseded_at IS NULL for facts]. Existing row returned — no duplicate INSERT. Concurrency caveat documented in create() docstring (SELECT and INSERT non-atomic; no UNIQUE constraint — documented in DECISIONS.md). update() recomputes content_hash from new content. Migration 0003: VARCHAR(64) nullable + ix_<table>_content_hash ON (agent_id, content_hash) for all 5 tables. 17 unit tests in TestContentHash + TestHasSupersessionFlag — all pass."
+  ]
+}

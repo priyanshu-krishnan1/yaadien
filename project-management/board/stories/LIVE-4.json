@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-4",
+  "epic_id": "EPIC-10",
+  "title": "Live: context cards (v1 raw-turns + v2 long-term blending and per-type backfill)",
+  "summary": "New tests/integration/test_context_card.py — MemoryStore.get_context_card() against real working/facts/profiles rows, including PIPE-4's min_results_by_type backfill (ORC-1, PIPE-4).",
+  "status": "Done",
+  "description": "get_context_card() (store.py) is unit-tested only with a mocked cursor. Add tests/integration/test_context_card.py against the live `store` fixture: seed max_turns+ working-memory rows for one scope and assert get_context_card(scope, max_turns=N) returns exactly N rows in chronological order with the correct turn_count and latest_at, matching what's actually in Db2; assert an empty scope returns an empty card, not an error; wire a test Summarizer and assert its output lands in card.summary, and a Summarizer that raises and assert the card still returns successfully with summary=None (failure fallback) — both against a real store call, not a mock.\n\nFor PIPE-4: seed real SemanticFact and EntityProfile rows plus working-memory turns in one scope; call get_context_card(scope, query='...', include_long_term=True, min_results_by_type={'facts': 3}) with an embedding_provider configured on the MemoryStore; assert relevant_facts/relevant_profiles are populated from real store.facts.search()/store.profiles.search() calls, capped at long_term_top_k, and that the per-type minimum-result backfill in _relevant_with_backfill() actually pulls in additional real rows when the initial vector-search hit count is below min_results_by_type. Assert the documented byte-for-byte-identical-to-ORC-1 behavior when query=None or include_long_term=False (no facts/profiles repo touched — verify via call count on a spy, not just output). Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_context_card.py — 10 tests: ORC-1 raw-turns (max_turns slicing, latest_at, empty scope, Summarizer hook, Summarizer failure fallback); PIPE-4 long-term blending (relevant_facts populated, relevant_profiles populated, per-type minimum backfill, no-query noop, include_long_term=False noop). IndexEmbeddingProvider deterministic."
+    }
+  ]
+}

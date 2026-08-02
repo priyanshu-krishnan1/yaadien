@@ -1,0 +1,14 @@
+{
+  "id": "PIPE-4",
+  "epic_id": "EPIC-7",
+  "title": "Context card v2: blend durable long-term memory into the short-term card, with per-type minimum balancing",
+  "summary": "get_context_card() gains optional relevant_facts/relevant_profiles sections (pulled via search() across the long-term tables) and a min_results_by_type balancing option, matching Oracle 26.6's richer context-card assembly instead of ORC-1's raw-recent-turns-only view.",
+  "status": "Done",
+  "description": "ORC-1's `get_context_card()` (Done, EPIC-3) returns only a raw chronological slice of recent working-memory turns plus an optional summarizer hook — it does not pull in any long-term memory. Oracle AI Agent Memory's `get_context_card()` returns a richer bundle: a summary, relevant durable records (facts/profiles retrieved by relevance to the current thread, not just recency), retrieval topics, and recent messages — and its 26.6 release added the ability to set a minimum result count per record type so context assembly doesn't get dominated by one memory type (e.g. all recent turns, zero relevant facts).\n\nExtend `ContextCard` with optional `relevant_facts: list[SemanticFact]` and `relevant_profiles: list[EntityProfile]` fields, populated when `get_context_card(scope, query=..., include_long_term=True, min_results_by_type={'facts': 2, 'profiles': 1})` is called with a query string: run `store.facts.search()`/`store.profiles.search()` for that scope/query, and if a type falls below its configured minimum, backfill with its most-recent (not just most-relevant) records for that type so a thin/early-scope conversation doesn't return an empty section. Default behavior (no `query` passed) is unchanged from ORC-1 — this is purely additive.\n\nInspired by: `oracleagentmemory`'s `get_context_card()` ('creates prompt-ready short-term context with a summary, relevant durable records, retrieval topics, and recent messages') and 26.6's new 'Context Card Minimum Results by Type' balancing control.\n\nDb2 feasibility: fully feasible — composes existing `search()` calls already built for `store.facts`/`store.profiles`, no schema change. Depends on ORC-1's `ContextCard`/`get_context_card()` (Done) as its base to extend.",
+  "comments": [
+    {
+      "date": "2026-08-03",
+      "text": "AUDIT VERIFIED DONE. ContextCard in types.py has relevant_facts: list[SemanticFact] | None and relevant_profiles: list[EntityProfile] | None fields. get_context_card() in store.py accepts query, include_long_term=False, and min_results_by_type= parameters; when query + include_long_term=True, calls _assemble_long_term_sections() which runs store.facts.search() and store.profiles.search() with per-type minimum backfill. Default path (no query) unchanged from ORC-1. Dedicated test file tests/test_pipe4_context_card_v2.py covers all branches. 739 unit tests pass."
+    }
+  ]
+}

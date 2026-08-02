@@ -28,8 +28,21 @@ in full, before doing anything:
 
 1. project-management/DECISIONS.md — every decision made so far and why
 2. project-management/ARCHITECTURE.md — current-state design
-3. project-management/BOARD.html — the embedded JSON (epics + stories +
-   statuses), look for <script id="board-data" type="application/json">
+3. project-management/board/epics/*.json and
+   project-management/board/stories/*.json — read these directly to see
+   current epics/stories/statuses (`ls project-management/board/stories/`
+   for the full list). Do NOT open, read, or grep
+   project-management/BOARD.html for this — it's a ~1700-line generated
+   file (a human views it in a browser; you don't need to). BOARD.html
+   ITSELF IS GENERATED — NEVER HAND-EDIT ITS EMBEDDED JSON either. See
+   project-management/board/README.md for the full schema. Any
+   instruction below that says to add/change something "on BOARD.html" or
+   "in BOARD.html" means: edit the relevant file(s) under
+   project-management/board/, then run `make board` (or `python
+   project-management/board/build.py`) to regenerate BOARD.html, and
+   commit the shard file(s) together with the regenerated BOARD.html.
+   (`make install-hooks`, once per clone, adds a pre-commit safety net
+   that does the rebuild-and-stage step for you if it's ever forgotten.)
 4. project-management/PROMPTS.md — original spec/acceptance criteria for
    each Step/ENH/ORC story
 5. project-management/ai-agent-platform-competitive-analysis.md — market
@@ -41,32 +54,35 @@ in full, before doing anything:
 (README.md is not part of this set — it stays at the repo root; it's the
 shipped package's own doc, referenced later in Part 2 step e.)
 
-## Part 1 — Create the verification epic on BOARD.html
+## Part 1 — Create the verification epic on the board
 
-Add a new epic to the "epics" array:
+Create project-management/board/epics/EPIC-4.json:
   id: "EPIC-4"
   title: "Beta release readiness — worldwide public beta verification"
   description: one or two sentences — independent re-verification of every
     Done story plus a market-fit gap check against
     ai-agent-platform-competitive-analysis.md, gating the worldwide beta
     go/no-go decision.
+  comments: []
 
-Add one new story per story currently "Done" on the board (STEP-1 through
-STEP-7, ENH-1 through ENH-4, ORC-1 — 12 stories as of this writing; if the
-board has moved on since, use whatever is actually "Done" at the time you
-run this). Do NOT create verification stories for anything still "To Do" or
-"In Progress" (currently STEP-8, ORC-2, ORC-3, ORC-4) — those aren't done
-yet, so there's nothing to verify; call them out as open blockers in the
-Part 4 report instead. For each Done story, add:
+Create one new project-management/board/stories/VER-<n>.json file per
+story currently "Done" on the board (STEP-1 through STEP-7, ENH-1 through
+ENH-4, ORC-1 — 12 stories as of this writing; if the board has moved on
+since, use whatever is actually "Done" at the time you run this). Do NOT
+create verification stories for anything still "To Do" or "In Progress"
+(currently STEP-8, ORC-2, ORC-3, ORC-4) — those aren't done yet, so
+there's nothing to verify; call them out as open blockers in the Part 4
+report instead. For each Done story, create:
   id: "VER-<n>" (sequential, starting after the highest existing story
-    number pattern — check the board for what's free)
+    number pattern — `ls project-management/board/stories/` for what's
+    free; matches the filename, e.g. VER-1.json)
   epic_id: "EPIC-4"
   title: "Verify: <original story title>"
   summary: one line
   status: "To Do"
   comments: []
 
-Add exactly one more story for the market-fit check:
+Create exactly one more story file for the market-fit check:
   id: "VER-13" (or next free number)
   epic_id: "EPIC-4"
   title: "Market-fit gap check against ai-agent-platform-competitive-analysis.md"
@@ -75,13 +91,15 @@ Add exactly one more story for the market-fit check:
   status: "To Do"
   comments: []
 
-Commit this as its own commit ("board: add EPIC-4 beta readiness
-verification stories") before starting Part 2.
+Run `make board` to regenerate BOARD.html, then commit the new shard
+files and the regenerated BOARD.html together as one commit ("board: add
+EPIC-4 beta readiness verification stories") before starting Part 2.
 
 ## Part 2 — Work each VER-N story, one at a time, in order
 
 For each VER-N story:
-1. Set its status to "In Progress" in BOARD.html.
+1. Set its status to "In Progress" in
+   project-management/board/stories/VER-N.json, then `make board`.
 2. Re-read that story's original spec in PROMPTS.md (the matching Step N /
    ENH-N / ORC-1 section) — that is the acceptance bar to check against.
 3. Verify against the ACTUAL current code:
@@ -103,8 +121,10 @@ For each VER-N story:
 5. Append one dated DECISIONS.md entry per VER-N story (use the entry
    template near the top of DECISIONS.md) summarizing what was checked and
    what, if anything, was fixed.
-6. Set the story's status to "Done" and add a comment to it summarizing the
-   verification result (what was checked, what was found).
+6. Set the story's status to "Done" in its
+   project-management/board/stories/VER-N.json and add a
+   {"date","text"} comment summarizing the verification result (what was
+   checked, what was found), then `make board`.
 7. Commit ("verify: VER-N <short description>") before moving to the next
    story.
 
@@ -120,7 +140,9 @@ itself, not from what any prior note claims.
 
 ## Part 3 — Market-fit gap check (VER-13)
 
-Set VER-13 to "In Progress". Read ai-agent-platform-competitive-analysis.md
+Set VER-13 to "In Progress" (in its
+project-management/board/stories/VER-13.json, then `make board`, same as
+every VER-N status change above). Read ai-agent-platform-competitive-analysis.md
 again with this specific question in mind: for each capability the market
 study identifies as a competitive differentiator or table-stakes
 expectation for an agent-memory platform (multi-tenant isolation, audit/

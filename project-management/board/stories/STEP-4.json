@@ -1,0 +1,14 @@
+{
+  "id": "STEP-4",
+  "epic_id": "EPIC-1",
+  "title": "Step 4: Lifecycle: TTL, versioning, forget, consolidation",
+  "summary": "forget()/purge_expired(), optimistic concurrency, pluggable Consolidator.",
+  "status": "Done",
+  "description": "Add lifecycle features to the repositories/MemoryStore from Step 3:\n- `forget(id, scope)` — sets deleted_at (tombstone), never hard-deletes by\n  default; add a separate `purge_expired()` maintenance method that hard-\n  deletes rows past expires_at AND already soft-deleted, callable via a\n  script/cron, not automatically.\n- optimistic concurrency on `version` for updates (raise on stale write)\n- a `Consolidator` protocol: a pluggable callback\n  `(raw_memories: list) -> list[derived_memory]` that MemoryStore can\n  invoke synchronously after writes to working/episodic memory, producing\n  semantic facts / entity profile updates / procedural memory. Ship a\n  no-op default consolidator plus a documented example of wiring in an\n  LLM-based one. Make clear in docs how a caller would instead run this\n  async (e.g. call it from a cron job reading unconsolidated rows) —\n  implement the sync path now, just document the async extension point.",
+  "comments": [
+    {
+      "date": "2026-07-30",
+      "text": "Built BaseRepository.forget() (soft-delete tombstone; soft_delete() kept as alias), BaseRepository.update() (optimistic concurrency: WHERE version = record.version, raises StaleWriteError on 0 rowcount, atomically increments version), BaseRepository.purge_expired() (hard-DELETE WHERE deleted_at IS NOT NULL, scoped, never auto-called). Added Consolidator Protocol + NoOpConsolidator to types.py with full LLM-based wiring example in docstring. Added MemoryStore.remember() as primary write entry point (dispatches by model type, runs consolidator sync on working/episodic only, consolidator errors caught+logged never propagated). Added MemoryStore.forget(id, type, scope) facade and MemoryStore.purge_expired(scope) facade returning {table: count} dict. Added scripts/purge_expired.py (cron maintenance) and scripts/consolidate_pending.py (reference async polling pattern). Added StaleWriteError to exceptions.py, re-exported from store.py and __init__.py. 36 new unit tests (104 total). ruff clean, mypy strict clean."
+    }
+  ]
+}

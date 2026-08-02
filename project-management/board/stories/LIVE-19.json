@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-19",
+  "epic_id": "EPIC-10",
+  "title": "Live-coverage audit: full method inventory vs. actual live-Db2 coverage, and a coverage matrix in INTEGRATION_TESTING.md",
+  "summary": "Depends on LIVE-1..18 all being merged. Cross-checks every public MemoryStore/Thread/repository method against tests/integration/*.py, closes any residual gap, and appends a living coverage table to INTEGRATION_TESTING.md \u2014 the EPIC-10 equivalent of VER-13's market-fit gap check and SDD-12's package index.",
+  "status": "Done",
+  "description": "Depends on LIVE-1 through LIVE-18 all being merged \u2014 must run last, not in parallel with them, the same dependency shape as SDD-12 in EPIC-9 and VER-13 in EPIC-4.\n\nEnumerate every public method on MemoryStore (store.py), Thread (thread.py), and each of the five+one repositories (working/episodic/facts/profiles/procedural/chunks in repositories/), grep tests/integration/*.py for real call sites of each, and build a two-column coverage table (method -> covered/not covered, with the covering test file+class named). For any method still showing zero live coverage after LIVE-1..18 land, either add a small targeted test closing the specific gap (in a new small file, not by editing another LIVE-* story's file) or explicitly document in the table why it's intentionally live-untestable (e.g. a pure in-process helper with no Db2 interaction) \u2014 do not leave a gap silently unexplained. Append this table to project-management/INTEGRATION_TESTING.md under a new '## Live-coverage matrix (EPIC-10)' section, dated. Cross-check that PH-2's CI job (`pytest -m integration -v --no-cov`) actually collects and passes every new LIVE-* file by re-reading .github/workflows/ci.yml \u2014 no CI YAML changes should be needed since the job already globs the whole marker; if one turns out to be needed (e.g. a new optional-dependency install line for LIVE-9's agent-framework extra), make that one line change and record why in DECISIONS.md. Record the whole audit as a dated DECISIONS.md entry, same style as VER-13 and the EPIC-9 backlog entry.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. All 18 LIVE-* files verified present (21 integration test files total, 252 tests collected). Coverage matrix appended to project-management/INTEGRATION_TESTING.md under '## Live-coverage matrix (EPIC-10)' \u2014 18 new story rows + 3 baseline rows + intentionally-untestable table. No CI YAML changes needed (PH-2 job globs the marker; agent_framework adapter gated behind importorskip). Static scan confirmed no hardcoded exact_agent_match=False in production code."
+    }
+  ]
+}

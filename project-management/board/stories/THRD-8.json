@@ -1,0 +1,14 @@
+{
+  "id": "THRD-8",
+  "epic_id": "EPIC-8",
+  "title": "Generic table-agnostic delete_memory(id)",
+  "summary": "MemoryStore.delete_memory(id, scope) tries facts/profiles/procedures in order via forget() so callers don't need to know which table an id lives in, mirroring Oracle's client-level delete_memory() without requiring a memory_type argument.",
+  "status": "Done",
+  "description": "Oracle's client-level OracleAgentMemory.delete_memory(memory_id) deletes 'a memory-like record (memory, fact, preference, or guideline)' by id alone. This SDK's forget() facade (store.py:692) requires an explicit memory_type argument today.\n\nAdd MemoryStore.delete_memory(memory_id, scope) -> int: try store.facts, store.profiles, store.procedures (the three 'durable memory-like' repos, deliberately excluding store.working/store.episodic — messages are a different category, matching Oracle's own memory-vs-message distinction) via forget() in order, stopping at the first match. Returns 1/0. Unlike Oracle's global lookup, this still requires scope (this SDK's forget() always does, per VER-5's audited scoping discipline) — a deliberate, documented difference.\n\nFully independent of every other story in this epic — safe to run in parallel with THRD-1/2/3/4/7.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. delete_memory(memory_id, scope) -> int: tries facts → profiles → procedures via forget(), returns 1 on first match, 0 if not found. Deliberately excludes working/episodic. Scope always required (VER-5 isolation boundary). 16 unit tests in tests/test_thrd8_delete_memory.py."
+    }
+  ]
+}

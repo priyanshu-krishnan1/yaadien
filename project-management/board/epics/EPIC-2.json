@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-2",
+  "title": "Cosmos-inspired memory enhancements (Db2-adapted)",
+  "description": "Features studied from Azure Cosmos DB's Agent Memory Toolkit (github.com/AzureCosmosDB/AgentMemoryToolkit), reworked for what's actually feasible on Db2 LUW with no new mandatory infrastructure. See DECISIONS.md for the full research + what was deliberately excluded.",
+  "comments": []
+}

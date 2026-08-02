@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-13",
+  "epic_id": "EPIC-10",
+  "title": "Live: token-budget thread summary get_summary()",
+  "summary": "New tests/integration/test_thread_summary.py — real token-budget truncation over a real long conversation stored in Db2 (THRD-4).",
+  "status": "Done",
+  "description": "THRD-4's get_summary() is unit-tested only with a fake cursor and likely a short fixed message list. Add tests/integration/test_thread_summary.py: seed a genuinely long real conversation (enough working-memory rows/content length to exceed a small token budget, e.g. max_tokens=200) into one scope on the live pool, call get_summary(scope, max_tokens=...) and assert the returned Summary's truncation behavior against the real row set — the included turns actually fit under budget, the truncation boundary is deterministic given the same real data, and a budget larger than the total content returns everything untruncated. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_thread_summary.py — 6 tests: full transcript no budget, budget truncation oldest-first with real data, large budget untruncated, except_last exclusion, empty scope empty string."
+    }
+  ]
+}

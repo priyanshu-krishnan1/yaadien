@@ -1,0 +1,15 @@
+{
+  "id": "PIPE-5",
+  "epic_id": "EPIC-7",
+  "title": "Ergonomic erasure: erase_all(scope) with an ErasureReport",
+  "summary": "New MemoryStore.erase_all(scope) hard-deletes every matching record across all five tables plus memory_chunks in one call and returns a per-table count report, closing the documented GDPR-style ergonomic-erasure gap without inventing a deletion mechanism no vendor actually ships.",
+  "status": "Done",
+  "description": "VER-13's market-fit check documented this SDK's erasure story as PARTIAL: the `forget()` primitive exists (per-record soft-delete tombstone) but there's no single user-scoped 'erase everything for this person' API or erasure report — a real GDPR-style workflow gap. Checking how the actual vendor bar looks here matters: Oracle AI Agent Memory's own erasure story, per current documentation, is not a single magic API either — it's search, list, and per-record delete operations across memories, threads, and messages, so callers can locate records for a subject and remove them on request, with Oracle Database's native auditing covering the storage layer underneath. This SDK can still do meaningfully better ergonomically without inventing something no vendor actually ships.\n\nAdd `MemoryStore.erase_all(scope: MemoryScope) -> ErasureReport`: unlike `forget()` (soft-delete, reversible, used for routine memory lifecycle), this is a genuine hard-delete across all five repositories plus `memory_chunks` for every row matching the given scope — appropriate specifically for a compliance erasure request, not everyday forgetting. Return an `ErasureReport` dataclass: a per-table `rows_deleted` count, a total, and a timestamp, so the caller has an auditable record of what was actually erased (the erasure-report piece the PARTIAL rating was missing). Document clearly in the docstring that this bypasses the tombstone/`deleted_at` lifecycle entirely and is irreversible — a deliberately different guarantee from `forget()`.\n\nInspired by: `oracleagentmemory`'s search/list/per-record-delete erasure pattern (confirmed via 2026 documentation research — no vendor, including Oracle, ships a single 'erase-all' primitive; the gap is ergonomics, not a missing mechanism) and VER-13's PARTIAL rating for this SDK's own erasure story in DECISIONS.md.\n\nDb2 feasibility: fully feasible — a thin loop issuing the same scope-predicated DELETE each repository's `purge_expired()` already uses, minus the `deleted_at`/`expires_at` gating. No schema change, no migration.",
+  "comments": [
+    {
+      "author": "pipe-5-impl",
+      "date": "2026-08-02",
+      "body": "Implemented. ErasureReport dataclass added to types.py (rows_deleted, total_deleted, erased_at). BaseRepository.erase_all(scope)->int hard-deletes unconditionally (no deleted_at/expires_at gating). ChunkRepository.erase_by_scope(scope)->int covers memory_chunks. MemoryStore.erase_all() loops all five repos + chunks, returns ErasureReport with per-table counts, total, and UTC timestamp. ErasureReport exported from package root. 48 unit tests, all passing. Full suite 731 passed, 90.13% coverage."
+    }
+  ]
+}

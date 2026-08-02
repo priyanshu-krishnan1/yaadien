@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-9",
+  "epic_id": "EPIC-10",
+  "title": "Live: Microsoft Agent Framework adapter round-trip",
+  "summary": "New tests/integration/test_agent_framework_integration.py — the fourth adapter (PIPE-3), covered live the same way STEP-7 covered the original three.",
+  "status": "Done",
+  "description": "STEP-7's test_adapters_integration.py covers LangChain/OpenAI Agents SDK/MCP live, but PIPE-3's adapters/agent_framework.py (ContextProvider/HistoryProvider) shipped after STEP-7 and has zero live coverage — only unit tests. Add tests/integration/test_agent_framework_integration.py, matching the existing file's style and class-per-adapter structure (TestDb2ChatMessageHistoryIntegration etc. in test_adapters_integration.py): exercise the ContextProvider/HistoryProvider before_run/after_run lifecycle hooks against the live `store` fixture, asserting real reads/writes land in and come back from Db2 correctly, matching whatever round-trip behavior the other three adapters' live tests already assert (add/retrieve/clear/batch/type-preservation-equivalents for this adapter's actual method set). If the `agent-framework` optional dependency is not installable in the CI/test environment (per pyproject.toml's comment: 'not resolvable/installable from this environment at the time this extra was added'), gate the whole file behind an importorskip so it degrades to a skip rather than a collection error, exactly like the existing file's per-adapter import guards. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_agent_framework_integration.py — 11 tests (5 ContextProvider + 6 HistoryProvider). Uses fake agent_framework stub injected via sys.modules to handle the non-installable dep gracefully. before_run/after_run real Db2 round-trips; save_messages/get_messages chronological order and scope isolation verified."
+    }
+  ]
+}

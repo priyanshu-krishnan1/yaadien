@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-15",
+  "epic_id": "EPIC-10",
+  "title": "Live: Thread facade end-to-end",
+  "summary": "New tests/integration/test_thread_facade.py — the full Thread object (thread.py) plus MemoryStore.create_thread()/get_thread()/delete_thread() exercised as one bound-scope handle against real Db2 (THRD-6).",
+  "status": "Done",
+  "description": "THRD-6's Thread class (thread.py) and MemoryStore.create_thread()/get_thread()/delete_thread() are unit-tested only with a fake cursor. This story reads (does not depend on the *landing* of) LIVE-12/13/14's coverage of the underlying primitives — it tests the already-Done Thread facade, an independent composition layer, so it can run in parallel with them. Add tests/integration/test_thread_facade.py: call store.create_thread(thread_id, agent_id, ...) against the live pool and get back a Thread handle over an empty scope (assert zero rows exist yet — 'schema-less by default' per THRD-6's description); exercise every pass-through method on that one Thread instance in sequence (add_messages, get_messages, delete_message, add_memory, delete_memory, search, get_summary, get_context_card) and assert each affects/reads real Db2 rows scoped correctly; call store.get_thread(thread_id, agent_id, ...) on the same thread_id afterward and assert it re-opens the same real data (locates it via the most-recent WorkingMemory row, per the method's documented behavior); call store.get_thread() on a thread_id with zero existing rows and assert it returns an empty handle without raising; call thread's delete equivalent / store.delete_thread(scope) and assert it actually reuses erase_all()'s real cascade (verify via live row counts, not by re-reading the source). Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_thread_facade.py — 17 tests across 5 classes: create_thread schema-less, get_thread reopens/empty-handle, delete_thread cascade via raw counts, all pass-through methods (add_messages/get_messages/delete_message/add_memory/delete_memory/get_summary/get_context_card), scope isolation between two threads."
+    }
+  ]
+}

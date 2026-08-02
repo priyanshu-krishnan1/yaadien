@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-1",
+  "title": "agent-memory-sdk",
+  "description": "Governed multi-type memory system for AI agents backed by IBM Db2 LUW with native VECTOR search (Db2 12.1.2+).",
+  "comments": []
+}

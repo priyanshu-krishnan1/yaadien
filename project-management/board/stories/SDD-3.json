@@ -1,0 +1,9 @@
+{
+  "id": "SDD-3",
+  "epic_id": "EPIC-9",
+  "title": "API & Interface Design Specification",
+  "summary": "project-management/design/03-api-interface-spec.md — formal MemoryScope/MemoryStore/repository contract tables (signatures, pre/postconditions, exceptions, idempotency) plus an extension-interface contract table for all pluggable protocols.",
+  "status": "To Do",
+  "description": "Write project-management/design/03-api-interface-spec.md as a formal interface-contract document, not a tutorial. Ground it in store.py, repositories/base.py, and types.py.\n\nRequired: (1) MemoryScope contract (field table, hierarchy rule, agent_id-required precondition); (2) MemoryStore method contract table (remember/forget/purge_expired/erase_all/export_scope/import_scope/reconcile/get_context_card, plus any landed THRD-* methods) — signature, pre/postconditions, exceptions actually raised (verify against real `raise` statements), idempotency; (3) shared repository base contract stated once, not six times; (4) extension interface contract table (Consolidator/Reconciler/IngestResolver/Summarizer/MemoryExtractor) — exact shape, when invoked, error-handling contract verified against actual try/except in store.py, not assumed.\n\nFully independent of every other SDD story — new file only.",
+  "comments": []
+}

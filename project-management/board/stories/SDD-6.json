@@ -1,0 +1,9 @@
+{
+  "id": "SDD-6",
+  "epic_id": "EPIC-9",
+  "title": "Data Governance, Retention & Compliance Design Document",
+  "summary": "project-management/design/06-data-governance.md — the three-tier deletion policy (forget/purge_expired/erase_all) formalized as governance, ErasureReport as an audit-record spec with honest evidentiary limits, retention/TTL policy, data portability, and data-quality controls.",
+  "status": "To Do",
+  "description": "Write project-management/design/06-data-governance.md. Ground it in store.py's three-tier deletion model and PIPE-5's ErasureReport, ENH-1/ENH-2.\n\nRequired: (1) the three-tier deletion policy formalized (forget=routine/reversible, purge_expired=maintenance hard-delete of already-tombstoned rows, erase_all=compliance-grade/irreversible/bypasses tombstone entirely) with an explicit statement of which one a data-subject erasure request should invoke and why; (2) ErasureReport as an audit-record spec, honest about what it does and does NOT prove (not secure-erasure-at-media-level proof); (3) retention/TTL policy and that purge_expired() is operator-scheduled, not automatic; (4) export_scope()/import_scope() as portability, with its own-format-not-a-standard limitation restated; (5) confidence scoring + content-hash dedup as data-quality governance controls.\n\nFully independent of every other SDD story — new file only.",
+  "comments": []
+}

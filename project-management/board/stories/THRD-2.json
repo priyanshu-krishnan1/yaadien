@@ -1,0 +1,14 @@
+{
+  "id": "THRD-2",
+  "epic_id": "EPIC-8",
+  "title": "add_memory() / add_user() / add_agent() convenience wrappers",
+  "summary": "Thin MemoryStore wrappers over remember() for durable memories and user/agent profiles, with upsert semantics for profiles and custom-id support for memories.",
+  "status": "Done",
+  "description": "Oracle's memory.add_memory(content, user_id=, agent_id=, thread_id=, memory_id=), memory.add_user(user_id, profile_text), and memory.add_agent(agent_id, profile_text) are thin, single-call convenience wrappers. This SDK's equivalent capability already exists (remember() plus SemanticFact/EntityProfile model construction) but requires every caller to build the Pydantic model by hand.\n\nAdd three methods to MemoryStore, in their own new banner-comment section: add_memory(content, scope, *, memory_id=None, metadata=None) -> str (builds+remembers a SemanticFact, honoring ENH-2's content-hash dedup); add_user(user_id, profile_text, scope=None) -> str and add_agent(agent_id, profile_text, scope=None) -> str (upsert semantics against EntityProfile keyed on (agent_id,user_id) with no thread_id — update in place if found, else create).\n\nFully independent of THRD-1/3/4 — safe to run as a parallel subagent alongside them.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. add_memory(content, scope, *, memory_id=None, metadata=None) -> str builds+remembers a SemanticFact with ENH-2 dedup. add_user(user_id, profile_text, scope) upserts EntityProfile (update if exists, else create). add_agent(agent_id, profile_text, scope=None) same upsert pattern at agent scope. 18 unit tests in tests/test_thrd2_convenience.py, all passing."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "THRD-5",
+  "epic_id": "EPIC-8",
+  "title": "MemoryExtractor: automatic LLM-driven memory extraction on message ingest",
+  "summary": "Pluggable MemoryExtractor protocol (parallel to Consolidator/Reconciler/IngestResolver) wired into add_messages(), opt-in via memory_extractor= and extract_memories= flag.",
+  "status": "Done",
+  "description": "Oracle's OracleThread.add_messages() automatically extracts durable memories from recent thread messages via a configured LLM, on by default (extract_memories=True), with an explicit opt-out. This SDK has no equivalent — the existing Consolidator processes raw working/episodic writes generically, and PIPE-2's IngestResolver classifies a candidate the caller already decided to write; neither triggers automatically from add_messages() itself.\n\nAdd a MemoryExtractor Protocol to types.py (parallel in shape and docstring style to Consolidator/Reconciler/IngestResolver): (messages: list[WorkingMemory], scope) -> list[_MemoryBase]. Ship NoOpMemoryExtractor. Add memory_extractor= constructor param on MemoryStore (default NoOp) and extract_memories: bool = True on add_messages(). When enabled with a real extractor configured, derived records are remembered through the existing remember() path (so PIPE-2/ENH-2 already apply). Extractor errors are caught and logged, never propagated.\n\nDepends on THRD-1 (needs add_messages() to exist as the hook point) — do not start until THRD-1 is merged. Independent of THRD-2/3/4.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. MemoryExtractor Protocol + NoOpMemoryExtractor added to types.py. memory_extractor= constructor param on MemoryStore (default NoOpMemoryExtractor). extract_memories: bool = True param on add_messages(). When enabled with real extractor, derived records go through remember() path. Extractor errors caught and logged, never propagated. MemoryExtractor/NoOpMemoryExtractor exported from __init__.py. 25 unit tests in tests/test_thrd5_extractor.py."
+    }
+  ]
+}

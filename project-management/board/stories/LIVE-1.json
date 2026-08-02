@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-1",
+  "epic_id": "EPIC-10",
+  "title": "Live: confidence scoring + write-time content-hash dedup",
+  "summary": "New tests/integration/test_dedup_confidence.py — real min_confidence filtering and real dedup-on-INSERT against Db2 (ENH-1, ENH-2).",
+  "status": "Done",
+  "description": "ENH-1 (min_confidence filtering) and ENH-2 (content_hash dedup) were unit-tested only against a mocked cursor. Add tests/integration/test_dedup_confidence.py against the live `store` fixture:\n\nConfidence (ENH-1): write records at confidence 0.3/0.6/0.95/default-1.0 into the same scope; assert list_all()/search() with min_confidence=0.7 returns only the >=0.7 rows and min_confidence=0.0 (default) returns all; assert the boundary (confidence exactly equal to min_confidence) is included, not excluded.\n\nDedup (ENH-2): call create() twice with identical content in the same scope (byte-identical, then again with only case/whitespace differences per the documented lowercase+whitespace-collapse normalization in repositories/base.py's _content_hash()) and assert the second call returns the *same* row id, not a new INSERT (verify via a live SELECT count); call create() with the same content in a *different* scope and assert it *does* insert a new row; call update() and assert content_hash is recomputed and persisted; assert a dedup hit is correctly skipped when the existing row is soft-deleted or (for semantic_facts) superseded (both should be treated as absent for dedup purposes, per DECISIONS.md's ENH-3 revisit note).\n\nUse a fresh unique_agent_id-scoped test per case for isolation. Define any needed local fixtures inside this file; do not edit tests/integration/conftest.py.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_dedup_confidence.py — 12 tests (5 confidence + 7 dedup). Raw SELECT COUNT(*) verifies physical row counts. Collects cleanly."
+    }
+  ]
+}

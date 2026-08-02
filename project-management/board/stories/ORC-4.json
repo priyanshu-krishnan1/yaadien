@@ -1,0 +1,14 @@
+{
+  "id": "ORC-4",
+  "epic_id": "EPIC-3",
+  "title": "Schema attach mode: REQUIRE_EXISTING policy for the migration runner",
+  "summary": "Let the SDK validate against a pre-provisioned schema instead of always running DDL itself, for deployments where app code must never run DDL in production.",
+  "status": "Done",
+  "description": "Add a schema-policy concept to `Migrator`: `CREATE_IF_NECESSARY` (today's only behavior — run pending migrations, create tables/indexes) vs `REQUIRE_EXISTING` (validate that every expected table, column, and vector index already exists via `SYSCAT.TABLES`/`SYSCAT.COLUMNS`/`SYSCAT.INDEXES` catalog queries; raise one clear, actionable error listing everything missing, and never attempt any DDL). Wire this as a constructor argument on `Migrator` (and expose it through `MemoryStore`/`ConnectionPool` setup wherever schema initialization currently happens), defaulting to `CREATE_IF_NECESSARY` so existing behavior is unchanged unless a caller opts in.\n\nInspired by: Oracle AI Agent Memory's `SchemaPolicy.CREATE_IF_NECESSARY` / `SchemaPolicy.REQUIRE_EXISTING` — for enterprise deployments where DBAs provision schema through their own change-management process and application code is not permitted to run DDL against production databases.\n\nDb2 feasibility: fully feasible — read-only catalog queries against `SYSCAT`, no new infrastructure. Directly reinforces this project's own \"governed\" framing (the same word used to justify the Step 0 architecture choice against Oracle's and Microsoft's approaches in the first place).",
+  "comments": [
+    {
+      "date": "2026-08-02",
+      "text": "Done. Added SchemaPolicy enum (CREATE_IF_NECESSARY / REQUIRE_EXISTING) to db/migrate.py. REQUIRE_EXISTING runs three read-only SYSCAT catalog queries — SYSCAT.TABLES (TYPE='T', scoped to CURRENT SCHEMA), SYSCAT.COLUMNS (IN-list of present tables only), SYSCAT.INDEXES (same IN-list guard) — and raises SchemaPolicyError with a single actionable message listing every missing table, column, and index. No DDL is ever executed under REQUIRE_EXISTING. Migrator constructor default remains CREATE_IF_NECESSARY so all existing callers are unaffected. SchemaPolicyError added to exceptions.py and re-exported from package root alongside new SchemaPolicy. 10 new TestSchemaPolicy tests using a _SyscatPool SQLite fake with a _RewritingCursor that redirects SYSCAT queries to in-memory stub tables. 517 total tests pass; ruff clean; mypy strict clean. DECISIONS.md entry appended."
+    }
+  ]
+}

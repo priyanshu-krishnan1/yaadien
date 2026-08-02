@@ -1,0 +1,14 @@
+{
+  "id": "STEP-7",
+  "epic_id": "EPIC-1",
+  "title": "Step 7: Integration tests",
+  "summary": "Real Db2 tests (Docker): migration, vector search, scope isolation, TTL, adapter round-trips.",
+  "status": "Done",
+  "description": "Add integration tests that run against a real Db2 LUW instance (document\nhow to spin one up locally, e.g. the ibmcom/db2 Docker image) gated behind\nan env var / pytest marker so they're skippable in CI without Db2. Cover:\nschema migration end-to-end, vector search correctness (known nearest\nneighbor), scope isolation, TTL purge, forget/tombstone, and each adapter's\nbasic round-trip (LangChain history, OpenAI Session, MCP tool calls).",
+  "comments": [
+    {
+      "date": "2026-07-31",
+      "text": "Integration suite complete. tests/integration/ (3 files, ~105 test functions) gated by pytestmark=integration and a pytest_collection_modifyitems hook that auto-skips when DB2_DATABASE is unset — zero CI friction. Fixtures: session-scoped db2_pool/store, function-scoped unique_agent_id per test for full isolation. Coverage: (1) test_migration.py — Migrator idempotency, schema_migrations tracking, all 5 tables verified via SYSCAT.COLUMNS (cols + NOT NULL VECTOR type), vector indexes via SYSCAT.INDEXES; (2) test_core.py — CRUD round-trips for all 5 memory types, vector search nearest-neighbour correctness (unit vectors, deterministic cosine), scope isolation (list_all/get_by_id/search/thread), forget()/tombstone, purge_expired() hard-deletes only tombstoned rows + scope-safe, TTL expires_at filtering, StaleWriteError on stale update, consolidator derives SemanticFact; (3) test_adapters_integration.py — LangChain Db2ChatMessageHistory (add/retrieve/clear/batch/type preservation), Db2MemoryStore (mset/mget/mdelete/yield_keys/prefix), OpenAI Agents Db2Session (add_items/get_items/limit/clear_session/pop_item/recall_episodes), MCP tool functions (remember/recall/forget/list/fallback). Documentation: INTEGRATION_TESTING.md (Docker ibmcom/db2 setup, IBM Cloud variant, coverage table, cleanup, troubleshooting). Gap found and fixed: base.py module docstring for purge_expired() still described the old wrong semantics; corrected to match actual SQL and recorded decisions. All 248 unit tests still pass; ruff and mypy clean."
+    }
+  ]
+}

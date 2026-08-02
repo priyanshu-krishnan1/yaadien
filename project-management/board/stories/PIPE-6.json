@@ -1,0 +1,14 @@
+{
+  "id": "PIPE-6",
+  "epic_id": "EPIC-7",
+  "title": "Memory export/import for portability and backup",
+  "summary": "MemoryStore.export_scope()/import_scope() round-trip every memory type plus chunks for a given scope as a portable JSONL file, addressing this SDK's own backup/migration gap (not a cross-vendor standard, which doesn't exist anywhere in the industry).",
+  "status": "Done",
+  "description": "ai-agent-platform-competitive-analysis.md's gap analysis (#3) notes no standard export/interchange format exists anywhere in the industry — migrating between vendors means rewriting, and even the feature-matrix's 'Import/export ✅' entries for Mem0/Oracle are each proprietary to that vendor, not interoperable with each other. This story does not attempt to solve the unsolved cross-vendor problem; it solves this SDK's own, narrower gap — there is currently no way to back up or migrate a tenant/agent's memory out of Db2 at all.\n\nAdd `MemoryStore.export_scope(scope: MemoryScope) -> Iterator[dict]` yielding one JSON-serializable record per row across all five memory tables plus `memory_chunks` matching the scope (tagged with a `_type` discriminator field), and `MemoryStore.import_scope(records: Iterable[dict], scope: MemoryScope)` that re-inserts them via the existing per-type `create()` methods (re-validating scope match on every record — reject with a clear error if an imported record's scope doesn't match the target scope, rather than silently rewriting it). Provide a `scripts/export_memory.py`/`scripts/import_memory.py` pair (JSONL on disk) as the reference CLI usage, matching the existing `scripts/purge_expired.py`/`scripts/consolidate_pending.py` pattern. Document explicitly that this is this SDK's own proprietary format (embedding vectors included as raw float lists), not a cross-vendor interchange standard — none exists industry-wide per the market study.\n\nInspired by: the gap-analysis finding that memory portability is unsolved industry-wide, and the feature-matrix's Import/export column (checked for Mem0/Letta/Oracle/Zep/Redis) as the bar for 'has some export story at all,' which this SDK currently lacks entirely.\n\nDb2 feasibility: fully feasible — pure read/write over existing repository methods, no schema change. Independent of every other story in this epic.",
+  "comments": [
+    {
+      "date": "2026-08-03",
+      "text": "AUDIT VERIFIED DONE. MemoryStore.export_scope(scope) -> Iterator[dict] yields _type-tagged records across all five memory tables plus memory_chunks. MemoryStore.import_scope(records, scope) re-inserts via per-type create(), validates scope on every record, raises ScopeMismatchError/ScopeImportError on mismatch — both exported from package root (__init__.py). CLI scripts/export_memory.py and scripts/import_memory.py exist. Dedicated test file tests/test_pipe6_export_import.py. 739 unit tests pass."
+    }
+  ]
+}

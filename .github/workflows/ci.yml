@@ -62,6 +62,15 @@ jobs:
         # The XML report is written to coverage.xml in the workspace root.
         run: pytest
 
+      - name: Board — check BOARD.html is not stale
+        # project-management/BOARD.html is generated from
+        # project-management/board/{epics,stories}/*.json — catches a PR
+        # that edited a shard file but forgot to run `make board` (or
+        # edited the generated file directly instead of its source).
+        # stdlib-only script, one leg is enough.
+        if: matrix.python-version == '3.11'
+        run: python project-management/board/build.py --check
+
       - name: Upload coverage report to Codecov
         # Upload once (on the 3.11 leg) to avoid triple-posting the same
         # data.  Requires CODECOV_TOKEN repo secret for private repos —

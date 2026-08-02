@@ -1,0 +1,14 @@
+{
+  "id": "PH-1",
+  "epic_id": "EPIC-5",
+  "title": "CI pipeline: lint, type-check, and unit tests on every PR",
+  "summary": "GitHub Actions workflow running ruff check, mypy src, and the mocked pytest unit suite across Python 3.10/3.11/3.12 on every push and pull request.",
+  "status": "Done",
+  "description": "Add `.github/workflows/ci.yml` with a job matrix over Python 3.10, 3.11, and 3.12 (matching `requires-python` and the classifiers in pyproject.toml) that: installs the package with `pip install -e \".[dev]\"`, runs `ruff check .`, runs `mypy src`, and runs `pytest` (unit suite only — the `tests/integration/` suite self-skips without `DB2_DATABASE` set, per the existing `pytest_collection_modifyitems` hook in `tests/integration/conftest.py`, so no extra exclusion flag is needed here). Cache pip dependencies keyed on `pyproject.toml` hash to keep runs fast. Trigger on `push` to main and on `pull_request`. Add a status badge to README.md once green.\n\nThis job intentionally does not install the `[langchain]`/`[openai-agents]`/`[mcp]` extras or run `tests/test_adapters.py` against them beyond what's already covered by the default dev install — adapter-specific dependency-version drift is out of scope here (call it out as a follow-up if it becomes a real problem, don't build it speculatively now).",
+  "comments": [
+    {
+      "date": "2025-07-31",
+      "text": "Done. Created .github/workflows/ci.yml: single job 'lint-typecheck-test' with a 3×1 matrix over Python 3.10/3.11/3.12 (fail-fast:false), triggered on push to main and pull_request. Steps per matrix entry: (1) pip install -e \".[dev]\" — core deps + pytest/ruff/mypy/pytest-cov only, no adapter extras; (2) ruff check . — full lint; (3) mypy src — strict type-check; (4) pytest — unit suite runs, integration suite self-skips via the existing pytest_collection_modifyitems hook in tests/integration/conftest.py (DB2_DATABASE unset). Pip cache keyed on pip-<python>-<sha256(pyproject.toml)> via actions/cache@v4. CI status badge added to README.md. DECISIONS.md created with full dated entry documenting workflow path, Python matrix, and exact commands per step."
+    }
+  ]
+}

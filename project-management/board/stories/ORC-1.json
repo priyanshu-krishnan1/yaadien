@@ -1,0 +1,14 @@
+{
+  "id": "ORC-1",
+  "epic_id": "EPIC-3",
+  "title": "Context card: condensed working-memory view for the active thread",
+  "summary": "MemoryStore.get_context_card(scope) returns a structured recent-turns view instead of making callers assemble raw WorkingMemory rows themselves.",
+  "status": "Done",
+  "description": "Add `MemoryStore.get_context_card(scope, max_turns=20)` returning a small structured object (not just a raw list): recent working-memory turns in chronological order, a turn count, and the timestamp of the most recent turn. This is a convenience/formatting layer over `store.working.list_all()` — no new schema, no LLM call required by default. Add an optional `summarizer` hook (same pluggable-callback shape as `Consolidator`/`Reconciler`) so a caller who wants an actual condensed narrative (not just the raw recent turns) can supply one; default behavior with no summarizer configured is the raw-turns view.\n\nInspired by: Oracle AI Agent Memory's `Thread.get_context_card()` — part of its \"short-term memory\" pillar (thread context cards + conversation summaries), distinct from long-term durable memory search.\n\nDb2 feasibility: trivial — a new read-only convenience method composing existing `list_all()` calls, plus an optional pluggable hook following a pattern already established twice in this codebase (Consolidator, Reconciler). No new infrastructure, no mandatory LLM dependency.",
+  "comments": [
+    {
+      "date": "2026-08-01",
+      "text": "Done. Added MemoryStore.get_context_card(scope, max_turns=20) returning a ContextCard object with chronological recent turns, turn_count, latest_at, and optional summary. Added Summarizer and NoOpSummarizer protocols/defaults alongside exports, kept the default path as raw turns with no mandatory LLM call, documented the exact shape/signature in DECISIONS.md, updated ARCHITECTURE.md section 1 to show the new read path, and added lifecycle tests covering ordering, max_turns, empty cards, summarizer invocation, and summarizer-failure fallback."
+    }
+  ]
+}

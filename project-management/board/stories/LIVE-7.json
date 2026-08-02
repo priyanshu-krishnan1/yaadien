@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-7",
+  "epic_id": "EPIC-10",
+  "title": "Live: hybrid retrieval (RRF keyword + vector fusion)",
+  "summary": "New tests/integration/test_hybrid_search.py — real reciprocal-rank-fusion ordering over live Db2 rows (PIPE-1).",
+  "status": "Done",
+  "description": "PIPE-1's hybrid keyword+vector RRF search has no live-Db2 test. Add tests/integration/test_hybrid_search.py: seed rows in one scope with realistic overlapping/distinguishing text content and deliberately-placed embeddings (reuse make_unit_vec-style deterministic vectors from conftest.py so vector rank is predictable) such that keyword-only ranking and vector-only ranking would disagree on ordering for at least one pair of rows; run the hybrid search path against the live store and assert the fused ordering matches the RRF formula (k=60, per DECISIONS.md's 'RRF constant: k = 60' entry) computed independently in the test rather than just asserting 'some result came back'. Confirm real Db2 keyword scoring behavior matches what DECISIONS.md's 'Db2 Text Search Extender — confirmed non-dependency' entry says is actually used (not the Text Search Extender). Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_hybrid_search.py — 5 tests: pure vector baseline (row B first), hybrid reorders row A higher, RRF formula verified independently in test (k=60), empty query_text degenerates to vector-only, no Text Search Extender confirmed by successful execution on standard Db2."
+    }
+  ]
+}

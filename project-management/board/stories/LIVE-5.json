@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-5",
+  "epic_id": "EPIC-10",
+  "title": "Live: content chunking repository",
+  "summary": "New tests/integration/test_chunking.py — ChunkRepository round-trips, vector search over chunks, and scope-scoped erasure against real Db2 (ORC-2).",
+  "status": "Done",
+  "description": "repositories/chunks.py's ChunkRepository (insert_chunk, delete_by_source, erase_by_scope, list_all, list_all_for_scope, search_chunks) has no live-Db2 coverage. Add tests/integration/test_chunking.py: insert several chunks for one source document under one scope via the live pool, assert list_all_for_scope() and list_all() return them with correct ordering/pagination; run search_chunks() with a real embedding vector and assert nearest-neighbour correctness using the same unit-vector technique as test_core.py's TestVectorSearch (make_unit_vec from conftest.py); call delete_by_source() and assert only that source's chunks are removed, others in the same scope untouched; call erase_by_scope() and assert a full scope's chunks are gone while a sibling scope's chunks survive. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_chunking.py — 13 tests: insert/list_all_for_scope round-trip, list_all pagination, search_chunks nearest-neighbour (unit vector), delete_by_source targeted removal, erase_by_scope full scope erasure with sibling intact."
+    }
+  ]
+}

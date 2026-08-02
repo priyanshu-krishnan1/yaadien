@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-18",
+  "epic_id": "EPIC-10",
+  "title": "Live: fuzzy vs. exact scope matching + unscoped-only queries — real cross-scope leak detection",
+  "summary": "New tests/integration/test_scope_matching_modes.py — exact_agent_match/exact_thread_match=False against real multi-tenant rows in Db2, the highest-blast-radius story in this epic (THRD-10).",
+  "status": "Done",
+  "description": "THRD-10 was flagged in EPIC-8's own DECISIONS.md risk note as the highest-blast-radius story in that epic because it touches store.search()'s exact_agent_match/exact_thread_match parameters, adjacent to the VER-5-audited scope-isolation core. It is unit-tested only with a fake cursor, which cannot demonstrate an actual cross-tenant data leak the way a real multi-row Db2 query can. Add tests/integration/test_scope_matching_modes.py — READ-ONLY assertions against real seeded data; this story must NOT modify _scope_predicates(), MemoryScope (models.py), or any repository's scope-enforcement SQL, only add tests that exercise the existing exact_agent_match/exact_thread_match=True/False parameters on store.search():\n\nSeed real rows across at least three distinct agent_ids and, within one agent, at least two distinct thread_ids. With exact_agent_match=True (the default), assert search() with any scope never returns another agent's real rows — this is the critical negative assertion, run it exhaustively enough (multiple agents, multiple record types) to be a genuine leak-detection test, not a token check. With exact_agent_match=False, assert the documented broader/fuzzy real result set is returned (per store.search()'s docstring) and confirm this fuzzy mode is never the default anywhere in the SDK's own code (grep store.py/thread.py for any call site that passes False, and flag it as a real finding in DECISIONS.md if one is found unexpectedly). Same pattern for exact_thread_match=True/False within one agent's multiple real threads. Also cover any unscoped-only query mode described in THRD-10's board description/DECISIONS.md entries — verify it returns only genuinely unscoped real rows, never leaking scoped ones. If any assertion in this file fails against live Db2, treat it as a P0 finding (a real isolation bug, not a test bug) and stop to report it rather than adjusting the test to pass. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_scope_matching_modes.py — 23 tests: exhaustive exact_agent_match=True leak detection (3 agents, 3 record types, never returns foreign-agent rows), fuzzy mode broader results + static source scan confirms no hardcoded =False in production code, exact/fuzzy thread matching within one agent, unscoped-only (thread_id=None) returns only genuinely null-thread rows. Read-only assertions, _scope_predicates() untouched."
+    }
+  ]
+}

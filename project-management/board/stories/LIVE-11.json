@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-11",
+  "epic_id": "EPIC-10",
+  "title": "Live: export_scope()/import_scope() round-trip fidelity",
+  "summary": "New tests/integration/test_export_import.py — a real export from one live scope re-imported into a fresh scope in the same Db2 instance, field-for-field (PIPE-6).",
+  "status": "Done",
+  "description": "PIPE-6's export_scope()/import_scope() (store.py, including _import_chunk_record() and _check_scope_match()) is unit-tested only with a fake cursor, which cannot validate that an exported vector round-trips through TO_VECTOR/VECTOR_SERIALIZE correctly or that a real streaming Iterator behaves against a live cursor. Add tests/integration/test_export_import.py: seed real rows (including chunks and at least one confidence/content_hash/superseded_at-bearing semantic_facts row) across every memory type in one scope on the live pool; call export_scope(scope) and materialize the streamed dicts; import them via import_scope() into a *different* scope (new agent_id) in the same live database; assert every field round-trips correctly (content, metadata, embedding vector values within float tolerance, confidence, timestamps) by comparing live-read rows before export and after import; assert _check_scope_match() actually rejects an import whose records' embedded scope doesn't match the target scope when that guard is expected to fire. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_export_import.py — 5 tests: full round-trip all types + chunks, _type discriminator on every record, ScopeMismatchError on mismatched import, embedding vector within 1e-4 float32 tolerance, streaming Iterator consumed one record at a time."
+    }
+  ]
+}

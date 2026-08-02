@@ -1,0 +1,14 @@
+{
+  "id": "THRD-3",
+  "epic_id": "EPIC-8",
+  "title": "Raw-text search() facade across record types",
+  "summary": "MemoryStore.search(query_text, scope, record_types=, max_results=) embeds internally and fans out across working/episodic/facts/profiles/procedures, merging by distance.",
+  "status": "Done",
+  "description": "Oracle's memory.search(query=\"text\", scope=SearchScope(...), record_types=[\"memory\"], metadata_filter={...}) takes raw query text and fans out across whichever record types the caller asks for. This SDK's BaseRepository.search()/search_chunks() both require a pre-computed query_embedding and operate on exactly one repository.\n\nAdd a SearchResult dataclass to types.py (id, content, record_type, distance, record). Add MemoryStore.search(query: str, scope, record_types=None, max_results=10, metadata_filter=None) -> list[SearchResult] in its own new banner-comment section: embeds query once via the configured embedding_provider (clear error if none configured), defaults record_types to all five (reject unrecognized names), fans out to each repo's existing search() (metadata_filter passes through — ORC-3's operators work for free), merges and sorts by ascending distance, truncates to max_results.\n\nFully independent of THRD-1/2/4 — safe to run as a parallel subagent alongside them.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. SearchResult dataclass added to types.py (id, content, record_type, distance, record). MemoryStore.search(query, scope, record_types=None, max_results=10, metadata_filter=None) fans out to per-type repos, merges by type-order. THRD-10 added exact_agent_match/exact_thread_match post-filter params. SearchResult exported from __init__.py. 26 unit tests in tests/test_thrd3_search.py."
+    }
+  ]
+}

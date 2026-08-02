@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-10",
+  "epic_id": "EPIC-10",
+  "title": "Live: erase_all() and ErasureReport accuracy",
+  "summary": "New tests/integration/test_erasure.py — real hard-delete counts across every table (including chunks) and scope-safety, verified against live row counts (PIPE-5).",
+  "status": "Done",
+  "description": "PIPE-5's erase_all()/ErasureReport is unit-tested only with a fake cursor. Add tests/integration/test_erasure.py: seed real rows across every repository (working, episodic, facts, profiles, procedural, and chunks via ChunkRepository) plus a sibling scope with its own rows; call store.erase_all(scope) against the live pool; assert the returned ErasureReport's per-table counts exactly match independently-queried real row counts before the call, assert every targeted row is actually gone via a live SELECT afterward (hard delete, not soft — per DECISIONS.md's 'Irreversibility' note), and assert the sibling scope's rows are completely untouched (scope-safety). Also cover store.delete_thread(scope) (a thin wrapper over erase_all per THRD-6) with a thread_id-scoped erase that leaves the rest of the agent's data intact. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_erasure.py — 7 tests: ErasureReport counts match pre-call raw SELECT COUNT(*) per table, total_deleted correct, erased_at is datetime, rows hard-deleted verified via raw counts, SDK list_all() also empty, sibling scope intact, delete_thread() leaves other threads untouched."
+    }
+  ]
+}

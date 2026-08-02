@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-3",
+  "title": "Oracle-inspired memory enhancements (Db2-adapted)",
+  "description": "Features studied from Oracle AI Agent Memory (blogs.oracle.com/developers/oracle-ai-agent-memory-a-governed-unified-memory-core-for-enterprise-ai-agents and the oracleagentmemory PyPI package), reworked for what's actually feasible on Db2 LUW. See DECISIONS.md for the full research + what was deliberately excluded.",
+  "comments": []
+}

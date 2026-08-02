@@ -1,0 +1,14 @@
+{
+  "id": "STEP-5",
+  "epic_id": "EPIC-1",
+  "title": "Step 5: Governance / scoping enforcement",
+  "summary": "MemoryScope value object, SQL scope predicates on every query, cross-scope isolation tests.",
+  "status": "Done",
+  "description": "Harden scoping across the SDK: add a `MemoryScope` value object\n(tenant_id, agent_id, user_id, thread_id) that's required on every\nMemoryStore call instead of loose kwargs. Ensure every generated SQL\nstatement includes scope predicates (never allow a query with only an id\nand no scope check — this is the multi-tenant isolation boundary). Add\ntests that assert cross-scope reads return nothing even if you know another\nscope's row id.",
+  "comments": [
+    {
+      "date": "2026-07-31",
+      "text": "Confirmed MemoryScope (frozen Pydantic model: tenant_id/agent_id/user_id/thread_id) is the required scope value object on every repository and MemoryStore call. Audited all 7 SQL paths in BaseRepository — every SELECT/UPDATE/DELETE includes _scope_predicates() in the WHERE clause; get_by_id pairs id=? with the full scope so IDs alone cannot bypass the isolation boundary. No schema or API changes were needed (enforcement was already in place from Step 3). Added tests/test_scoping.py with 91 unit tests: MemoryScope value object contract (frozen, hashable, equality), _scope_predicates() helper, cross-scope isolation for get_by_id/list_all/search/forget/update/purge_expired on all five repository types (parametrized, 30 tests), MemoryStore facade scope propagation, and empty agent_id rejection on every operation. Key edge case recorded in DECISIONS.md: cross-scope update() surfaces as StaleWriteError (0 rowcount), not a new ScopeViolationError — leaking the reason would provide information to a misbehaving caller. Total test suite: 195 tests, ruff clean, mypy strict clean."
+    }
+  ]
+}

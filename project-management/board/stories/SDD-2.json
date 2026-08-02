@@ -1,0 +1,9 @@
+{
+  "id": "SDD-2",
+  "epic_id": "EPIC-9",
+  "title": "Data Architecture & Schema Design Document",
+  "summary": "project-management/design/02-data-architecture.md — full ER diagram across all 7 tables sourced from the 6 real migration files, column dictionary, indexing strategy, migration history, and a lifecycle state diagram distinguishing tombstone/purge/supersede/erase.",
+  "status": "To Do",
+  "description": "Write project-management/design/02-data-architecture.md. Read all six migration files directly (db/migrations/0001..0006) rather than reconstructing schema from memory.\n\nRequired: (1) Mermaid erDiagram covering schema_migrations, working_memory, episodic_memory, semantic_facts, entity_profiles, procedural_memory, memory_chunks with every column/type/nullability; (2) per-table column dictionary; (3) indexing strategy (every CREATE VECTOR INDEX + supporting scope indexes, distance metric per table and why); (4) migration history table (all six, in order); (5) Mermaid stateDiagram-v2 for the data lifecycle — active -> tombstoned -> purged; active -> superseded (facts only); active -> erased as a DIRECT edge (erase_all bypasses tombstone entirely, must not be flattened into the tombstone path).\n\nFully independent of every other SDD story — new file only.",
+  "comments": []
+}

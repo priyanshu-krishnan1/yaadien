@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-17",
+  "epic_id": "EPIC-10",
+  "title": "Live: async facade correctness (search_async / add_messages_async / get_context_card_async)",
+  "summary": "New tests/integration/test_async_facade.py — the asyncio.to_thread wrappers produce identical real results to their sync equivalents against live Db2 (THRD-9).",
+  "status": "Done",
+  "description": "THRD-9's three async wrappers are unit-tested only with a fake cursor and a trivial event loop. Add tests/integration/test_async_facade.py (using pytest-asyncio or asyncio.run, matching whatever async test pattern the unit suite already established — check tests/test_thrd9_async_facades.py for the existing convention before introducing a new one) against the live `store` fixture: for each of search_async/add_messages_async/get_context_card_async, run the async call and the sync equivalent (search/add_messages/get_context_card) against the same real seeded scope and assert byte-for-byte-equivalent results (accounting for the async call's own writes when comparing add_messages_async, e.g. run each against a fresh scope); assert the async calls genuinely don't block by running two overlapping async calls concurrently (asyncio.gather) against two different real scopes and confirming both complete correctly (a real concurrency check that a fake cursor with no actual I/O latency can't meaningfully exercise). Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_async_facade.py — 6 tests (asyncio.run() pattern, no pytest-asyncio dep): search_async identical to sync, add_messages_async real Db2 write, get_context_card_async ContextCard equivalent, asyncio.gather() concurrent two-scope test with zero cross-contamination."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-6",
+  "epic_id": "EPIC-10",
+  "title": "Live: structured metadata filters + SchemaPolicy.REQUIRE_EXISTING",
+  "summary": "New tests/integration/test_metadata_filters_schema_policy.py — real JSON-column metadata predicates and a real SchemaPolicyError on a live migrator run (ORC-3, ORC-4).",
+  "status": "Done",
+  "description": "ORC-3's metadata_filter dict (forwarded through search()/list_all() to a real JSON-column SQL predicate) and ORC-4's Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING) are both unit-tested only with a fake cursor, which cannot validate real Db2 JSON predicate SQL. Add tests/integration/test_metadata_filters_schema_policy.py:\n\nMetadata filters: write rows with distinct metadata dict shapes into one scope, run search()/list_all() with a metadata_filter matching a subset, and assert only the matching real rows come back; run a metadata_filter referencing a key that exists on no row and assert an empty (not erroring) result; run a deliberately malformed filter and assert InvalidMetadataFilterError is actually raised by the real code path, not just constructible.\n\nSchemaPolicy: against a *separate*, not-yet-migrated Db2 database/schema reachable via the same DB2_* credentials (or a scratch schema created for this test and dropped after — coordinate the approach with whatever tests/integration/conftest.py's migrated_pool fixture already assumes about the shared TESTDB, and do not run destructive schema operations against the shared migrated_pool used by every other LIVE-* story), run Migrator(pool, schema_policy=SchemaPolicy.REQUIRE_EXISTING).validate() before migrations exist and assert a real SchemaPolicyError is raised; run it again after migrations have been applied and assert it passes cleanly. Define local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_metadata_filters_schema_policy.py — 10 tests: exact/$not/$array_contains/$array_contains_any list_all operators, no-match empty result, InvalidMetadataFilterError raised live, search() with metadata_filter, REQUIRE_EXISTING PASS on migrated schema, FAIL case documented as xfail (requires DBA-provisioned empty schema)."
+    }
+  ]
+}

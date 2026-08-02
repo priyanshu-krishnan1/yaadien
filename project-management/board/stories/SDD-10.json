@@ -1,0 +1,9 @@
+{
+  "id": "SDD-10",
+  "epic_id": "EPIC-9",
+  "title": "Testing & Quality Assurance Strategy Document",
+  "summary": "project-management/design/10-testing-qa-strategy.md — the test pyramid (unit/integration/benchmark), the 85% coverage gate and its exact exclusions, the scope-isolation test pattern as a standing QA control, static-analysis gates, and the test-file-to-story naming convention.",
+  "status": "To Do",
+  "description": "Write project-management/design/10-testing-qa-strategy.md. Ground it in the real tests/ listing, pyproject.toml's pytest/coverage config, and INTEGRATION_TESTING.md.\n\nRequired: (1) test pyramid — unit (no live Db2), integration (gated behind the `integration` marker, auto-skips without DB2_DATABASE), benchmarks/ as a distinct non-correctness measurement category; (2) coverage policy — --cov-fail-under=85 scoped to src/agent_memory_sdk only, exclusions matching [tool.coverage.report] exactly; (3) the scope-isolation cross-scope-leakage test pattern (tests/test_scoping.py, VER-5/Step 5 origin) named as a standing QA control future stories are expected to extend; (4) static-analysis gates (ruff, mypy --strict, bandit, pip-audit) as merge-blocking, not optional; (5) the tests/test_<story-id>_*.py traceability naming convention, described not hand-built into a matrix.\n\nFully independent of every other SDD story — new file only.",
+  "comments": []
+}

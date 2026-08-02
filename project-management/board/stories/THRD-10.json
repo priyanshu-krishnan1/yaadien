@@ -1,0 +1,14 @@
+{
+  "id": "THRD-10",
+  "epic_id": "EPIC-8",
+  "title": "Fuzzy vs. exact per-dimension scope matching in search(), including unscoped-only queries",
+  "summary": "Adds exact_agent_match/exact_thread_match + explicit-None-means-unscoped-only semantics to THRD-3's search() facade ONLY — explicitly must not touch _scope_predicates()/MemoryScope, the VER-5-audited scope-isolation core. Highest-blast-radius story in the epic.",
+  "status": "Done",
+  "description": "READ THE RISK NOTE in the EPIC-8-addendum DECISIONS.md entry before starting. Oracle's Scope/SearchScope model distinguishes three states per dimension (omitted / explicit None-means-unscoped / concrete id) with exact_*_match flags. This SDK's MemoryScope has no such distinction — None always means 'unfiltered' (repositories/base.py:193). There is no way today to search for 'only records with no user_id.'\n\nThis story does NOT touch _scope_predicates(), MemoryScope, or any other already-shipped method — additive-only new optional parameters on THRD-3's search() facade alone, implemented as its own filtering layer. Add exact_agent_match: bool = True, exact_thread_match: bool = True (default exact, a deliberate divergence from Oracle's default-fuzzy-thread-match, documented why — keeps this addition consistent with the rest of the SDK's always-exact-by-default behavior). exact_*_match=False drops that filter entirely; an explicit None value paired with exact_*_match=True matches only genuinely-NULL rows (the new unscoped-only capability).\n\nDepends on THRD-3 — do not start until it is merged. This is the highest-blast-radius story in the epic; a reviewer must be able to confirm repositories/base.py's _scope_predicates() is untouched.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. exact_agent_match: bool = True and exact_thread_match: bool = True added to MemoryStore.search() as post-fetch Python filters — _scope_predicates() and repositories/base.py are untouched (git diff confirmed). Default exact matching diverges from Oracle's default-fuzzy-thread; documented in docstring with VER-5 reference. 25 unit tests in tests/test_thrd10_scope_matching.py. repositories/base.py confirmed untouched."
+    }
+  ]
+}

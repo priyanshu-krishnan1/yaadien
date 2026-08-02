@@ -1,0 +1,13 @@
+{
+  "id": "VER-5",
+  "epic_id": "EPIC-4",
+  "title": "Verify: Step 5: Governance / scoping enforcement",
+  "summary": "Re-verify MemoryScope, every SQL path has scope predicates, cross-scope isolation tests, multi-tenant boundary correctness against STEP-5 acceptance criteria.",
+  "status": "Done",
+  "comments": [
+    {
+      "date": "2026-08-02",
+      "text": "PASS — extra scrutiny applied (never-had-a-dedicated-audit story). Full SQL trace for all 7 operations confirmed: (1) create() stamps scope from scope arg (lines 712-715), INSERT never takes scope from record; (2) get_by_id() WHERE id=? AND scope AND deleted_at IS NULL — both id and scope bound params; (3) list_all() WHERE scope AND deleted_at IS NULL; (4) search() step-1 ID-ranking query includes scope; (5) forget() WHERE id=? AND scope AND deleted_at IS NULL; (6) update() WHERE id=? AND scope AND version=? AND deleted_at IS NULL; (7) purge_expired() WHERE deleted_at IS NOT NULL AND scope. ALL scope values are bound ?-parameters, never string-interpolated into SQL. _vec_to_str() coerces via float() before inlining — only non-scope SQL literal and it's injection-safe. _require_agent_id() rejects empty agent_id before any SQL. test_scoping.py has 91 unit tests covering all five repo types x all 6 operations for cross-scope isolation, plus MemoryScope value object contract and MemoryStore facade propagation. No gaps or vulnerabilities found."
+    }
+  ]
+}

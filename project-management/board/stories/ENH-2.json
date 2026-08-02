@@ -1,0 +1,14 @@
+{
+  "id": "ENH-2",
+  "epic_id": "EPIC-2",
+  "title": "Write-time exact-duplicate rejection via content hash",
+  "summary": "SHA-256 hash of normalized content at write time; skip inserting exact duplicates within a scope.",
+  "status": "Done",
+  "description": "Add a `content_hash VARCHAR(64)` column (hex SHA-256 of normalized `content` — e.g. lowercased and whitespace-collapsed before hashing) to all five tables via the same migration as ENH-1, plus a supporting index on `(agent_id, content_hash)`. In `create()`, compute the hash before INSERT; if a non-deleted, non-superseded row already exists in the same scope with the same content_hash, return that existing row instead of inserting a new one (an idempotent write) rather than silently creating a duplicate.\n\nInspired by: the Agent Memory Toolkit's write-time dedup — a SHA-256 `content_hash` rejects exact duplicates before any LLM reconciliation pass even runs, catching the common case (an agent re-storing the same fact twice) cheaply and deterministically without an LLM call.\n\nDb2 feasibility: a Python-side hash computation plus one indexed lookup query before INSERT. No new infrastructure. Depends on ENH-1's migration existing (bundle both column additions in one migration file).",
+  "comments": [
+    {
+      "date": "2026-08-01",
+      "text": "Done. Normalization rule (lowercase → whitespace-collapse via re.sub → SHA-256 UTF-8) implemented in _content_hash() in repositories/base.py and applied consistently in create() and update(). _MemoryBase gains content_hash: str | None = None. _SELECT_COLS now includes content_hash at index 9; all five _model_from_row() implementations updated. create() issues a dedup SELECT (using ix_*_content_hash index) before INSERT — on a hit, returns the existing row without inserting. update() recomputes and persists the hash so it stays in sync with content. No UNIQUE DB constraint (app-level enforcement scoped to deleted_at IS NULL; ENH-3 note left to add superseded_at IS NULL once that column exists). column/index DDL already present in migration 0003. 20 new unit tests (TestContentHash). All 286 unit tests pass; ruff clean. DECISIONS.md updated with full normalization rule."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-2",
+  "epic_id": "EPIC-10",
+  "title": "Live: reconciliation and soft-supersession",
+  "summary": "New tests/integration/test_reconciliation.py — real MemoryStore.reconcile() run against live semantic_facts rows (ENH-3).",
+  "status": "Done",
+  "description": "ENH-3's Reconciler/reconcile() path is only unit-tested against a fake cursor in tests/test_reconciliation.py. Add tests/integration/test_reconciliation.py: seed two or more contradicting SemanticFact rows for one scope via the live `store.facts` repo, wire a small deterministic test Reconciler (no LLM needed — a callback that always supersedes the older of two candidates it's given, so the test is reproducible) into a MemoryStore constructed against the live pool, call store.reconcile('facts', scope), and assert against real rows: the loser's superseded_by/superseded_at/supersede_reason are set in Db2, the winner's are not, and a subsequent list_all()/search() call excludes the superseded row (AND superseded_at IS NULL, per repositories/base.py). Also assert entity_profiles and procedural_memory rows are unaffected by reconcile('facts', ...) and that calling supersede() on an already-deleted or already-superseded row is a scoped no-op (0 rows affected), matching the guarded UPDATE in SemanticFactRepository.supersede(). Define any local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_reconciliation.py — 8 tests: core reconcile flow (loser supersession fields set, winner untouched, excluded from list_all/search) and guards (entity_profiles/procedural untouched, deleted noop, already-superseded noop). OldestLosesReconciler deterministic, no LLM."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "SDD-7",
+  "epic_id": "EPIC-9",
+  "title": "Extensibility & Integration Architecture Document",
+  "summary": "project-management/design/07-extensibility-architecture.md — the pluggable-protocol pattern as a named architecture pattern, the four adapters' shared thin-layer-plus-extras-isolation shape, and a concrete how-to-extend guide.",
+  "status": "To Do",
+  "description": "Write project-management/design/07-extensibility-architecture.md. Ground it in types.py's protocols and all four adapters/ modules.\n\nRequired: (1) the pluggable-protocol pattern named and described (Consolidator/Reconciler/IngestResolver/Summarizer/MemoryExtractor's shared shape: single callable, shipped NoOp default, synchronous invocation, error handling verified per-hook not assumed uniform) with the rationale (LLM-backed behavior without a mandatory LLM dependency); (2) adapter architecture — the thin-layer-over-MemoryStore shape shared by LangChain/OpenAI Agents SDK/MCP/Microsoft Agent Framework adapters, and the extras_require + _require_*() import-guard isolation mechanism, cross-checked against pyproject.toml's exact extras group names; (3) a concrete how-to-add-a-new-adapter-or-hook guide derived from the actual pattern.\n\nNaming the four integration targets is fine (they're what's being integrated with); framing any of them as design inspiration is not.\n\nFully independent of every other SDD story — new file only.",
+  "comments": []
+}

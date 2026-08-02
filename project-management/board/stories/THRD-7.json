@@ -1,0 +1,14 @@
+{
+  "id": "THRD-7",
+  "epic_id": "EPIC-8",
+  "title": "Cascading identity-scoped delete: delete_user() / delete_agent()",
+  "summary": "MemoryStore.delete_user()/delete_agent() cascade-erase everything owned by one identity by reusing erase_all(); deliberately scoped to this SDK's agent-required (not cross-agent-global) identity model, unlike Oracle's.",
+  "status": "Done",
+  "description": "Oracle's OracleAgentMemory.delete_user(user_id, cascade=True)/delete_agent(agent_id, cascade=True) take a single identifier and cascade through every thread/message/memory/profile owned by that identity — broader than PIPE-5's erase_all(scope), which requires a full MemoryScope already in hand.\n\nCRITICAL constraint to document, not paper over: Oracle's UserProfileRecord is unscoped (one user identity can span agents). This SDK's EntityProfile.agent_id is required/non-nullable (models.py:69) — a 'user' here only ever exists within one agent's scope. Do NOT replicate Oracle's cross-agent global identity model (would require a real schema change, not justified here). Build the narrower version instead: delete_user(user_id, agent_id, tenant_id=None, cascade=True) -> ErasureReport and delete_agent(agent_id, tenant_id=None, cascade=True) -> ErasureReport, both requiring agent_id as a real parameter, documented explicitly. cascade=True builds a MemoryScope and calls self.erase_all(scope) directly (reuse, don't duplicate). cascade=False only removes the EntityProfile row(s).\n\nFully independent of every other story in this epic — safe to run in parallel with THRD-1/2/3/4/8.",
+  "comments": [
+    {
+      "date": "2026-08-04",
+      "text": "Done. delete_user(user_id, agent_id, tenant_id=None, cascade=True) -> ErasureReport and delete_agent(agent_id, tenant_id=None, cascade=True) -> ErasureReport. cascade=True calls erase_all(scope) across all 6 tables. cascade=False erases only EntityProfile rows. agent_id is required (not global-lookup). 19 unit tests in tests/test_thrd7_delete_identity.py."
+    }
+  ]
+}

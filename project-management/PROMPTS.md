@@ -92,24 +92,56 @@ alone so Bob doesn't burn time setting up things this project doesn't need:
 Jira wasn't reachable through Bob's Jira MCP connection, so tracking is a
 **local, self-contained HTML board** instead: [`BOARD.html`](BOARD.html)
 (at `project-management/BOARD.html` from the repo root — see "Where these
-files live" above). No server, no login, nothing to authorize — open it
-directly in a browser.
+files live" above). No server, no login, nothing to authorize — a human
+opens it directly in a browser to see current status. An agent should
+never open/read/grep `BOARD.html` for this — read
+`project-management/board/epics/*.json` /
+`project-management/board/stories/*.json` directly instead (see below).
 It's pre-populated with one Epic ("agent-memory-sdk") and one Story per
 build step (STEP-1 through STEP-8), each already carrying that step's
 summary.
 
-The board's data is a plain JSON blob embedded in `BOARD.html` itself (look
-for `<script id="board-data" type="application/json">`), so an agent
-updates it the same way it updates `DECISIONS.md` or `ARCHITECTURE.md` —
-edit the file, then commit. The working agreement is: at the *start* of a
-step, edit that story's `"status"` field to `"In Progress"`; at the *end*,
-alongside the DECISIONS.md append and git commit already required, set
-`"status"` to `"Done"` and push a `{"date": "...", "text": "..."}` entry
-into its `"comments"` array summarizing what was built — include that edit
-in the same commit as the rest of the step's work (git log already has the
-exact commit, no need to reference the hash). This is already folded into
-each step's prompt below. Refresh the page in a browser any time to see
-current status.
+**`BOARD.html` is a generated file — never hand-edit its embedded JSON,
+and never read/grep it to check board state either.** (It was hand-edited
+directly until 2026-08-05; if you're re-reading an older cached version
+of this section, that guidance is stale — see the dated DECISIONS.md
+entry.) Its actual source of truth is one small JSON file per record:
+`project-management/board/epics/<EPIC-ID>.json` and
+`project-management/board/stories/<STORY-ID>.json`. This split exists so
+many agents/subagents can update different stories at the same time
+without colliding on one large file, and so no agent has to read a
+~1700-line file just to check one story's status — see
+`project-management/board/README.md` for the full schema and workflow.
+Need to know a story's current status, or whether an id is already taken?
+Read that one file (or `ls` the directory) — don't open `BOARD.html` for
+it. `BOARD.html` itself is for a human to open in a browser, nothing
+else touches it directly.
+
+**Every "In BOARD.html, set X's status..." instruction anywhere below in
+this file is shorthand for the following, and always has been since the
+2026-08-05 restructuring — read it that way wherever it appears, in every
+step from here on:**
+
+1. Edit `project-management/board/stories/<STORY-ID>.json` directly: set
+   its `"status"` field, and push a `{"date": "YYYY-MM-DD", "text":
+   "..."}` entry into its `"comments"` array summarizing what was built
+   (same fields, same working agreement as always — at the *start* of a
+   step, status → `"In Progress"`; at the *end*, alongside the
+   DECISIONS.md append and git commit already required, status →
+   `"Done"` plus the comment).
+2. Run `make board` (or `python project-management/board/build.py`) to
+   regenerate `BOARD.html` from that file.
+3. Commit the shard file and the regenerated `BOARD.html` together, in
+   the same commit as the rest of the step's work.
+
+Step 2 is also enforced automatically: `make install-hooks` (once per
+clone) installs a pre-commit hook that rebuilds and stages `BOARD.html`
+for you if a shard changed and step 2 was skipped, and blocks the commit
+outright if a shard is invalid. Still do step 2 yourself rather than
+relying on it — the hook is a safety net for a forgotten rebuild, not a
+substitute for checking your own work.
+
+Refresh `BOARD.html` in a browser any time to see current status.
 
 ---
 
@@ -166,10 +198,21 @@ DECISIONS.md" or similar by bare name, that means
 project-management/DECISIONS.md.
 
 Tracking uses project-management/BOARD.html, a local self-contained HTML
-board (not Jira — Jira's MCP connection isn't working). It already exists,
-pre-populated with an Epic and one Story per step, all in "To Do" — no
-setup needed. Open it in a browser to see current status; later steps
-update its embedded JSON directly as work happens.
+board (not Jira — Jira's MCP connection isn't working). Open it in a
+browser to see current status.
+
+BOARD.html ITSELF IS GENERATED — NEVER HAND-EDIT ITS EMBEDDED JSON. Its
+source of truth is one file per record: project-management/board/
+epics/<EPIC-ID>.json and project-management/board/stories/<STORY-ID>.json
+(see project-management/board/README.md for the schema). Wherever any
+step below says "in BOARD.html, set X's status to Y and add a comment",
+that means: edit project-management/board/stories/X.json (set "status",
+push a {"date","text"} entry into "comments"), then run `make board` (or
+`python project-management/board/build.py`) to regenerate BOARD.html, and
+commit both the shard file and the regenerated BOARD.html together with
+the rest of that step's work. Adding a brand-new epic/story that doesn't
+exist yet works the same way — create the new file(s) under
+project-management/board/, then `make board`.
 ```
 
 ---

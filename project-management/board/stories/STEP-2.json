@@ -1,0 +1,14 @@
+{
+  "id": "STEP-2",
+  "epic_id": "EPIC-1",
+  "title": "Step 2: Schema & migrations",
+  "summary": "Db2 DDL for 5 per-type tables, vector indexes, minimal migration runner.",
+  "status": "Done",
+  "description": "Design and write the Db2 DDL for the four per-type memory tables (working,\nepisodic, semantic_facts, entity_profiles, procedural), per the Step 0\ndecisions. For each table include: id, tenant_id, agent_id, user_id,\nthread_id, content (CLOB or VARCHAR based on expected size), metadata\n(JSON column), embedding (VECTOR(<dim>, FLOAT32) NOT NULL — default to a\nzero-vector if none provided, document why), created_at, updated_at,\nexpires_at (nullable), version, deleted_at (nullable, for soft-delete).\n\nUse the Product Knowledge MCP tool to verify the exact current `VECTOR`\ncolumn DDL syntax, `CREATE VECTOR INDEX` clause options, and DiskANN\nparameters/limitations before finalizing the DDL.\n\nAdd CREATE VECTOR INDEX statements per table using DiskANN with a documented\ndistance metric choice per type (justify cosine vs euclidean per table).\nAdd supporting indexes for the scoping columns (tenant_id, agent_id,\nuser_id, thread_id).\n\nBuild a minimal SQL migration runner (`db/migrations/`, numbered .sql files\n+ a `migrate.py` that applies pending ones and tracks applied versions in a\n`schema_migrations` table) — do not pull in alembic.",
+  "comments": [
+    {
+      "date": "2026-07-30",
+      "text": "Schema complete. 0001_schema_migrations.sql + 0002_memory_tables.sql. Five tables: working_memory, episodic_memory, semantic_facts, entity_profiles, procedural_memory. All columns per spec: id VARCHAR(36), scope cols VARCHAR(128), content CLOB(65536), metadata VARCHAR(4096), embedding VECTOR(1536,FLOAT32) NOT NULL DEFAULT VECTOR_FILL zero-vector, timestamps, version, deleted_at. CREATE VECTOR INDEX WITH DISTANCE COSINE on all five. Composite scope index + agent-only index + partial expires_at index per table. schema_migrations tracking table. Migrator class in db/migrate.py — stdlib only, no alembic. bootstrap is idempotent (check-before-create). 14 unit tests via SQLite fake pool, 24 total passing. ARCHITECTURE.md section 3 updated. DECISIONS.md entries: CLOB/VARCHAR/COSINE/1536-dim/zero-vec rationale all recorded."
+    }
+  ]
+}

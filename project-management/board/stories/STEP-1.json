@@ -1,0 +1,14 @@
+{
+  "id": "STEP-1",
+  "epic_id": "EPIC-1",
+  "title": "Step 1: Scaffold",
+  "summary": "src-layout, pyproject.toml, Db2 connection pool, check_connection script.",
+  "status": "Done",
+  "description": "Scaffold the `agent-memory-sdk` Python package. Use a standard src-layout\n(`src/agent_memory_sdk/`), `pyproject.toml` (build via hatchling or\nsetuptools, your choice — state which and why), and dependencies: ibm_db,\nibm_db_dbi, pydantic v2. Add dev deps: pytest, ruff, mypy.\n\nUse the Product Knowledge MCP tool to confirm current best practice for\n`ibm_db`/`ibm_db_dbi` connection setup and any known gotchas (e.g. required\nCLI driver install steps, connection string format) before writing the\nconnection module — don't rely on training-data assumptions for\nIBM-specific driver behavior.\n\nCreate a `Db2Connection`/connection-pool module (`db/connection.py`) that:\n- reads connection params from env vars (DATABASE, HOSTNAME, PORT, UID, PWD,\n  SECURITY) with a documented .env.example\n- wraps ibm_db_dbi.connect with a small manual pool (a bounded queue of\n  connections, since ibm_db_dbi has no built-in pooling)\n- exposes a context-manager `get_connection()` for safe checkout/checkin\n\nWrite a `scripts/check_connection.py` that opens a connection and runs\n`SELECT 1 FROM SYSIBM.SYSDUMMY1` to verify connectivity. Do not write any\nschema or memory logic yet — this step is scaffolding + connectivity only.",
+  "comments": [
+    {
+      "date": "2026-07-30",
+      "text": "Scaffold complete. pyproject.toml with hatchling build backend (zero-config src-layout, PEP 517/660). src/agent_memory_sdk/db/connection.py: ConnectionPool wrapping a queue.Queue of ibm_db handles, ibm_db_dbi.Connection re-wrapped per checkout, context-manager get_connection(), Windows DLL guard, pool exhaustion/closed-pool exceptions. .env.example documents all DB2_* env vars. scripts/check_connection.py runs SELECT 1 FROM SYSIBM.SYSDUMMY1. 10/10 unit tests passing (ibm_db fully mocked). Lint clean (ruff). Key findings from Product Knowledge + web: ibm_db_dbi is not a separate PyPI package; connection string is ODBC keyword pairs only; no built-in pooling."
+    }
+  ]
+}

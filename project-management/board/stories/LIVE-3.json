@@ -1,0 +1,14 @@
+{
+  "id": "LIVE-3",
+  "epic_id": "EPIC-10",
+  "title": "Live: consolidation cadence + real concurrent claim-locking",
+  "summary": "New tests/integration/test_consolidation_worker.py — consolidate_every_n against real remember() calls, and a genuine two-worker race on _claim_consolidated() that only a real Db2 engine can adjudicate (ENH-4).",
+  "status": "Done",
+  "description": "ENH-4's consolidated_at claim column and consolidate_every_n throttle are unit-tested only against a fake cursor, which cannot exercise real row-level locking. Add tests/integration/test_consolidation_worker.py:\n\n(1) consolidate_every_n: construct a MemoryStore against the live pool with consolidate_every_n=3 and a counting test Consolidator; call remember() on working memory 6 times in one scope; assert the consolidator fired on calls 3 and 6 only (per-scope counter in _should_consolidate()), verified by the consolidator's own call count, not just return value.\n\n(2) Real concurrent claim race: this is the one assertion in this whole epic that unit tests structurally cannot make. Insert one working_memory row with consolidated_at IS NULL. From two separate live connections/threads (e.g. two BaseRepository instances or two threads each calling _claim_consolidated(record_id, scope) against the same pool), race both claims and assert exactly one returns True (rowcount 1) and the other returns False (rowcount 0) — Db2's row-level UPDATE locking, not application logic, must be what serializes this. Run it multiple iterations (e.g. 20x with fresh rows) to catch a race that only shows up occasionally.\n\n(3) End-to-end: run scripts/consolidate_pending.py's core logic (import and call its functions directly, not via subprocess) against a handful of live unconsolidated rows and assert consolidated_at is set afterward and the row is not reprocessed on a second run.\n\nDefine local fixtures inside this file only.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Done. Created tests/integration/test_consolidation_worker.py — 7 tests: cadence throttle (consolidate_every_n=3, fires on calls 3 and 6 only), 20-iteration concurrent claim race (Db2 row-level locking serializes both threads, exactly one True + one False), worker script idempotency via _fetch_pending/_claim_consolidated."
+    }
+  ]
+}
