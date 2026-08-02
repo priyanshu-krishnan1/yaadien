@@ -177,8 +177,14 @@
     },
     {
       "id": "EPIC-8",
-      "title": "Conversational ergonomics — a Thread/session API layer (Oracle How-to Guides gap)",
-      "description": "Grounded in a direct, dated (2026-08-02) review of Oracle AI Agent Memory's live How-to Guides (docs.oracle.com/en/database/oracle/agent-memory/26.4/agmea/ — Store and Search Memory, Use Agent Memory with an MCP Server, and the Quick Reference Code Samples page) against this SDK's current store.py/models.py/types.py. Confirmed already at parity or ahead: get_context_card()'s per-type minimum-result balancing (ORC-1/PIPE-4, store.py:1318 cites Oracle 26.6 by name) and erase_all()/export_scope()/import_scope() (PIPE-5/PIPE-6). Six genuine, purely ergonomic gaps remain — the underlying primitives (remember(), search(), scoped repositories) already do the work, nothing here is new storage capability: (1) no first-class Thread object (create_thread/get_thread/delete_thread with cascade), (2) no batch message API (add_messages/get_messages(start,end)/delete_message), (3) no thin add_memory()/add_user()/add_agent() convenience wrappers, (4) no automatic LLM-driven memory extraction on message ingest, (5) no token-budget-aware thread summary (get_summary), (6) no raw-text search() facade. See the dated 2026-08-02 DECISIONS.md 'EPIC-8 backlog' entry for the full research writeup. Designed explicitly for parallel execution: THRD-1/2/3/4 are fully independent (each appends its own banner-comment method section to MemoryStore, no shared edits) and safe to run as four simultaneous subagents/worktrees; THRD-5 depends only on THRD-1; THRD-6 (the Thread facade) is a pure composition layer over all five and must run last. Same Step 0 philosophy as every prior epic: Db2-only, zero mandatory new infrastructure, every new hook (MemoryExtractor, extract_memories=) opt-in and leaves default behavior unchanged.",
+      "title": "Conversational ergonomics — a Thread/session API layer (Oracle How-to Guides + API Reference gap)",
+      "description": "Grounded in a direct, dated (2026-08-02) review of Oracle AI Agent Memory's live How-to Guides (docs.oracle.com/en/database/oracle/agent-memory/26.4/agmea/ — Store and Search Memory, Use Agent Memory with an MCP Server, Quick Reference Code Samples) plus a follow-up review of the full API Reference (.../agmea/api/index.html — OracleAgentMemory, the Record taxonomy, Scope/SearchScope, OracleThread) against this SDK's current store.py/models.py/types.py. Confirmed already at parity or ahead: get_context_card()'s per-type minimum-result balancing (ORC-1/PIPE-4, store.py:1318 cites Oracle 26.6 by name) and erase_all()/export_scope()/import_scope() (PIPE-5/PIPE-6). Ten genuine, purely ergonomic gaps identified across both reviews — the underlying primitives (remember(), search(), scoped repositories) already do the work, nothing here is new storage capability: (1) Thread object, (2) batch message API, (3) add_memory/add_user/add_agent wrappers, (4) automatic memory extraction, (5) token-budget thread summary, (6) raw-text search() facade, (7) cascading delete_user()/delete_agent(), (8) generic table-agnostic delete_memory(id), (9) async facade for LLM/embedder-calling methods, (10) fuzzy-vs-exact per-dimension scope matching + unscoped-only queries. See the dated 2026-08-02 'EPIC-8 backlog' and 'EPIC-8 addendum' DECISIONS.md entries for the full research writeup, including a substantial list of things deliberately NOT turned into stories (no new Guideline/Fact/Preference tables, no copy of Oracle's default-on fail-fast extraction contract, no copy of its eight token-budget/frequency knobs, no pluggable storage backend, no blanket async-everything, no LLM-backed get_summary) and why each was rejected as scope creep or a philosophy conflict with this SDK's Step 0 'developer-controlled writes' positioning. Designed explicitly for parallel execution: THRD-1/2/3/4/7/8 are fully independent (each appends its own banner-comment method section to MemoryStore, no shared edits) and safe to run as simultaneous subagents/worktrees; THRD-5 depends on THRD-1; THRD-9 depends on THRD-1/3/5; THRD-10 depends on THRD-3; THRD-6 (the Thread facade) depends on THRD-1..5 and must run last. THRD-10 is explicitly flagged as the highest-blast-radius story — it must not touch _scope_predicates()/MemoryScope, the VER-5-audited scope-isolation core. Same Step 0 philosophy as every prior epic: Db2-only, zero mandatory new infrastructure, every new hook opt-in and leaving default behavior unchanged.",
+      "comments": []
+    },
+    {
+      "id": "EPIC-9",
+      "title": "Software design documentation package (project-approval grade)",
+      "description": "Different in kind from EPIC-1 through EPIC-8, which build code — this epic builds the formal design-documentation package a project-approval / architecture-review process needs: system architecture, data architecture, API/interface specification, sequence and flow diagrams, security design, data governance and compliance, extensibility architecture, non-functional/performance/capacity design, deployment and operations, testing strategy, and a risk register. Hard rule for every story: no competitor or reference-implementation names anywhere in this package (unlike every prior epic, which cites Oracle AI Agent Memory / Mem0 / Azure Cosmos DB's Agent Memory Toolkit / Microsoft Agent Framework by name as research grounding) — every document describes this system purely on its own technical merits, sourced only from this repository's own code, DECISIONS.md, ARCHITECTURE.md, and BENCHMARKS.md. Naming LangChain/OpenAI Agents SDK/MCP/Microsoft Agent Framework as integration targets this SDK ships adapters for remains fine (a technical dependency, not a competitive comparison) — citing any of them as design inspiration is not. New documents live under a new project-management/design/ directory, not folded into ARCHITECTURE.md, which stays the single living current-state summary per its own closing section. See the dated 2026-08-02 'EPIC-9 backlog' DECISIONS.md entry for the full rationale. Designed for maximum parallelism: SDD-1 through SDD-11 are fully independent — each authors exactly one new file, reads existing code/docs only, and writes nothing any other SDD-* story writes — safe to run as eleven simultaneous subagents. SDD-12 (the package index) depends on all eleven and must run last.",
       "comments": []
     }
   ],
@@ -849,7 +855,151 @@
     "title": "Thread facade: a bound-scope convenience object",
     "summary": "New Thread class (thread.py) plus MemoryStore.create_thread()/get_thread()/delete_thread(), composing THRD-1..5's methods bound to one scope; delete_thread() reuses erase_all().",
     "status": "To Do",
-    "description": "Oracle's memory.create_thread(thread_id=,user_id=,agent_id=) returns a Thread handle whose methods (add_messages, get_messages, delete_message, add_memory, delete_memory, search, get_summary, get_context_card) are all pre-bound to that thread's scope. This SDK has no such object.\n\nAdd src/agent_memory_sdk/thread.py: a Thread class wrapping a MemoryStore + bound MemoryScope, with thin pass-through methods to THRD-1..5's new methods plus the existing get_context_card(). Add MemoryStore.create_thread(thread_id=,user_id=,agent_id=,tenant_id=) -> Thread (schema-less by default per Step 0 — a thread with zero writes has no rows yet, a documented limitation), MemoryStore.get_thread(thread_id, scope_hint=) -> Thread (re-opens by locating the most recent WorkingMemory row), and MemoryStore.delete_thread(scope) -> ErasureReport (a one-line reuse of the existing erase_all(scope) — do not duplicate its cascade logic). Export Thread from __init__.py.\n\nDepends on THRD-1 through THRD-5 all being merged — this is a pure composition layer over all five and must run last, not in parallel with them.",
+    "description": "Oracle's memory.create_thread(thread_id=,user_id=,agent_id=) returns a Thread handle whose methods (add_messages, get_messages, delete_message, add_memory, delete_memory, search, get_summary, get_context_card) are all pre-bound to that thread's scope. This SDK has no such object.\n\nAdd src/agent_memory_sdk/thread.py: a Thread class wrapping a MemoryStore + bound MemoryScope, with thin pass-through methods to THRD-1..5's new methods plus the existing get_context_card(). Add MemoryStore.create_thread(thread_id=,user_id=,agent_id=,tenant_id=) -> Thread (schema-less by default per Step 0 — a thread with zero writes has no rows yet, a documented limitation), MemoryStore.get_thread(thread_id, agent_id, tenant_id=, user_id=) -> Thread (re-opens by locating the most recent WorkingMemory row within that scope), and MemoryStore.delete_thread(scope) -> ErasureReport (a one-line reuse of the existing erase_all(scope) — do not duplicate its cascade logic). Export Thread from __init__.py.\n\nCORRECTED 2026-08-02 (technical-feasibility check): get_thread() requires agent_id as a real parameter, with NO 'search globally across agents' fallback — every read path in this SDK (get_by_id/list_all/search) hard-requires scope.agent_id, the VER-5-audited isolation boundary. An earlier draft of this story suggested an optional scope_hint with a global-lookup fallback; that is infeasible under this SDK's own governance model and was removed. See the dated DECISIONS.md entry.\n\nDepends on THRD-1 through THRD-5 all being merged — this is a pure composition layer over all five and must run last, not in parallel with them.",
+    "comments": []
+  },
+  {
+    "id": "THRD-7",
+    "epic_id": "EPIC-8",
+    "title": "Cascading identity-scoped delete: delete_user() / delete_agent()",
+    "summary": "MemoryStore.delete_user()/delete_agent() cascade-erase everything owned by one identity by reusing erase_all(); deliberately scoped to this SDK's agent-required (not cross-agent-global) identity model, unlike Oracle's.",
+    "status": "To Do",
+    "description": "Oracle's OracleAgentMemory.delete_user(user_id, cascade=True)/delete_agent(agent_id, cascade=True) take a single identifier and cascade through every thread/message/memory/profile owned by that identity — broader than PIPE-5's erase_all(scope), which requires a full MemoryScope already in hand.\n\nCRITICAL constraint to document, not paper over: Oracle's UserProfileRecord is unscoped (one user identity can span agents). This SDK's EntityProfile.agent_id is required/non-nullable (models.py:69) — a 'user' here only ever exists within one agent's scope. Do NOT replicate Oracle's cross-agent global identity model (would require a real schema change, not justified here). Build the narrower version instead: delete_user(user_id, agent_id, tenant_id=None, cascade=True) -> ErasureReport and delete_agent(agent_id, tenant_id=None, cascade=True) -> ErasureReport, both requiring agent_id as a real parameter, documented explicitly. cascade=True builds a MemoryScope and calls self.erase_all(scope) directly (reuse, don't duplicate). cascade=False only removes the EntityProfile row(s).\n\nFully independent of every other story in this epic — safe to run in parallel with THRD-1/2/3/4/8.",
+    "comments": []
+  },
+  {
+    "id": "THRD-8",
+    "epic_id": "EPIC-8",
+    "title": "Generic table-agnostic delete_memory(id)",
+    "summary": "MemoryStore.delete_memory(id, scope) tries facts/profiles/procedures in order via forget() so callers don't need to know which table an id lives in, mirroring Oracle's client-level delete_memory() without requiring a memory_type argument.",
+    "status": "To Do",
+    "description": "Oracle's client-level OracleAgentMemory.delete_memory(memory_id) deletes 'a memory-like record (memory, fact, preference, or guideline)' by id alone. This SDK's forget() facade (store.py:692) requires an explicit memory_type argument today.\n\nAdd MemoryStore.delete_memory(memory_id, scope) -> int: try store.facts, store.profiles, store.procedures (the three 'durable memory-like' repos, deliberately excluding store.working/store.episodic — messages are a different category, matching Oracle's own memory-vs-message distinction) via forget() in order, stopping at the first match. Returns 1/0. Unlike Oracle's global lookup, this still requires scope (this SDK's forget() always does, per VER-5's audited scoping discipline) — a deliberate, documented difference.\n\nFully independent of every other story in this epic — safe to run in parallel with THRD-1/2/3/4/7.",
+    "comments": []
+  },
+  {
+    "id": "THRD-9",
+    "epic_id": "EPIC-8",
+    "title": "Async facade for the LLM/embedder-calling entry points",
+    "summary": "search_async()/add_messages_async()/get_context_card_async() as thin asyncio.to_thread wrappers over their sync counterparts — deliberately NOT a blanket async twin of every MemoryStore method.",
+    "status": "To Do",
+    "description": "Oracle pairs nearly every method with an _async twin, specifically for LLM-backed calls that may perform 'remote network I/O.' This SDK is fully synchronous, a real friction point for async frameworks (LangGraph, this SDK's own PIPE-3 Microsoft Agent Framework adapter).\n\nDeliberately do NOT blanket-wrap every method (see EPIC-8-addendum DECISIONS.md entry) — most MemoryStore methods are plain Db2 round-trips with no meaningful latency beyond the DB call. Scope to exactly the three methods that call an LLM or embedder: search() (embeds query text), add_messages() when a real MemoryExtractor is configured (THRD-5), get_context_card() when a real Summarizer is configured (ORC-1/PIPE-4). Each new *_async method is a thin asyncio.to_thread(self.<sync_method>, ...) wrapper, no duplicated logic. If PIPE-3's adapter has ad hoc async wrapping around any of these three, simplify it to call the new methods instead.\n\nDepends on THRD-1, THRD-3, and THRD-5 — do not start until all three are merged.",
+    "comments": []
+  },
+  {
+    "id": "THRD-10",
+    "epic_id": "EPIC-8",
+    "title": "Fuzzy vs. exact per-dimension scope matching in search(), including unscoped-only queries",
+    "summary": "Adds exact_agent_match/exact_thread_match + explicit-None-means-unscoped-only semantics to THRD-3's search() facade ONLY — explicitly must not touch _scope_predicates()/MemoryScope, the VER-5-audited scope-isolation core. Highest-blast-radius story in the epic.",
+    "status": "To Do",
+    "description": "READ THE RISK NOTE in the EPIC-8-addendum DECISIONS.md entry before starting. Oracle's Scope/SearchScope model distinguishes three states per dimension (omitted / explicit None-means-unscoped / concrete id) with exact_*_match flags. This SDK's MemoryScope has no such distinction — None always means 'unfiltered' (repositories/base.py:193). There is no way today to search for 'only records with no user_id.'\n\nThis story does NOT touch _scope_predicates(), MemoryScope, or any other already-shipped method — additive-only new optional parameters on THRD-3's search() facade alone, implemented as its own filtering layer. Add exact_agent_match: bool = True, exact_thread_match: bool = True (default exact, a deliberate divergence from Oracle's default-fuzzy-thread-match, documented why — keeps this addition consistent with the rest of the SDK's always-exact-by-default behavior). exact_*_match=False drops that filter entirely; an explicit None value paired with exact_*_match=True matches only genuinely-NULL rows (the new unscoped-only capability).\n\nDepends on THRD-3 — do not start until it is merged. This is the highest-blast-radius story in the epic; a reviewer must be able to confirm repositories/base.py's _scope_predicates() is untouched.",
+    "comments": []
+  },
+  {
+    "id": "SDD-1",
+    "epic_id": "EPIC-9",
+    "title": "System Architecture & Component Design Document",
+    "summary": "project-management/design/01-system-architecture.md — layered architecture diagram, design principles with concrete rationale, component responsibility table, technology stack justification. Standalone, no external product references.",
+    "status": "To Do",
+    "description": "Write project-management/design/01-system-architecture.md, the top-level document a reviewer reads first. Ground it in src/agent_memory_sdk's real module layout (models.py, types.py, repositories/, store.py, db/, adapters/) and ARCHITECTURE.md section 1, but write it self-contained — a reader must not need to have read ARCHITECTURE.md first.\n\nRequired: (1) purpose/scope, no external comparison; (2) Mermaid graph TD layered-architecture diagram (models -> repositories -> store -> adapters, db/ cross-cutting); (3) design principles with concrete technical rationale (normalized per-type tables because Db2's vector index needs a NOT NULL column per type; pluggable-protocol extensibility; synchronous-by-default; mandatory scope predicates); (4) component responsibility table, one row per module; (5) technology stack and why (Python 3.10+, Pydantic v2, Db2 LUW VECTOR type, hatchling).\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-2",
+    "epic_id": "EPIC-9",
+    "title": "Data Architecture & Schema Design Document",
+    "summary": "project-management/design/02-data-architecture.md — full ER diagram across all 7 tables sourced from the 6 real migration files, column dictionary, indexing strategy, migration history, and a lifecycle state diagram distinguishing tombstone/purge/supersede/erase.",
+    "status": "To Do",
+    "description": "Write project-management/design/02-data-architecture.md. Read all six migration files directly (db/migrations/0001..0006) rather than reconstructing schema from memory.\n\nRequired: (1) Mermaid erDiagram covering schema_migrations, working_memory, episodic_memory, semantic_facts, entity_profiles, procedural_memory, memory_chunks with every column/type/nullability; (2) per-table column dictionary; (3) indexing strategy (every CREATE VECTOR INDEX + supporting scope indexes, distance metric per table and why); (4) migration history table (all six, in order); (5) Mermaid stateDiagram-v2 for the data lifecycle — active -> tombstoned -> purged; active -> superseded (facts only); active -> erased as a DIRECT edge (erase_all bypasses tombstone entirely, must not be flattened into the tombstone path).\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-3",
+    "epic_id": "EPIC-9",
+    "title": "API & Interface Design Specification",
+    "summary": "project-management/design/03-api-interface-spec.md — formal MemoryScope/MemoryStore/repository contract tables (signatures, pre/postconditions, exceptions, idempotency) plus an extension-interface contract table for all pluggable protocols.",
+    "status": "To Do",
+    "description": "Write project-management/design/03-api-interface-spec.md as a formal interface-contract document, not a tutorial. Ground it in store.py, repositories/base.py, and types.py.\n\nRequired: (1) MemoryScope contract (field table, hierarchy rule, agent_id-required precondition); (2) MemoryStore method contract table (remember/forget/purge_expired/erase_all/export_scope/import_scope/reconcile/get_context_card, plus any landed THRD-* methods) — signature, pre/postconditions, exceptions actually raised (verify against real `raise` statements), idempotency; (3) shared repository base contract stated once, not six times; (4) extension interface contract table (Consolidator/Reconciler/IngestResolver/Summarizer/MemoryExtractor) — exact shape, when invoked, error-handling contract verified against actual try/except in store.py, not assumed.\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-4",
+    "epic_id": "EPIC-9",
+    "title": "Sequence & Flow Diagrams for Core Operations",
+    "summary": "project-management/design/04-sequence-flows.md — five Mermaid sequenceDiagrams (remember() write path, search() read path incl. hybrid RRF, erase_all() cascade, export/import round-trip, reconcile() supersession) with real conditional branches shown, not flattened.",
+    "status": "To Do",
+    "description": "Write project-management/design/04-sequence-flows.md. Extends beyond ARCHITECTURE.md sections 4-7 (do not edit that file) with full Mermaid sequenceDiagram blocks for: (1) remember() incl. IngestResolver branch, chunking gate, Consolidator trigger; (2) search() incl. hybrid=True RRF fusion and search_chunks two-step resolution; (3) erase_all() cascade across all five repos plus chunks; (4) export_scope()/import_scope() round-trip; (5) reconcile() supersession flow.\n\nEach diagram's conditional branches (the 'if configured' points) must appear as real alt/opt Mermaid blocks, cross-checked against store.py's actual method bodies, not flattened into a single happy path.\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-5",
+    "epic_id": "EPIC-9",
+    "title": "Security & Data Isolation Design Document",
+    "summary": "project-management/design/05-security-design.md — multi-tenant isolation boundary as a formal security control, SQL-injection posture with every real # nosec enumerated, dependency/static-scan posture, credential handling, and an honest in-scope-vs-delegated threat model.",
+    "status": "To Do",
+    "description": "Write project-management/design/05-security-design.md. Ground it in the VER-5 DECISIONS.md audit, repositories/base.py's _scope_predicates/_require_agent_id, and the PH-4 entry.\n\nRequired: (1) multi-tenant isolation boundary restated as a formal control (what it prevents, where enforced); (2) SQL construction/injection posture — enumerate every real `# nosec` annotation (grep src/) with its justification, count must match reality; (3) dependency/static-analysis posture (pip-audit + bandit, ci.yml's security job); (4) credential/config handling (env-var only, DB2_SECURITY=SSL); (5) an honest STRIDE-lite threat model table explicitly separating in-scope threats (cross-tenant leakage, SQL injection) from delegated/out-of-scope ones (network transport encryption, physical DB access) — must not imply coverage the SDK doesn't provide.\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-6",
+    "epic_id": "EPIC-9",
+    "title": "Data Governance, Retention & Compliance Design Document",
+    "summary": "project-management/design/06-data-governance.md — the three-tier deletion policy (forget/purge_expired/erase_all) formalized as governance, ErasureReport as an audit-record spec with honest evidentiary limits, retention/TTL policy, data portability, and data-quality controls.",
+    "status": "To Do",
+    "description": "Write project-management/design/06-data-governance.md. Ground it in store.py's three-tier deletion model and PIPE-5's ErasureReport, ENH-1/ENH-2.\n\nRequired: (1) the three-tier deletion policy formalized (forget=routine/reversible, purge_expired=maintenance hard-delete of already-tombstoned rows, erase_all=compliance-grade/irreversible/bypasses tombstone entirely) with an explicit statement of which one a data-subject erasure request should invoke and why; (2) ErasureReport as an audit-record spec, honest about what it does and does NOT prove (not secure-erasure-at-media-level proof); (3) retention/TTL policy and that purge_expired() is operator-scheduled, not automatic; (4) export_scope()/import_scope() as portability, with its own-format-not-a-standard limitation restated; (5) confidence scoring + content-hash dedup as data-quality governance controls.\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-7",
+    "epic_id": "EPIC-9",
+    "title": "Extensibility & Integration Architecture Document",
+    "summary": "project-management/design/07-extensibility-architecture.md — the pluggable-protocol pattern as a named architecture pattern, the four adapters' shared thin-layer-plus-extras-isolation shape, and a concrete how-to-extend guide.",
+    "status": "To Do",
+    "description": "Write project-management/design/07-extensibility-architecture.md. Ground it in types.py's protocols and all four adapters/ modules.\n\nRequired: (1) the pluggable-protocol pattern named and described (Consolidator/Reconciler/IngestResolver/Summarizer/MemoryExtractor's shared shape: single callable, shipped NoOp default, synchronous invocation, error handling verified per-hook not assumed uniform) with the rationale (LLM-backed behavior without a mandatory LLM dependency); (2) adapter architecture — the thin-layer-over-MemoryStore shape shared by LangChain/OpenAI Agents SDK/MCP/Microsoft Agent Framework adapters, and the extras_require + _require_*() import-guard isolation mechanism, cross-checked against pyproject.toml's exact extras group names; (3) a concrete how-to-add-a-new-adapter-or-hook guide derived from the actual pattern.\n\nNaming the four integration targets is fine (they're what's being integrated with); framing any of them as design inspiration is not.\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-8",
+    "epic_id": "EPIC-9",
+    "title": "Non-Functional Requirements: Performance, Scalability & Capacity Design Document",
+    "summary": "project-management/design/08-nfr-performance-capacity.md — concurrency/pool-sizing model, search and write cost models, and a benchmark-methodology summary that links to BENCHMARKS.md rather than copying its numbers (so it never goes stale).",
+    "status": "To Do",
+    "description": "Write project-management/design/08-nfr-performance-capacity.md. Ground it in db/connection.py, repositories/base.py's EXACT/APPROX + hybrid RRF cost, ENH-4's consolidate_every_n, and BENCHMARKS.md's structure (not its numbers).\n\nRequired: (1) concurrency model — ConnectionPool as the hard concurrency ceiling, exhaustion behavior, sizing guidance; (2) search cost model — EXACT vs APPROX tradeoffs, the two-step ID-then-row fetch pattern's extra round-trip and why (Db2 12.1.5 fp0 constraint), hybrid=True's added Python-side RRF cost; (3) write cost model — chunking's effect on write cost, consolidate_every_n as the cost-control knob, restating ENH-4's known in-memory/no-cross-instance-sharing limitation as a capacity-planning caveat; (4) benchmark methodology summary linking to BENCHMARKS.md by relative path, with zero specific numbers copied in (so this document doesn't go stale when a new run is appended).\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-9",
+    "epic_id": "EPIC-9",
+    "title": "Deployment, Configuration & Operations Design Document",
+    "summary": "project-management/design/09-deployment-operations.md — packaging/extras, a complete .env.example config reference table, SchemaPolicy deployment guidance, the real 4-job CI/CD pipeline, operational script catalog, and an operator-facing exception reference.",
+    "status": "To Do",
+    "description": "Write project-management/design/09-deployment-operations.md. Ground it in pyproject.toml, .env.example, ci.yml + package-check.yml, db/migrate.py's SchemaPolicy, scripts/, and exceptions.py.\n\nRequired: (1) packaging/distribution — wheel contents, all five extras groups; (2) complete configuration reference table transcribed from .env.example, variable count must match exactly; (3) SchemaPolicy deployment guidance (CREATE_IF_NECESSARY vs REQUIRE_EXISTING, when an operator picks which); (4) CI/CD pipeline diagram naming all three ci.yml jobs (lint-typecheck-test, integration-test, security) plus the separate package-check.yml workflow — four gates total, not folded into three; (5) operational script catalog, one entry per real file in scripts/, stating whether each is cron-appropriate; (6) operator-facing reference for all five exceptions.py classes.\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-10",
+    "epic_id": "EPIC-9",
+    "title": "Testing & Quality Assurance Strategy Document",
+    "summary": "project-management/design/10-testing-qa-strategy.md — the test pyramid (unit/integration/benchmark), the 85% coverage gate and its exact exclusions, the scope-isolation test pattern as a standing QA control, static-analysis gates, and the test-file-to-story naming convention.",
+    "status": "To Do",
+    "description": "Write project-management/design/10-testing-qa-strategy.md. Ground it in the real tests/ listing, pyproject.toml's pytest/coverage config, and INTEGRATION_TESTING.md.\n\nRequired: (1) test pyramid — unit (no live Db2), integration (gated behind the `integration` marker, auto-skips without DB2_DATABASE), benchmarks/ as a distinct non-correctness measurement category; (2) coverage policy — --cov-fail-under=85 scoped to src/agent_memory_sdk only, exclusions matching [tool.coverage.report] exactly; (3) the scope-isolation cross-scope-leakage test pattern (tests/test_scoping.py, VER-5/Step 5 origin) named as a standing QA control future stories are expected to extend; (4) static-analysis gates (ruff, mypy --strict, bandit, pip-audit) as merge-blocking, not optional; (5) the tests/test_<story-id>_*.py traceability naming convention, described not hand-built into a matrix.\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-11",
+    "epic_id": "EPIC-9",
+    "title": "Risk Register & Known Limitations Document",
+    "summary": "project-management/design/11-risk-register.md — a structured internal risk table (impact/likelihood/mitigation/residual risk) mining DECISIONS.md's own already-acknowledged limitations, every row traceable to a real source, zero invented risks and zero competitor framing.",
+    "status": "To Do",
+    "description": "Write project-management/design/11-risk-register.md as a structured risk log, purely internal, no comparison to any other system. Table columns: risk description, affected component, impact, likelihood, current mitigation, residual risk/follow-up.\n\nPopulate by mining DECISIONS.md for already-acknowledged limitations (search for 'known limitation', 'deliberately', 'does not') rather than inventing new ones. Must include at minimum: ENH-4's in-memory/non-shared consolidation counter; fixed embedding_dim at construction time; ConnectionPool size as a hard concurrency ceiling; PIPE-1's Python-side keyword scoring as a scale ceiling vs. an unconfirmed DB-native alternative; PIPE-2's IngestResolver per-message search cost when combined with batched message ingestion; the ibm_db native driver/clidriver installation dependency. Every row must cite its DECISIONS.md source — no risk invented without a traceable origin, no blank cells (write 'none identified' explicitly where applicable).\n\nFully independent of every other SDD story — new file only.",
+    "comments": []
+  },
+  {
+    "id": "SDD-12",
+    "epic_id": "EPIC-9",
+    "title": "Design Documentation Package Index",
+    "summary": "project-management/design/README.md — the front door linking all 11 documents in reading order, plus a section distinguishing this package from ARCHITECTURE.md/DECISIONS.md/BENCHMARKS.md without claiming to replace any of them.",
+    "status": "To Do",
+    "description": "Write project-management/design/README.md. One short paragraph per document (SDD-1..11), linking by relative path, in reading order (system architecture -> data architecture -> API/interface -> sequence flows -> security -> data governance -> extensibility -> performance/capacity -> deployment/operations -> testing strategy -> risk register). Add a 'relationship to other project docs' section distinguishing this package (point-in-time structured design-review artifact) from ARCHITECTURE.md (living current-state summary), DECISIONS.md (chronological decision log), and BENCHMARKS.md (living results data) — none of the three are superseded by this package.\n\nDepends on SDD-1 through SDD-11 all being merged — verify every linked path actually resolves to a real committed file before finishing, don't assume filenames match the story text exactly if an implementer deviated. Must run last, not in parallel with the other eleven.",
     "comments": []
   }
 ]

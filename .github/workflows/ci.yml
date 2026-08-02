@@ -95,19 +95,62 @@ jobs:
         # Db2 client install is needed on the runner.
         run: pip install -e ".[dev,langchain,openai-agents,mcp]"
 
+      - name: Write /var/custom TESTDB-creation script
+        # Per IBM's Db2 container documentation, any script placed in
+        # /var/custom is executed automatically once the base instance setup
+        # completes — this is the container's own documented hook for
+        # customizing database creation. Combined with the documented DBNAME
+        # behavior ("leave empty if no database is needed" — omitting it
+        # means the container creates no database at all), we use this hook
+        # to create TESTDB ourselves with PAGESIZE 32768 from the start.
+        #
+        # This replaces the previous approach (let DBNAME auto-create a 4 KB
+        # placeholder, then DROP/recreate it with the right page size), which
+        # raced against Db2's own post-create background activity —
+        # AUTOCONFIGURE, the configuration advisor, and Automated RUNSTATS
+        # all run automatically on every CREATE DATABASE per IBM's official
+        # CREATE DATABASE command reference — plus the healthcheck's own
+        # periodic reconnects. FORCE APPLICATION ALL could clear connections
+        # at one instant and still lose that race a moment later, which is
+        # exactly SQL1035N ("database currently in use") on DROP DATABASE.
+        # Never auto-creating the wrong-page-size placeholder removes the
+        # whole class of race, rather than hardening the retry around it.
+        #
+        # The script is defensive about execution context (root vs.
+        # db2inst1) since the container's own entrypoint internals for
+        # /var/custom aren't published — it works either way.
+        #
+        # The heredoc body below inherits this run block's YAML indentation
+        # on every line (a harmless, already-proven-safe pattern for the
+        # docker-compose YAML heredoc further down, since YAML nesting is
+        # relative) — but a shebang line specifically must start at column 0
+        # for the kernel to honor it if /var/custom invokes the script by
+        # direct execution rather than `bash script.sh`. The `sed` strips
+        # that inherited indentation from every line so the shebang is
+        # unconditionally valid regardless of invocation style.
+        run: |
+          mkdir -p /tmp/var-custom
+          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          if [ "$(id -un)" = "db2inst1" ]; then
+            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
+          else
+            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
+          fi
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
+          chmod +x /tmp/var-custom/01_create_testdb.sh
+
       - name: Write docker-compose.db2.yml
         # Inline the compose file so no extra tracked file is needed.
-        # Uses the same proven config as github.com/GeetikaChughIBM/haystack-core-integrations
-        # (integrations/ibm_db/docker-compose.yml) which passes CI reliably.
+        # Based on the same reference config as
+        # github.com/GeetikaChughIBM/haystack-core-integrations
+        # (integrations/ibm_db/docker-compose.yml), adapted to omit DBNAME
+        # and mount the /var/custom script above instead of letting the
+        # container auto-create a 4 KB placeholder database (see the
+        # previous step's comment for why).
         #
-        # DBNAME=TESTDB so the container auto-creates the database on first boot —
-        # this is what the healthcheck polls.  Note: the auto-created DB uses the
-        # container default page size (4 KB), which is too small for
-        # VECTOR(1536,FLOAT32) indexes (need ≥8 KB rows; we use 32 KB).
-        # DB2_CREATE_DB_PAGESIZE does NOT exist in the IBM container's setup
-        # scripts — it is silently ignored.  The page size is fixed in the
-        # "Recreate TESTDB with 32 KB pages" step below after the healthcheck
-        # confirms the instance is fully up.
         # ARCHIVE_LOGS=false prevents archive-logging setup from blocking startup.
         # shm_size: "1g" matches the reference; Db2 uses SYSV shared memory.
         run: |
@@ -120,11 +163,12 @@ jobs:
               environment:
                 LICENSE: accept
                 DB2INST1_PASSWORD: passw0rd
-                DBNAME: TESTDB
                 ARCHIVE_LOGS: "false"
               ports:
                 - "50000:50000"
               shm_size: "1g"
+              volumes:
+                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
               healthcheck:
                 test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
                 interval: 30s
@@ -134,43 +178,15 @@ jobs:
           EOF
 
       - name: Start Db2 and wait for healthy
-        # docker compose up --wait blocks until the healthcheck passes (i.e. the
-        # auto-created 4 KB TESTDB is reachable) or the deadline is reached.
-        # The 300s start_period + 30×30s retries = 15 min max.
+        # docker compose up --wait blocks until the healthcheck passes (i.e.
+        # TESTDB — created by the mounted /var/custom script with the correct
+        # 32 KB page size — is reachable) or the deadline is reached. The
+        # healthcheck's own SQL1013N ("database alias not found") failures
+        # while /var/custom is still running are expected and simply retried;
+        # no separate wait step is needed for that. 300s start_period +
+        # 30×30s retries = 15 min max.
         run: docker compose -f /tmp/docker-compose.db2.yml up -d --wait
         timeout-minutes: 15
-
-      - name: Recreate TESTDB with 32 KB pages
-        # The auto-created DB uses 4 KB pages — too small for VECTOR(1536,FLOAT32)
-        # column indexes (each row is ~6144 bytes; Db2 requires pagesize ≥ row
-        # width, so 32 KB is the correct choice).  Now that the instance is
-        # healthy we drop the placeholder DB and recreate it with the right page
-        # size.  The integration tests connect to TESTDB so the name stays the same.
-        #
-        # SQL1035N is raised by DROP DATABASE when connections are still open
-        # (the healthcheck leaves one).  We must FORCE APPLICATION ALL first.
-        # db2 force returns RC=4 when there are no applications to force — that
-        # is benign, so it is run in a subshell that ignores its exit code.
-        # A brief sleep lets Db2 clean up the forced connections before DROP.
-        run: |
-          CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2)
-          run_db2() {
-            docker exec --user root "$CONTAINER" su - db2inst1 -c "db2 $*"
-          }
-          # Force all connections off (RC=4 = "no apps" is fine, ignore it)
-          run_db2 "FORCE APPLICATION ALL" || true
-          # Poll until LIST APPLICATIONS returns RC=4 (no connections left).
-          # SQL1035N on DROP DATABASE means Db2 hasn't finished closing them yet.
-          echo "Waiting for all connections to close..."
-          for i in $(seq 1 30); do
-            run_db2 "LIST APPLICATIONS" > /dev/null 2>&1 || break
-            echo "  attempt $i: connections still active, sleeping 3s..."
-            sleep 3
-          done
-          run_db2 "DROP DATABASE TESTDB"
-          run_db2 "CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
-          run_db2 "CONNECT TO TESTDB"
-          run_db2 "CONNECT RESET"
 
       - name: Run integration tests
         # Override addopts coverage flags — the integration suite covers the live
