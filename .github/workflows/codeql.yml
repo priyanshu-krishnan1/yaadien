@@ -1,0 +1,47 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scheduled scan catches new findings from CodeQL's own query-pack
+    # updates against unchanged code, not just findings introduced by new
+    # commits — the standard recommended cadence for scheduled scanning.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # Required to upload SARIF results to the repo's Security tab.
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@a2983b8bed1923f44751c5c43237f479442827b3 # v3.37.4
+        with:
+          languages: python
+
+      # No separate build step: CodeQL's Python extractor works on the
+      # source directly (interpreted language) — only compiled languages
+      # (C/C++/C#/Go/Java/Kotlin/Swift) need an Autobuild step here.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@a2983b8bed1923f44751c5c43237f479442827b3 # v3.37.4
+        with:
+          category: "/language:python"
