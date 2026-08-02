@@ -28,6 +28,12 @@ jobs:
       # Required to upload SARIF results to the repo's Security tab.
       security-events: write
       contents: read
+      # Required by the analyze action's own internal workflow-run lookup
+      # (used for telemetry/status reporting) — without it the analysis
+      # itself succeeds but the step fails at the very end with "Resource
+      # not accessible by integration". Part of GitHub's own documented
+      # advanced-setup permissions template, not an optional extra.
+      actions: read
 
     steps:
       - name: Checkout
