@@ -51,7 +51,7 @@ openai-agents = [
     "openai-agents>=0.19.1",
 ]
 mcp = [
-    "mcp>=2.0.0",
+    "mcp>=1.19.0,<2",
 ]
 # Microsoft Agent Framework (GA 2026-04-03, unifies AutoGen + Semantic
 # Kernel) — ContextProvider/HistoryProvider adapter (PIPE-3). No version
