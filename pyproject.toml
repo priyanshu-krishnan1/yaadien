@@ -38,7 +38,7 @@ dependencies = [
     # as a separate dependency.
     "ibm_db>=3.2.9",
     # Pydantic v2 for models (Step 3+).
-    "pydantic>=2.0",
+    "pydantic>=2.13.4",
     # python-dotenv for loading .env files in scripts / local dev.
     "python-dotenv>=1.0",
 ]
