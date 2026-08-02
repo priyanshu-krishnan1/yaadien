@@ -809,90 +809,90 @@
     "epic_id": "EPIC-8",
     "title": "Message ingestion primitives: add_messages / get_messages / delete_message",
     "summary": "MemoryStore.add_messages()/get_messages(start,end)/delete_message() over WorkingMemory rows, matching Oracle's thread-message API surface without a new schema.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's OracleThread exposes add_messages(list[Message|dict]), get_messages(start=,end=), and delete_message(id) as first-class, non-embedding-only operations over conversation turns. This SDK has no equivalent — WorkingMemory rows are the message-equivalent but there is no dedicated write/read/delete surface for them.\n\nAdd three methods to MemoryStore (store.py), each in its own new banner-comment section appended at the end of the class: (1) add_messages(messages: list[dict], scope) -> list[str] — builds a WorkingMemory record per message (content, metadata={role,...}, caller-supplied id if given) and calls remember(); (2) get_messages(scope, start=0, end=None) -> list[WorkingMemory] — chronological (oldest-first) slice via list_all() reversed, Python list-slice semantics; (3) delete_message(message_id, scope) -> int — soft-deletes via the existing working.forget(), returns 0 for ids in a different scope. Deliberately stays a soft-delete (this SDK's tombstone philosophy), a documented divergence from Oracle's hard-delete.\n\nFully independent of THRD-2/3/4 — safe to run as a parallel subagent alongside them. THRD-5 and THRD-6 depend on this story.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. add_messages(messages, scope) -> list[str] builds WorkingMemory per dict, absorbs extra keys (role etc.) into metadata, honors caller-supplied id, calls remember() for each. get_messages(scope, start=0, end=None) fetches newest-first, reverses to chronological, applies Python list-slice semantics. delete_message(message_id, scope) delegates to working.forget(), returns 1/0 int, soft-delete only (documented divergence from Oracle hard-delete). Banner section in store.py at THRD-1. 19 unit tests in tests/test_thrd1_messages.py, all passing. 758 total tests pass."}]
   },
   {
     "id": "THRD-2",
     "epic_id": "EPIC-8",
     "title": "add_memory() / add_user() / add_agent() convenience wrappers",
     "summary": "Thin MemoryStore wrappers over remember() for durable memories and user/agent profiles, with upsert semantics for profiles and custom-id support for memories.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's memory.add_memory(content, user_id=, agent_id=, thread_id=, memory_id=), memory.add_user(user_id, profile_text), and memory.add_agent(agent_id, profile_text) are thin, single-call convenience wrappers. This SDK's equivalent capability already exists (remember() plus SemanticFact/EntityProfile model construction) but requires every caller to build the Pydantic model by hand.\n\nAdd three methods to MemoryStore, in their own new banner-comment section: add_memory(content, scope, *, memory_id=None, metadata=None) -> str (builds+remembers a SemanticFact, honoring ENH-2's content-hash dedup); add_user(user_id, profile_text, scope=None) -> str and add_agent(agent_id, profile_text, scope=None) -> str (upsert semantics against EntityProfile keyed on (agent_id,user_id) with no thread_id — update in place if found, else create).\n\nFully independent of THRD-1/3/4 — safe to run as a parallel subagent alongside them.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. add_memory(content, scope, *, memory_id=None, metadata=None) -> str builds+remembers a SemanticFact with ENH-2 dedup. add_user(user_id, profile_text, scope) upserts EntityProfile (update if exists, else create). add_agent(agent_id, profile_text, scope=None) same upsert pattern at agent scope. 18 unit tests in tests/test_thrd2_convenience.py, all passing."}]
   },
   {
     "id": "THRD-3",
     "epic_id": "EPIC-8",
     "title": "Raw-text search() facade across record types",
     "summary": "MemoryStore.search(query_text, scope, record_types=, max_results=) embeds internally and fans out across working/episodic/facts/profiles/procedures, merging by distance.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's memory.search(query=\"text\", scope=SearchScope(...), record_types=[\"memory\"], metadata_filter={...}) takes raw query text and fans out across whichever record types the caller asks for. This SDK's BaseRepository.search()/search_chunks() both require a pre-computed query_embedding and operate on exactly one repository.\n\nAdd a SearchResult dataclass to types.py (id, content, record_type, distance, record). Add MemoryStore.search(query: str, scope, record_types=None, max_results=10, metadata_filter=None) -> list[SearchResult] in its own new banner-comment section: embeds query once via the configured embedding_provider (clear error if none configured), defaults record_types to all five (reject unrecognized names), fans out to each repo's existing search() (metadata_filter passes through — ORC-3's operators work for free), merges and sorts by ascending distance, truncates to max_results.\n\nFully independent of THRD-1/2/4 — safe to run as a parallel subagent alongside them.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. SearchResult dataclass added to types.py (id, content, record_type, distance, record). MemoryStore.search(query, scope, record_types=None, max_results=10, metadata_filter=None) fans out to per-type repos, merges by type-order. THRD-10 added exact_agent_match/exact_thread_match post-filter params. SearchResult exported from __init__.py. 26 unit tests in tests/test_thrd3_search.py."}]
   },
   {
     "id": "THRD-4",
     "epic_id": "EPIC-8",
     "title": "Token-budget-aware thread summary: get_summary()",
     "summary": "MemoryStore.get_summary(scope, except_last=, token_budget=) returns a deterministic, budget-truncated plain-text transcript — distinct from get_context_card()'s LLM Summarizer hook.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's thread.get_summary(except_last=N, token_budget=N) returns a plain-text, role-labeled transcript of a thread's messages — a distinct, simpler mechanism from get_context_card()'s optional LLM-based Summarizer hook (ORC-1): no LLM call, just a deterministic, budget-truncated raw-text view.\n\nAdd a Summary dataclass to types.py (content, message_count, truncated). Add MemoryStore.get_summary(scope, except_last=0, token_budget=None) -> Summary in its own new banner-comment section: chronological messages, drop the last except_last, format each as \"{role} (-): {content}\", and if token_budget is set, truncate via a documented whitespace-token approximation (never exceed budget), setting truncated=True.\n\nFully independent of THRD-1/2/3 — safe to run as a parallel subagent alongside them.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. Summary dataclass added to types.py (content, message_count, truncated). MemoryStore.get_summary(scope, except_last=0, token_budget=None) -> Summary: chronological, role-labeled transcript with whitespace-token budget truncation. Summary exported from __init__.py. 22 unit tests in tests/test_thrd4_summary.py."}]
   },
   {
     "id": "THRD-5",
     "epic_id": "EPIC-8",
     "title": "MemoryExtractor: automatic LLM-driven memory extraction on message ingest",
     "summary": "Pluggable MemoryExtractor protocol (parallel to Consolidator/Reconciler/IngestResolver) wired into add_messages(), opt-in via memory_extractor= and extract_memories= flag.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's OracleThread.add_messages() automatically extracts durable memories from recent thread messages via a configured LLM, on by default (extract_memories=True), with an explicit opt-out. This SDK has no equivalent — the existing Consolidator processes raw working/episodic writes generically, and PIPE-2's IngestResolver classifies a candidate the caller already decided to write; neither triggers automatically from add_messages() itself.\n\nAdd a MemoryExtractor Protocol to types.py (parallel in shape and docstring style to Consolidator/Reconciler/IngestResolver): (messages: list[WorkingMemory], scope) -> list[_MemoryBase]. Ship NoOpMemoryExtractor. Add memory_extractor= constructor param on MemoryStore (default NoOp) and extract_memories: bool = True on add_messages(). When enabled with a real extractor configured, derived records are remembered through the existing remember() path (so PIPE-2/ENH-2 already apply). Extractor errors are caught and logged, never propagated.\n\nDepends on THRD-1 (needs add_messages() to exist as the hook point) — do not start until THRD-1 is merged. Independent of THRD-2/3/4.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. MemoryExtractor Protocol + NoOpMemoryExtractor added to types.py. memory_extractor= constructor param on MemoryStore (default NoOpMemoryExtractor). extract_memories: bool = True param on add_messages(). When enabled with real extractor, derived records go through remember() path. Extractor errors caught and logged, never propagated. MemoryExtractor/NoOpMemoryExtractor exported from __init__.py. 25 unit tests in tests/test_thrd5_extractor.py."}]
   },
   {
     "id": "THRD-6",
     "epic_id": "EPIC-8",
     "title": "Thread facade: a bound-scope convenience object",
     "summary": "New Thread class (thread.py) plus MemoryStore.create_thread()/get_thread()/delete_thread(), composing THRD-1..5's methods bound to one scope; delete_thread() reuses erase_all().",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's memory.create_thread(thread_id=,user_id=,agent_id=) returns a Thread handle whose methods (add_messages, get_messages, delete_message, add_memory, delete_memory, search, get_summary, get_context_card) are all pre-bound to that thread's scope. This SDK has no such object.\n\nAdd src/agent_memory_sdk/thread.py: a Thread class wrapping a MemoryStore + bound MemoryScope, with thin pass-through methods to THRD-1..5's new methods plus the existing get_context_card(). Add MemoryStore.create_thread(thread_id=,user_id=,agent_id=,tenant_id=) -> Thread (schema-less by default per Step 0 — a thread with zero writes has no rows yet, a documented limitation), MemoryStore.get_thread(thread_id, agent_id, tenant_id=, user_id=) -> Thread (re-opens by locating the most recent WorkingMemory row within that scope), and MemoryStore.delete_thread(scope) -> ErasureReport (a one-line reuse of the existing erase_all(scope) — do not duplicate its cascade logic). Export Thread from __init__.py.\n\nCORRECTED 2026-08-02 (technical-feasibility check): get_thread() requires agent_id as a real parameter, with NO 'search globally across agents' fallback — every read path in this SDK (get_by_id/list_all/search) hard-requires scope.agent_id, the VER-5-audited isolation boundary. An earlier draft of this story suggested an optional scope_hint with a global-lookup fallback; that is infeasible under this SDK's own governance model and was removed. See the dated DECISIONS.md entry.\n\nDepends on THRD-1 through THRD-5 all being merged — this is a pure composition layer over all five and must run last, not in parallel with them.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. src/agent_memory_sdk/thread.py: Thread class wrapping MemoryStore + MemoryScope. Methods: add_messages, get_messages, delete_message (THRD-1), add_memory, delete_memory (THRD-2/8), search (THRD-3), get_summary (THRD-4), get_context_card (ORC-1/PIPE-4). MemoryStore.create_thread/get_thread/delete_thread (last delegates to erase_all). Thread exported from __init__.py. Deferred import pattern to avoid circular import. 63 unit tests in tests/test_thrd6_thread.py."}]
   },
   {
     "id": "THRD-7",
     "epic_id": "EPIC-8",
     "title": "Cascading identity-scoped delete: delete_user() / delete_agent()",
     "summary": "MemoryStore.delete_user()/delete_agent() cascade-erase everything owned by one identity by reusing erase_all(); deliberately scoped to this SDK's agent-required (not cross-agent-global) identity model, unlike Oracle's.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's OracleAgentMemory.delete_user(user_id, cascade=True)/delete_agent(agent_id, cascade=True) take a single identifier and cascade through every thread/message/memory/profile owned by that identity — broader than PIPE-5's erase_all(scope), which requires a full MemoryScope already in hand.\n\nCRITICAL constraint to document, not paper over: Oracle's UserProfileRecord is unscoped (one user identity can span agents). This SDK's EntityProfile.agent_id is required/non-nullable (models.py:69) — a 'user' here only ever exists within one agent's scope. Do NOT replicate Oracle's cross-agent global identity model (would require a real schema change, not justified here). Build the narrower version instead: delete_user(user_id, agent_id, tenant_id=None, cascade=True) -> ErasureReport and delete_agent(agent_id, tenant_id=None, cascade=True) -> ErasureReport, both requiring agent_id as a real parameter, documented explicitly. cascade=True builds a MemoryScope and calls self.erase_all(scope) directly (reuse, don't duplicate). cascade=False only removes the EntityProfile row(s).\n\nFully independent of every other story in this epic — safe to run in parallel with THRD-1/2/3/4/8.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. delete_user(user_id, agent_id, tenant_id=None, cascade=True) -> ErasureReport and delete_agent(agent_id, tenant_id=None, cascade=True) -> ErasureReport. cascade=True calls erase_all(scope) across all 6 tables. cascade=False erases only EntityProfile rows. agent_id is required (not global-lookup). 19 unit tests in tests/test_thrd7_delete_identity.py."}]
   },
   {
     "id": "THRD-8",
     "epic_id": "EPIC-8",
     "title": "Generic table-agnostic delete_memory(id)",
     "summary": "MemoryStore.delete_memory(id, scope) tries facts/profiles/procedures in order via forget() so callers don't need to know which table an id lives in, mirroring Oracle's client-level delete_memory() without requiring a memory_type argument.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle's client-level OracleAgentMemory.delete_memory(memory_id) deletes 'a memory-like record (memory, fact, preference, or guideline)' by id alone. This SDK's forget() facade (store.py:692) requires an explicit memory_type argument today.\n\nAdd MemoryStore.delete_memory(memory_id, scope) -> int: try store.facts, store.profiles, store.procedures (the three 'durable memory-like' repos, deliberately excluding store.working/store.episodic — messages are a different category, matching Oracle's own memory-vs-message distinction) via forget() in order, stopping at the first match. Returns 1/0. Unlike Oracle's global lookup, this still requires scope (this SDK's forget() always does, per VER-5's audited scoping discipline) — a deliberate, documented difference.\n\nFully independent of every other story in this epic — safe to run in parallel with THRD-1/2/3/4/7.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. delete_memory(memory_id, scope) -> int: tries facts → profiles → procedures via forget(), returns 1 on first match, 0 if not found. Deliberately excludes working/episodic. Scope always required (VER-5 isolation boundary). 16 unit tests in tests/test_thrd8_delete_memory.py."}]
   },
   {
     "id": "THRD-9",
     "epic_id": "EPIC-8",
     "title": "Async facade for the LLM/embedder-calling entry points",
     "summary": "search_async()/add_messages_async()/get_context_card_async() as thin asyncio.to_thread wrappers over their sync counterparts — deliberately NOT a blanket async twin of every MemoryStore method.",
-    "status": "To Do",
+    "status": "Done",
     "description": "Oracle pairs nearly every method with an _async twin, specifically for LLM-backed calls that may perform 'remote network I/O.' This SDK is fully synchronous, a real friction point for async frameworks (LangGraph, this SDK's own PIPE-3 Microsoft Agent Framework adapter).\n\nDeliberately do NOT blanket-wrap every method (see EPIC-8-addendum DECISIONS.md entry) — most MemoryStore methods are plain Db2 round-trips with no meaningful latency beyond the DB call. Scope to exactly the three methods that call an LLM or embedder: search() (embeds query text), add_messages() when a real MemoryExtractor is configured (THRD-5), get_context_card() when a real Summarizer is configured (ORC-1/PIPE-4). Each new *_async method is a thin asyncio.to_thread(self.<sync_method>, ...) wrapper, no duplicated logic. If PIPE-3's adapter has ad hoc async wrapping around any of these three, simplify it to call the new methods instead.\n\nDepends on THRD-1, THRD-3, and THRD-5 — do not start until all three are merged.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. search_async(), add_messages_async(), get_context_card_async() added as thin asyncio.to_thread() wrappers. Each forwards all parameters unchanged to its sync counterpart. No blanket-wrapping — only the 3 LLM/embedder-calling methods. 15 unit tests in tests/test_thrd9_async_facades.py."}]
   },
   {
     "id": "THRD-10",
     "epic_id": "EPIC-8",
     "title": "Fuzzy vs. exact per-dimension scope matching in search(), including unscoped-only queries",
     "summary": "Adds exact_agent_match/exact_thread_match + explicit-None-means-unscoped-only semantics to THRD-3's search() facade ONLY — explicitly must not touch _scope_predicates()/MemoryScope, the VER-5-audited scope-isolation core. Highest-blast-radius story in the epic.",
-    "status": "To Do",
+    "status": "Done",
     "description": "READ THE RISK NOTE in the EPIC-8-addendum DECISIONS.md entry before starting. Oracle's Scope/SearchScope model distinguishes three states per dimension (omitted / explicit None-means-unscoped / concrete id) with exact_*_match flags. This SDK's MemoryScope has no such distinction — None always means 'unfiltered' (repositories/base.py:193). There is no way today to search for 'only records with no user_id.'\n\nThis story does NOT touch _scope_predicates(), MemoryScope, or any other already-shipped method — additive-only new optional parameters on THRD-3's search() facade alone, implemented as its own filtering layer. Add exact_agent_match: bool = True, exact_thread_match: bool = True (default exact, a deliberate divergence from Oracle's default-fuzzy-thread-match, documented why — keeps this addition consistent with the rest of the SDK's always-exact-by-default behavior). exact_*_match=False drops that filter entirely; an explicit None value paired with exact_*_match=True matches only genuinely-NULL rows (the new unscoped-only capability).\n\nDepends on THRD-3 — do not start until it is merged. This is the highest-blast-radius story in the epic; a reviewer must be able to confirm repositories/base.py's _scope_predicates() is untouched.",
-    "comments": []
+    "comments": [{"date": "2026-08-04", "text": "Done. exact_agent_match: bool = True and exact_thread_match: bool = True added to MemoryStore.search() as post-fetch Python filters — _scope_predicates() and repositories/base.py are untouched (git diff confirmed). Default exact matching diverges from Oracle's default-fuzzy-thread; documented in docstring with VER-5 reference. 25 unit tests in tests/test_thrd10_scope_matching.py. repositories/base.py confirmed untouched."}]
   },
   {
     "id": "SDD-1",

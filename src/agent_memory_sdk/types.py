@@ -13,10 +13,16 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from agent_memory_sdk.models import EntityProfile, SemanticFact, WorkingMemory, _MemoryBase
+    from agent_memory_sdk.models import (
+        EntityProfile,
+        MemoryScope,
+        SemanticFact,
+        WorkingMemory,
+        _MemoryBase,
+    )
 
 # ---------------------------------------------------------------------------
 # EmbeddingProvider
@@ -602,6 +608,135 @@ class NoOpIngestResolver:
 
 
 # ---------------------------------------------------------------------------
+# MemoryExtractor, NoOpMemoryExtractor
+# ---------------------------------------------------------------------------
+
+class MemoryExtractor(Protocol):
+    """Protocol for pluggable automatic memory extraction from ingested messages.
+
+    A ``MemoryExtractor`` is called by
+    :meth:`~agent_memory_sdk.store.MemoryStore.add_messages` after the raw
+    message turns are written to working memory (when ``extract_memories=True``
+    is passed and a real extractor is configured).  It receives the list of
+    :class:`~agent_memory_sdk.models.WorkingMemory` records just stored, plus
+    the scope, and returns zero or more *derived* memory objects (any mix of
+    :class:`~agent_memory_sdk.models.SemanticFact`,
+    :class:`~agent_memory_sdk.models.EntityProfile`, or
+    :class:`~agent_memory_sdk.models.ProceduralMemory`) that the store will
+    persist via :meth:`~agent_memory_sdk.store.MemoryStore.remember`.
+
+    Shape::
+
+        (messages: list[WorkingMemory], scope: MemoryScope) -> list[_MemoryBase]
+
+    This protocol is parallel in shape and docstring style to
+    :class:`Consolidator`, :class:`Reconciler`, and :class:`IngestResolver`:
+
+    * **Consolidator** — triggered by ``remember()`` on working/episodic writes.
+    * **MemoryExtractor** — triggered explicitly by ``add_messages()`` when
+      ``extract_memories=True`` (opt-in, not automatic); receives the full
+      batch of written turns, not just a single record.
+
+    **Key distinction from Consolidator:**
+
+    The existing :class:`Consolidator` processes raw working/episodic writes
+    generically, one at a time, and is triggered by every ``remember()`` call
+    on working/episodic memory.  :class:`MemoryExtractor` is specific to the
+    ``add_messages()`` write path, fires once per batch (after all messages in
+    the batch are written), and is explicitly opt-in per call via the
+    ``extract_memories=True`` flag.
+
+    **Extractor errors are caught and logged, never propagated** — an extraction
+    failure must not roll back the original ``add_messages()`` write.
+
+    **LLM-based extractor example**::
+
+        import openai
+        from agent_memory_sdk.models import SemanticFact, WorkingMemory
+        from agent_memory_sdk.models import MemoryScope
+        from agent_memory_sdk.types import MemoryExtractor
+
+        class LLMMemoryExtractor:
+            def __init__(self, client: openai.OpenAI) -> None:
+                self._client = client
+
+            def __call__(
+                self, messages: list[WorkingMemory], scope: MemoryScope
+            ) -> list:
+                if not messages:
+                    return []
+                combined = "\\n".join(
+                    f"{m.metadata.get('role', 'unknown')}: {m.content}"
+                    for m in messages
+                )
+                resp = self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Extract important facts from this conversation. "
+                                "Return one fact per line."
+                            ),
+                        },
+                        {"role": "user", "content": combined},
+                    ],
+                )
+                text = resp.choices[0].message.content or ""
+                return [
+                    SemanticFact(
+                        agent_id=scope.agent_id,
+                        content=line.strip(),
+                        metadata={"source": "extractor"},
+                    )
+                    for line in text.splitlines()
+                    if line.strip()
+                ]
+
+        # Wire in at store construction:
+        store = MemoryStore(pool, memory_extractor=LLMMemoryExtractor(openai.OpenAI()))
+    """
+
+    def __call__(
+        self,
+        messages: list[WorkingMemory],
+        scope: MemoryScope,
+    ) -> list[_MemoryBase]:
+        """Extract durable memories from a batch of ingested messages.
+
+        Args:
+            messages: The :class:`~agent_memory_sdk.models.WorkingMemory`
+                      records just written by ``add_messages()``, in the
+                      order they were persisted.
+            scope:    The same scope passed to ``add_messages()``.
+
+        Returns:
+            A (possibly empty) list of derived memory objects to persist.
+            May contain any mix of
+            :class:`~agent_memory_sdk.models.SemanticFact`,
+            :class:`~agent_memory_sdk.models.EntityProfile`, and
+            :class:`~agent_memory_sdk.models.ProceduralMemory` instances.
+        """
+        ...
+
+
+class NoOpMemoryExtractor:
+    """Default memory extractor that does nothing.
+
+    Always returns an empty list.  This is the default used by
+    :class:`~agent_memory_sdk.store.MemoryStore` when no
+    ``memory_extractor`` argument is supplied — callers opt in explicitly.
+    """
+
+    def __call__(
+        self,
+        messages: list[WorkingMemory],
+        scope: MemoryScope,
+    ) -> list[_MemoryBase]:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # ContextCard, Summarizer, NoOpSummarizer
 # ---------------------------------------------------------------------------
 
@@ -819,3 +954,62 @@ class ErasureReport:
     rows_deleted: dict[str, int] = field(default_factory=dict)
     total_deleted: int = 0
     erased_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# SearchResult (THRD-3)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SearchResult:
+    """A single result from :meth:`~agent_memory_sdk.store.MemoryStore.search`.
+
+    Attributes:
+        id:          The memory record's UUID.
+        content:     The text content of the record.
+        record_type: Which repository the record came from.
+                     One of ``"working"``, ``"episodic"``, ``"facts"``,
+                     ``"profiles"``, ``"procedures"``.
+        distance:    Cosine distance from the query embedding (lower = more
+                     similar).  ``None`` when the record was fetched by recency
+                     rather than relevance (no embedding_provider configured).
+        record:      The full Pydantic model instance (``WorkingMemory``,
+                     ``EpisodicMemory``, ``SemanticFact``, ``EntityProfile``,
+                     or ``ProceduralMemory``).
+    """
+
+    id: str
+    content: str
+    record_type: str
+    distance: float | None
+    record: Any
+
+
+# ---------------------------------------------------------------------------
+# Summary (THRD-4)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Summary:
+    """A deterministic, budget-truncated plain-text transcript.
+
+    Returned by :meth:`~agent_memory_sdk.store.MemoryStore.get_summary`.
+
+    Distinct from :attr:`~agent_memory_sdk.types.ContextCard.summary`
+    (which is an optional LLM-generated narrative from the
+    :class:`Summarizer` hook): this dataclass is a raw, role-labeled
+    transcript, no LLM call, no pluggable hook.
+
+    Attributes:
+        content:       The formatted transcript string.
+                       Each line is formatted as ``"{role} (-): {content}"``
+                       where ``role`` is taken from ``metadata.get("role", "unknown")``.
+        message_count: Number of messages included in the transcript
+                       (after the ``except_last`` and ``token_budget`` truncations).
+        truncated:     ``True`` if the transcript was cut short by
+                       *token_budget*; ``False`` otherwise.
+    """
+
+    content: str
+    message_count: int
+    truncated: bool
