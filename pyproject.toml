@@ -36,7 +36,7 @@ dependencies = [
     # called before importing ibm_db (see db/connection.py for the guard).
     # Note: ibm_db_dbi is included in the ibm_db package — do not list it
     # as a separate dependency.
-    "ibm_db>=3.2.3",
+    "ibm_db>=3.2.9",
     # Pydantic v2 for models (Step 3+).
     "pydantic>=2.0",
     # python-dotenv for loading .env files in scripts / local dev.
