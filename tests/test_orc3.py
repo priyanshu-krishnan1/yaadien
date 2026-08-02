@@ -39,7 +39,6 @@ from agent_memory_sdk.models import MemoryScope
 from agent_memory_sdk.repositories.base import (
     _build_metadata_filter,
     _escape_json_path_value,
-    _escape_sql_string,
 )
 from agent_memory_sdk.repositories.facts import SemanticFactRepository
 from agent_memory_sdk.repositories.working import WorkingMemoryRepository
@@ -202,7 +201,7 @@ class TestBuildMetadataFilterArrayContains:
     def test_array_contains_string(self) -> None:
         sql, params = _build_metadata_filter({"tags": {"$array_contains": "urgent"}})
         assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'lax $.tags[*]'" in sql
+        assert "'strict $.tags[*]'" in sql
         assert "jt.v = 'urgent'" in sql
         assert "EXISTS" in sql
         # No bound params (value inlined)
@@ -211,14 +210,14 @@ class TestBuildMetadataFilterArrayContains:
     def test_array_contains_integer(self) -> None:
         sql, params = _build_metadata_filter({"scores": {"$array_contains": 42}})
         assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'lax $.scores[*]'" in sql
+        assert "'strict $.scores[*]'" in sql
         assert "jt.v = '42'" in sql
         assert params == []
 
     def test_array_contains_bool(self) -> None:
         sql, params = _build_metadata_filter({"flags": {"$array_contains": True}})
         assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'lax $.flags[*]'" in sql
+        assert "'strict $.flags[*]'" in sql
         assert "jt.v = 'true'" in sql
         assert params == []
 
@@ -229,7 +228,7 @@ class TestBuildMetadataFilterArrayContainsAny:
             {"tags": {"$array_contains_any": ["urgent", "bug"]}}
         )
         assert "JSON_TABLE(metadata FORMAT JSON," in sql
-        assert "'lax $.tags[*]'" in sql
+        assert "'strict $.tags[*]'" in sql
         assert "jt.v IN ('urgent', 'bug')" in sql
         assert "EXISTS" in sql
         assert params == []

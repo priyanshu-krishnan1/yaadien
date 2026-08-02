@@ -293,8 +293,8 @@ def _build_metadata_filter(
     3. **$array_contains** — single value must appear in a JSON array field::
 
            {"tags": {"$array_contains": "urgent"}}
-           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'lax $.tags[*]'
-               COLUMNS(v VARCHAR(4096) PATH 'lax $') ERROR ON ERROR) jt
+           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'strict $.tags[*]'
+               COLUMNS(v VARCHAR(4096) PATH 'strict $') ERROR ON ERROR) jt
                WHERE jt.v = 'urgent')
              (value inlined; see security note)
 
@@ -302,8 +302,8 @@ def _build_metadata_filter(
        appear in a JSON array field::
 
            {"tags": {"$array_contains_any": ["urgent", "bug"]}}
-           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'lax $.tags[*]'
-               COLUMNS(v VARCHAR(4096) PATH 'lax $') ERROR ON ERROR) jt
+           → EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON, 'strict $.tags[*]'
+               COLUMNS(v VARCHAR(4096) PATH 'strict $') ERROR ON ERROR) jt
                WHERE jt.v IN ('urgent', 'bug'))
              (all values inlined; see security note)
 
@@ -403,7 +403,7 @@ def _build_metadata_filter(
                 # silently returning no rows.
                 parts.append(
                     f"EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON,"
-                    f" 'lax $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'lax $')"
+                    f" 'strict $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'strict $')"
                     f" ERROR ON ERROR) jt WHERE jt.v = {sql_val})"
                 )
 
@@ -417,7 +417,7 @@ def _build_metadata_filter(
                 in_list = ", ".join(_escape_sql_string(v) for v in vals)
                 parts.append(
                     f"EXISTS (SELECT 1 FROM JSON_TABLE(metadata FORMAT JSON,"
-                    f" 'lax $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'lax $')"
+                    f" 'strict $.{field}[*]' COLUMNS(v VARCHAR(4096) PATH 'strict $')"
                     f" ERROR ON ERROR) jt WHERE jt.v IN ({in_list}))"
                 )
 
