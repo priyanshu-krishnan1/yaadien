@@ -4033,3 +4033,387 @@ analysis, this session).
 **Supersedes:** Nothing — first EPIC-8 entry.
 
 ---
+
+## 2026-08-02 — EPIC-8 addendum: full API Reference gap analysis (THRD-7..10), and what was deliberately rejected
+
+### Research source
+
+Direct review (this session) of Oracle's full API Reference tree, previously
+unread — the earlier EPIC-8 entry only covered the How-to Guides and Quick
+Reference page. Read in full: `api/index.html` (component index),
+`api/agentmemory.html` (`OracleAgentMemory` — every method signature/
+docstring), `api/records.html` (the full `Record` taxonomy), `api/
+search.html` (`Scope`/`SearchScope` tri-state resolution rules), and
+`api/thread.html` (`OracleThread`, `Message`, `ContextCard`, `Summary`).
+
+### Corrections to the prior EPIC-8 entry's assumptions
+
+- **`get_summary()` is LLM-backed, not deterministic.** The Quick Reference
+  page's plain "role (-): content" output was a simplified illustrative
+  example, not the real mechanism — the API reference explicitly says
+  "best-effort summary" and warns to "prefer `get_summary_async` when an
+  LLM-backed implementation may perform remote network I/O." `THRD-4` as
+  already written specs a deterministic, no-LLM formatter. **Decision: keep
+  `THRD-4` deterministic anyway** — this SDK already has an LLM-backed
+  narrative-summary mechanism (`get_context_card()`'s `Summarizer` hook,
+  `ORC-1`). A second LLM-backed summary path would be redundant surface
+  area for no new capability. This is a documented, deliberate divergence,
+  not an oversight — noted directly in `THRD-4`'s BOARD.html description
+  going forward would be redundant with this entry; this entry is the
+  record of the decision.
+- **`get_messages()`'s no-args default is a bounded recent window, not
+  "all messages."** `THRD-1` as written specs an unconditionally-unbounded
+  default. Decision: keep `THRD-1`'s unbounded default — this SDK has no
+  LLM-prompt-size motivation for capping it the way Oracle does (Oracle's
+  message store feeds LLM prompts directly; this SDK's callers already
+  control what they pass to their own LLM). Documented divergence, not
+  fixed via a new story — not worth the complexity of a second "windowed"
+  mode.
+
+### Four new genuine gaps → four new stories
+
+1. **`delete_user()`/`delete_agent()` cascade** (Oracle: single identifier
+   in, cascades through every owned thread/message/memory/profile) vs.
+   this SDK's `erase_all(scope)` (PIPE-5), which requires the caller to
+   already hold a full `MemoryScope`. → `THRD-7`.
+2. **A generic, table-agnostic `delete_memory(id)`** (Oracle's client-level
+   version searches across memory/fact/guideline/preference without the
+   caller naming a type) vs. `forget()`, which requires an explicit
+   `memory_type`. → `THRD-8`.
+3. **A full sync/async method pairing** (`search_async`,
+   `add_messages_async`, `get_context_card_async`, `get_summary_async` —
+   present on both `OracleAgentMemory` and `OracleThread`) vs. this SDK
+   being fully synchronous. → `THRD-9`, deliberately **scoped only to the
+   handful of methods with real LLM/embedder network I/O** (see rejected
+   items below for why it's not a blanket wrap of every method).
+4. **Per-dimension fuzzy-vs-exact scope matching plus explicit
+   "unscoped-only" queries** (`Scope`/`SearchScope`'s
+   `NOT_SET_MARKER`/`None`/concrete-id tri-state, `exact_*_match` flags) vs.
+   this SDK's `MemoryScope`, where a dimension is either a concrete filter
+   or entirely unfiltered — there is no way today to ask for "only records
+   with no `user_id`." → `THRD-10`, deliberately scoped to touch **only**
+   `THRD-3`'s not-yet-built `search()` facade, never `_scope_predicates()`,
+   `MemoryScope`, or any other already-shipped, `VER-5`-hand-audited
+   method — see below.
+
+### What was deliberately NOT turned into a story, and why
+
+- **`GuidelineRecord`/`FactRecord`/`PreferenceRecord` as new tables.**
+  Oracle's `Record` taxonomy has six scoped record types plus two
+  unscoped profile types. `FactRecord` and `GuidelineRecord` already map
+  cleanly onto this SDK's existing `SemanticFact`/`ProceduralMemory`. A
+  `PreferenceRecord`-equivalent has no clean existing home, but a 6th
+  per-type table (a real migration, a real `CREATE VECTOR INDEX`, a real
+  ongoing maintenance cost) is not justified by "Oracle has a separate
+  class for it" alone — `metadata={"record_kind": "preference"}` on an
+  existing `SemanticFact` gets the same practical outcome at zero schema
+  cost. Not a story.
+- **Oracle's `extract_memories=True`-by-default, fail-fast-without-an-LLM
+  contract.** Copying this would directly contradict this SDK's own
+  stated positioning — `ai-agent-platform-competitive-analysis.md`'s SWOT
+  (cited already in `PIPE-2`'s story) calls out "developer-controlled
+  writes, not mandatory passive extraction" as a deliberate
+  differentiator. `THRD-5` keeps `NoOpMemoryExtractor` as the default with
+  no LLM requirement. Explicitly rejected, not an oversight.
+- **The eight fine-grained token-budget/frequency constructor knobs**
+  (`max_message_token_length`, `memory_extraction_window`,
+  `context_summary_update_frequency`, `memory_extraction_frequency`,
+  `memory_extraction_token_limit`, `context_card_token_limit`,
+  `message_shortening_input_token_limit`,
+  `message_shortening_input_token_limit`). `ENH-4` already shipped a
+  generically-reusable frequency knob (`consolidate_every_n`) for
+  precisely this "don't call the LLM on every single write" problem.
+  Reinventing five separate frequency/token-limit parameters to mirror
+  Oracle's exact surface would be surface-area bloat for a capability this
+  SDK's `Consolidator`/`MemoryExtractor` pattern already generalizes. Not
+  a story.
+- **A pluggable alternate storage backend** (Oracle's `store=` constructor
+  param, letting a caller swap `OracleDBMemoryStore` for any
+  `OracleMemoryStore`-conforming implementation). This re-litigates the
+  Step 0 foundational decision ("Database: Db2 LUW") — out of scope for
+  this epic, and not something a single story should silently reopen.
+- **A blanket `_async` twin for all ~15 `MemoryStore` methods.** Oracle
+  pairs nearly everything with an async twin. Most of this SDK's methods
+  (`remember`, `forget`, `list_all`, `search` without hybrid, `erase_all`,
+  `export_scope`) are plain Db2 round-trips with no meaningfully
+  latency-sensitive I/O beyond the DB call itself — mechanically wrapping
+  all of them in `asyncio.to_thread` is maintenance surface for no real
+  benefit. `THRD-9` wraps only the methods that actually call an LLM or
+  embedder (the ones Oracle itself specifically warns about "remote
+  network I/O" for).
+
+### Risk note on THRD-10
+
+`THRD-10` is the highest-blast-radius story in this epic — it's the
+closest anything here comes to touching the scope-isolation logic `VER-5`
+hand-audited for SQL-injection and cross-tenant-leakage safety. It is
+deliberately scoped to add new parameters to `THRD-3`'s brand-new
+`search()` facade only, implemented as its own filtering layer on top of
+existing per-repo `search()` calls — not a change to `_scope_predicates()`
+itself. Any subagent picking this up should re-read the `VER-5` entry in
+full before starting and treat "did I touch `_scope_predicates()` or
+`MemoryScope`" as a hard stop-and-reconsider signal, not just a code-review
+nice-to-have.
+
+**Made during:** EPIC-8 addendum (full API Reference gap analysis, this
+session).
+
+**Supersedes:** Nothing — extends the prior EPIC-8 entry, doesn't replace
+it.
+
+---
+
+## 2026-08-02 — EPIC-8 technical-feasibility check: THRD-6's get_thread() corrected, three other assumptions confirmed safe
+
+### What was checked, and how
+
+Asked directly whether EPIC-8's stories had been validated against the
+real Db2/SDK codebase (not just grounded in signatures/line numbers, which
+the prior two EPIC-8 entries already did). Re-read the actual
+implementation of four load-bearing mechanisms the new stories depend on:
+
+1. **`repositories/base.py`'s `create()` write-time dedup (ENH-2) vs.
+   `THRD-1`'s `add_messages()`.** Checked whether repeated short messages
+   ("ok", "yes", "thanks") in a batch would collide and silently merge
+   into one row via the `(agent_id scope, content_hash)` dedup check.
+   **Confirmed safe:** `WorkingMemoryRepository._DEDUP_ON_WRITE = False`
+   (`repositories/working.py:37`) — ENH-2 already special-cased this
+   exact scenario for exactly this reason. `THRD-1` needed no change.
+2. **`db/connection.py`'s `ConnectionPool` thread-safety vs. `THRD-9`'s
+   `asyncio.to_thread` wrapping.** `asyncio.to_thread` runs the wrapped
+   sync call on a real OS thread from a `ThreadPoolExecutor`; concurrent
+   calls means concurrent `ConnectionPool.get_connection()` checkouts.
+   **Confirmed safe:** the pool is `queue.Queue`-backed and its own
+   docstring states the thread-safety contract explicitly
+   (`connection.py:177-179`) — concurrent callers each get a distinct
+   connection handle. `THRD-9` needed no change, beyond noting that pool
+   exhaustion under high concurrency is a capacity/sizing question, not a
+   correctness one.
+3. **`PIPE-2`'s `IngestResolver` gating vs. `THRD-1`'s per-message
+   `remember()` calls.** Checked whether `IngestResolver` (when
+   configured) is skipped for working/episodic writes the way `ENH-2`'s
+   dedup is. **Finding, not a defect:** it is *not* skipped —
+   `store.py`'s `remember()` runs the resolver's similarity search for
+   `working`/`episodic` the same as every other type when a real resolver
+   is configured. This means a chatty `add_messages()` batch with a real
+   `IngestResolver` configured will run one similarity search per message.
+   This is pre-existing `PIPE-2` behavior, not something `THRD-1`
+   introduces, and `ingest_resolver=None` is the default (opt-in cost
+   only). No story change — but `THRD-1`'s docstring should mention this
+   interaction explicitly so a caller enabling both isn't surprised by the
+   per-message search cost. Noted for whoever implements `THRD-1`; not
+   worth a separate story.
+4. **`THRD-6`'s `get_thread(thread_id, scope_hint=None)` "global fallback
+   when `scope_hint` is `None`."** Checked every read path in
+   `repositories/base.py` (`get_by_id`, `list_all`, `search`) for whether
+   an unscoped-by-agent query exists anywhere in the SDK. **It does not,
+   anywhere** — `_require_agent_id`/`_scope_predicates` enforce
+   `scope.agent_id` on every single read, which is the `VER-5`-audited
+   isolation boundary ("callers cannot read across scopes by guessing
+   IDs"), not an incidental gap that happens to be loose enough to permit
+   a global lookup. **This was a genuine defect in the story as
+   originally written** — "search globally... if your implementation can"
+   described something the SDK's own governance model does not allow to
+   exist. **Fixed:** `get_thread()`'s signature changed from `(thread_id,
+   scope_hint=None)` to `(thread_id, agent_id, tenant_id=None,
+   user_id=None)` — `agent_id` is now a required parameter, full stop, no
+   fallback. Both `PROMPTS.md` and `BOARD.html` updated in place (the
+   story is still `To Do`, so this is a correction, not a change to
+   already-built code) with an explicit note that a caller not knowing a
+   thread's `agent_id` is a caller-side bookkeeping problem, not something
+   this method should solve by relaxing the isolation boundary.
+
+### What this does and doesn't mean
+
+This was a static read-through of the relevant existing code paths against
+each new story's assumptions, not a live Db2 run, not a test execution,
+and not a working prototype of any `THRD-*` method. It caught one real,
+would-have-failed-code-review defect (`THRD-6`) and confirmed three other
+assumptions that could plausibly have been wrong were in fact already
+handled by existing mechanisms. It does not substitute for the
+implementing subagent still reading the referenced code directly before
+writing — `THRD-2`, `THRD-3`, `THRD-7`, `THRD-8`, and `THRD-10` in
+particular each depend on specifics (upsert lookup keys, `_SELECT_COLS`
+indices, `_scope_predicates()`'s exact predicate-building logic) that
+weren't independently re-verified line-by-line in this pass.
+
+**Made during:** EPIC-8 technical-feasibility check (this session).
+
+**Supersedes:** The `get_thread()` description in the original `THRD-6`
+entry's story text (not a separate dated entry — `THRD-6` had no prior
+DECISIONS.md entry of its own since it's still `To Do`).
+
+---
+
+## 2026-08-02 — EPIC-9 backlog: Software Design Documentation Package (project-approval grade)
+
+### Purpose and scope
+
+Distinct in kind from every prior epic: `EPIC-1` through `EPIC-8` build
+code. `EPIC-9` builds the formal design-documentation package a project
+would need for an internal architecture/technical approval review —
+system architecture, data architecture, interface specification, flow
+diagrams, security design, data-governance design, extensibility
+architecture, non-functional/capacity design, deployment & operations,
+testing strategy, and a risk register. Every prior epic's story text cites
+external reference implementations by name (Oracle AI Agent Memory, Mem0,
+Azure Cosmos DB's Agent Memory Toolkit, Microsoft Agent Framework) as the
+research basis for a feature gap. **`EPIC-9` deliberately contains none of
+that** — every document in this package describes this system on its own
+technical merits, grounded only in this repository's own code and prior
+`DECISIONS.md`/`ARCHITECTURE.md` history, because a project-approval
+package is a statement of what this system *is and does*, not a
+comparison to anything else.
+
+### Why a new `project-management/design/` directory, not more of ARCHITECTURE.md
+
+`ARCHITECTURE.md`'s own closing section ("Where design docs live vs. Bob's
+MCP tools") already establishes that design content belongs
+version-controlled with the code, and states `ARCHITECTURE.md` is
+"updated in place" to reflect current-state architecture — a single
+living summary, not a multi-document formal package. Cramming eleven
+approval-grade documents (each needing its own detailed structure) into
+one continuously-rewritten file would make it unreviewable and would
+create constant merge contention for a set of stories meant to run in
+parallel. `project-management/design/` holds the new package; each story
+owns one new file (or two, for `SDD-4`'s size); `ARCHITECTURE.md` itself
+is not rewritten by this epic — a future story could link out to the new
+package, but that is explicitly out of scope here to keep this epic
+purely additive.
+
+### Story breakdown and parallel-execution design
+
+Twelve stories, `SDD-1` through `SDD-12`, tracked as `EPIC-9`. `SDD-1`
+through `SDD-11` are **fully independent** — each authors exactly one new
+file under `project-management/design/`, reads only existing code/docs,
+and writes nothing any other `SDD-*` story writes. All eleven are safe to
+run as eleven simultaneous subagents. `SDD-12` (the package index/README)
+depends on all eleven being merged — it is pure cross-referencing over
+files that must already exist, and must run last.
+
+### Grounding
+
+Every story is grounded in specific, already-verified facts about this
+repository (not invented for the occasion): the seven tables across six
+migrations (`0001`..`0006`), the five custom exceptions
+(`exceptions.py`), the three CI jobs in `ci.yml` (lint/type/unit,
+live-Db2 integration, pip-audit+bandit security) plus the separate
+`package-check.yml` build/smoke-test workflow, the five pluggable
+protocol interfaces (`Consolidator`, `Reconciler`, `IngestResolver`,
+`MemoryExtractor` if `THRD-5` has landed, `Summarizer`), the four
+framework adapters, and the full `.env.example` configuration surface.
+Each story below names its primary source files so a subagent doesn't
+have to rediscover them from scratch.
+
+**Made during:** EPIC-9 backlog planning (this session).
+
+**Supersedes:** Nothing — first EPIC-9 entry.
+
+---
+
+## 2026-08-02 — CI: replaced the DROP/recreate TESTDB step with a /var/custom-mounted CREATE DATABASE, per official Db2 container documentation
+
+### History (why this is attempt #3, not #1)
+
+`.github/workflows/ci.yml`'s `integration-test` job has now gone through
+three iterations trying to get `TESTDB` created with `PAGESIZE 32768`
+(required — `VECTOR(1536,FLOAT32)` rows are ~6144 bytes, too wide for the
+container's 4 KB default):
+
+1. Commit `7703642` — set `DB2_CREATE_DB_PAGESIZE` as a container env var.
+   Failed: the Db2 container's setup scripts do not read that variable at
+   all (confirmed by inspecting actual container behavior — it's silently
+   ignored).
+2. Commit `2e8fbe8` — removed the fake env var; instead let `DBNAME`
+   auto-create a 4 KB placeholder, then `DROP DATABASE` /
+   `CREATE DATABASE ... PAGESIZE 32768` to fix it up, with
+   `FORCE APPLICATION ALL` plus a `LIST APPLICATIONS` polling loop to
+   clear connections before the drop. This is what shipped as the
+   "Recreate TESTDB with 32 KB pages" step. **Still intermittently failed**
+   — reported this session as the current CI blocker.
+3. **This entry** — root-caused why attempt #2 was still racy, and
+   replaced the drop/recreate pattern entirely rather than hardening it
+   further.
+
+### Root cause of attempt #2's failure
+
+Verified against IBM's official [CREATE DATABASE command
+reference](https://www.ibm.com/docs/en/db2/12.1?topic=commands-create-database)
+(fetched directly this session): *"When you initialize a new database, the
+AUTOCONFIGURE command is issued by default... the configuration advisor
+also runs automatically... Automated RUNSTATS is enabled."* Every
+`CREATE DATABASE` — including the auto-created 4 KB placeholder — triggers
+real background engine activity immediately after creation. Combined with
+the healthcheck itself reconnecting every 30s, `FORCE APPLICATION ALL` +
+a short poll loop can clear connections at one instant and still lose the
+race to something reconnecting moments later — `SQL1035N` on
+`DROP DATABASE`. The existing step's own comments already anticipated
+`SQL1035N` specifically; the mitigation just wasn't reliable enough
+against this class of race.
+
+### Fix: never create the wrong-page-size placeholder in the first place
+
+Verified two documented container behaviors (Docker Hub `ibmcom/db2` /
+`icr.io/db2_community/db2` documentation, corroborated by multiple
+independent sources):
+
+- `DBNAME` — *"creates an initial database with the name provided, or
+  leave empty if no database is needed."* Omitting it means the container
+  performs full instance setup (db2inst1, licensing, instance start) but
+  creates **no** database — confirmed this does not skip instance setup,
+  only the database-creation step.
+- `/var/custom/` — *"any script copied into `/var/custom` will be
+  automatically executed after main Db2 setup has completed."* This is
+  the container's own documented hook for exactly this kind of
+  customization (multiple real-world examples found using it precisely
+  for custom `CREATE DATABASE ... PAGESIZE` calls).
+
+Combining both: `DBNAME` is now omitted entirely, and a script mounted at
+`/var/custom/01_create_testdb.sh` runs
+`CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768`
+directly — verified this exact clause order and `PAGESIZE` value set
+(4096/8192/16384/32768 only) against the same official command reference.
+There is now never a 4 KB placeholder to drop, so the entire
+`FORCE APPLICATION ALL`/`LIST APPLICATIONS`/`DROP DATABASE` sequence and
+its race condition were deleted, not hardened further. The healthcheck
+(`db2 connect to TESTDB`) needed no change — it already tolerates
+"database not found" failures during the wait window via its existing
+retry budget (300s start_period + 30×30s retries), which now simply
+covers `/var/custom`'s `CREATE DATABASE` time instead of covering the
+drop/recreate time.
+
+### A verified, non-obvious correctness detail
+
+The `/var/custom` script is written via a heredoc inside the workflow's
+`run: |` block, which means every line — including the `#!/bin/bash`
+shebang — inherits that block's YAML indentation. This is harmless for
+the adjacent `docker-compose.db2.yml` heredoc (YAML nesting is relative,
+confirmed by parsing the generated compose file with PyYAML in this
+session), but a shebang specifically must start at column 0 for the
+kernel to honor it if `/var/custom` invokes scripts by direct execution
+rather than `bash script.sh` — the container's exact invocation mechanism
+isn't published. Added `sed -i 's/^[[:space:]]*//' ...` immediately after
+the heredoc write to strip the inherited indentation unconditionally;
+verified via `od -c` on the generated file that the shebang lands at byte
+0 after the strip, and `bash -n` confirms the resulting script is valid.
+
+### What was not independently re-verified
+
+The container's exact internal invocation mechanism for `/var/custom`
+scripts (direct exec vs. `bash`/`sh` wrapper) is not published by IBM and
+was not observable without actually running the container — the `sed`
+fix above is a defensive hedge against the unverified case, not a
+confirmed requirement. This fix has not been run against live CI as of
+this entry; the next actual CI run against this workflow is the real
+verification. If it still fails, capture the exact error text (the
+current diagnosis was made from code + official docs, not a captured
+failure log from this specific run) before attempting a fourth iteration.
+
+**Made during:** Db2 integration CI fix (this session), continuing from
+`PH-2` (`EPIC-5`) and commits `7703642`/`2e8fbe8`.
+
+**Supersedes:** Commit `2e8fbe8`'s drop/recreate strategy — not reverted
+in git history (that remains the record of what was tried), but no longer
+the approach `ci.yml` uses going forward.
+
+---
