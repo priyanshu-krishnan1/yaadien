@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Python dependencies declared in pyproject.toml (base deps plus the dev/
+  # langchain/openai-agents/mcp/agent-framework/all/benchmark extras).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+
+  # GitHub Actions used across .github/workflows/*.yml. Every action in this
+  # repo is pinned to a full commit SHA with a `# vX.Y.Z` comment — Dependabot
+  # understands that pattern natively and bumps both the SHA and the comment
+  # together, so SHA-pinning doesn't become permanent manual toil.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
