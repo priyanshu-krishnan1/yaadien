@@ -159,7 +159,14 @@ jobs:
           }
           # Force all connections off (RC=4 = "no apps" is fine, ignore it)
           run_db2 "FORCE APPLICATION ALL" || true
-          sleep 5
+          # Poll until LIST APPLICATIONS returns RC=4 (no connections left).
+          # SQL1035N on DROP DATABASE means Db2 hasn't finished closing them yet.
+          echo "Waiting for all connections to close..."
+          for i in $(seq 1 30); do
+            run_db2 "LIST APPLICATIONS" > /dev/null 2>&1 || break
+            echo "  attempt $i: connections still active, sleeping 3s..."
+            sleep 3
+          done
           run_db2 "DROP DATABASE TESTDB"
           run_db2 "CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
           run_db2 "CONNECT TO TESTDB"
