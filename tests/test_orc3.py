@@ -9,10 +9,10 @@ same fake connection pool pattern as the rest of the unit suite.
 
 Coverage:
   - _build_metadata_filter: returns ("", []) when filter is None or {}
-  - Exact match → JSON_EXISTS(...?(@ == ...)) = TRUE with value inlined (no bound param)
-  - $not → JSON_EXISTS(...?(@ != ...)) = TRUE with value inlined (no bound param)
-  - $array_contains → JSON_EXISTS(...[*]?(@ == ...)) = TRUE with value inlined
-  - $array_contains_any → (JSON_EXISTS(...) OR JSON_EXISTS(...)) = TRUE
+  - Exact match → JSON_EXISTS(...?(@ == ...)) bare boolean predicate, value inlined (no bound param)
+  - $not → JSON_EXISTS(...?(@ != ...)) bare boolean predicate, value inlined (no bound param)
+  - $array_contains → JSON_EXISTS(...[*]?(@ == ...)) bare boolean predicate, value inlined
+  - $array_contains_any → (JSON_EXISTS(...) OR JSON_EXISTS(...)) bare boolean group
   - Multiple fields in one filter dict
   - Invalid field name → InvalidMetadataFilterError
   - Unrecognized $operator → InvalidMetadataFilterError
@@ -137,7 +137,7 @@ class TestBuildMetadataFilterExactMatch:
     def test_single_string_field(self) -> None:
         sql, params = _build_metadata_filter({"source": "support"})
         assert "JSON_EXISTS(metadata, '$.source?(@ == \"support\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
         # All values inlined — no bound params for metadata filter
         assert params == []
         assert sql.startswith(" AND ")
@@ -177,7 +177,7 @@ class TestBuildMetadataFilterNot:
     def test_not_string(self) -> None:
         sql, params = _build_metadata_filter({"status": {"$not": "archived"}})
         assert "JSON_EXISTS(metadata, '$.status?(@ != \"archived\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
         # All values inlined — no bound params
         assert params == []
 
@@ -201,7 +201,7 @@ class TestBuildMetadataFilterArrayContains:
     def test_array_contains_string(self) -> None:
         sql, params = _build_metadata_filter({"tags": {"$array_contains": "urgent"}})
         assert "JSON_EXISTS(metadata, '$.tags[*]?(@ == \"urgent\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
         # No bound params for JSON_EXISTS (value inlined)
         assert params == []
 
@@ -402,7 +402,7 @@ class TestListAllWithMetadataFilter:
         repo.list_all(_SCOPE, metadata_filter={"source": "support"})
         sql = pool.cursor.last_sql
         assert "JSON_EXISTS(metadata, '$.source?(@ == \"support\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
 
     def test_exact_match_value_inlined_not_in_params(self) -> None:
         """Metadata filter values are inlined in SQL — no bound params emitted."""
@@ -419,7 +419,7 @@ class TestListAllWithMetadataFilter:
         repo.list_all(_SCOPE, metadata_filter={"status": {"$not": "archived"}})
         sql = pool.cursor.last_sql
         assert "JSON_EXISTS(metadata, '$.status?(@ != \"archived\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
         # Value is inlined, not a bound param
         assert "archived" not in pool.cursor.last_params
 
@@ -441,7 +441,7 @@ class TestListAllWithMetadataFilter:
         sql = pool.cursor.last_sql
         assert "confidence >= ?" in sql
         assert "JSON_EXISTS(metadata, '$.source?(@ == \"kb\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
         params = pool.cursor.last_params
         assert 0.7 in params
         # "kb" is inlined in the SQL path expression, not a bound param
@@ -488,7 +488,7 @@ class TestSearchWithMetadataFilter:
         # Step 1 SQL selects only id; it's the last_sql recorded by the cursor.
         sql = pool.cursor.last_sql
         assert "JSON_EXISTS(metadata, '$.source?(@ == \"support\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
 
     def test_exact_match_value_inlined_not_in_params(self) -> None:
         """Metadata filter values are inlined in SQL — no bound params emitted."""
@@ -512,7 +512,7 @@ class TestSearchWithMetadataFilter:
         )
         sql = pool.cursor.last_sql
         assert "JSON_EXISTS(metadata, '$.status?(@ != \"archived\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
         # Value is inlined, not a bound param
         assert "archived" not in pool.cursor.last_params
 
@@ -540,7 +540,7 @@ class TestSearchWithMetadataFilter:
         sql = pool.cursor.last_sql
         assert "confidence >= ?" in sql
         assert "JSON_EXISTS(metadata, '$.source?(@ == \"kb\")')" in sql
-        assert " = TRUE" in sql
+        assert "JSON_EXISTS" in sql
         params = pool.cursor.last_params
         assert 0.8 in params
         # "kb" is inlined in the SQL path expression, not a bound param

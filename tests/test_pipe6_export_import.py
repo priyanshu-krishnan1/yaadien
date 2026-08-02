@@ -654,7 +654,10 @@ class TestRoundTripFidelity:
         assert insert_params[1] == "working_memory"  # source_table
         assert insert_params[2] == "wm-import-1"       # source_id
         assert insert_params[3] == 0                   # chunk_index
-        assert insert_params[4] == "a chunk of text"    # chunk_text
+        # chunk_text is inlined in the SQL literal (CLOB binding workaround),
+        # not a bound param — verify it appears inline in the SQL instead.
+        assert "a chunk of text" in insert_sql
+        assert insert_params[4] == "t1"               # tenant_id (first param after chunk_index)
 
 
 # ---------------------------------------------------------------------------

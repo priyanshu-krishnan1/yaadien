@@ -61,6 +61,26 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def _escape_clob_literal(text: str) -> str:
+    """Escape *text* for safe inline use in a SQL single-quoted string literal.
+
+    SQL standard escaping: a single-quote inside a single-quoted literal is
+    represented as two consecutive single-quotes (``''``).  No other escaping
+    is required for Db2 LUW single-quoted string literals.
+
+    This is used to inline ``chunk_text`` directly in the INSERT statement
+    because ibm_db 3.x binds Python ``str`` as ``SQL_CHAR``, which truncates
+    at the column definition size for ``CLOB`` columns (SQLSTATE=22001).
+
+    Args:
+        text: The raw chunk text to escape.
+
+    Returns:
+        The escaped text suitable for embedding inside ``'...'`` in SQL.
+    """
+    return text.replace("'", "''")
+
+
 class ChunkRepository:
     """CRUD and search operations on the ``memory_chunks`` table.
 
@@ -121,6 +141,18 @@ class ChunkRepository:
         vec_str = _vec_to_str(embedding) if embedding else self._zero_vec_str()
         now = _now()
 
+        # ibm_db 3.x infers SQL_CHAR for Python str parameters, which truncates
+        # at the CLOB column's logical size.  Work-around: inline chunk_text as
+        # a SQL VARCHAR literal (single-quoted, with internal single-quotes
+        # doubled).  The content is guaranteed to be text (the caller's chunk
+        # splitter operates on decoded str, not bytes), so character encoding
+        # is already handled by the Python ↔ Db2 collation.
+        # nosec B608 — chunk_text_lit is produced by _escape_clob_literal()
+        # which doubles every single-quote; no user-controlled SQL keywords can
+        # be injected through a properly-escaped single-quoted SQL string
+        # literal.  DECISIONS.md VER-5 explains the general inlining rationale.
+        chunk_text_lit = _escape_clob_literal(chunk_text)
+
         sql = f"""
             INSERT INTO memory_chunks (
                 id, source_table, source_id, chunk_index, chunk_text,
@@ -128,18 +160,17 @@ class ChunkRepository:
                 tenant_id, agent_id, user_id, thread_id,
                 created_at
             ) VALUES (
-                ?, ?, ?, ?, CAST(? AS CLOB(4096)),
+                ?, ?, ?, ?, '{chunk_text_lit}',
                 CAST('{vec_str}' AS VECTOR({self.embedding_dim},FLOAT32)),
                 ?, ?, ?, ?,
                 ?
             )
-        """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; vec_str from _vec_to_str() (float() coercion guard, DECISIONS.md VER-5); embedding_dim is an int constant; all other values are bound params. CAST(? AS CLOB) avoids ibm_db SQL_CHAR binding truncation on Db2 12.1.
+        """  # nosec B608 — table name "memory_chunks" is a hardcoded string literal; chunk_text_lit from _escape_clob_literal() (single-quote doubling, no SQL keywords); vec_str from _vec_to_str() (float() coercion guard, DECISIONS.md VER-5); embedding_dim is an int constant; all other values are bound params.
         params = [
             chunk_id,
             source_table,
             source_id,
             chunk_index,
-            chunk_text,
             scope.tenant_id,
             scope.agent_id,
             scope.user_id,

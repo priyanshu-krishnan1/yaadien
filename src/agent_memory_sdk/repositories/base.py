@@ -241,27 +241,27 @@ def _build_metadata_filter(
     1. **Exact match** — scalar equality on a top-level field::
 
            {"source": "support"}
-           → JSON_EXISTS(metadata, '$.source?(@ == "support")') = TRUE
-             (value inlined; see security note below)
+           → JSON_EXISTS(metadata, '$.source?(@ == "support")')
+             (bare boolean predicate; value inlined; see security note below)
 
     2. **$not** — scalar inequality::
 
            {"status": {"$not": "archived"}}
-           → JSON_EXISTS(metadata, '$.status?(@ != "archived")') = TRUE
+           → JSON_EXISTS(metadata, '$.status?(@ != "archived")')
              (value inlined; see security note below)
 
     3. **$array_contains** — single value must appear in a JSON array field::
 
            {"tags": {"$array_contains": "urgent"}}
-           → JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")') = TRUE
+           → JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")')
              (no bound param — value inlined in the path expression; see security note)
 
     4. **$array_contains_any** — at least one of the supplied values must
        appear in a JSON array field::
 
            {"tags": {"$array_contains_any": ["urgent", "bug"]}}
-           → ( JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")') = TRUE
-               OR JSON_EXISTS(metadata, '$.tags[*]?(@ == "bug")') = TRUE )
+           → ( JSON_EXISTS(metadata, '$.tags[*]?(@ == "urgent")')
+               OR JSON_EXISTS(metadata, '$.tags[*]?(@ == "bug")') )
              (no bound params — values inlined; see security note)
 
     **Security note — all values are inlined in JSON_EXISTS path expressions:**
@@ -346,7 +346,6 @@ def _build_metadata_filter(
                 escaped = _escape_json_path_value(val)
                 parts.append(
                     f"JSON_EXISTS(metadata, '$.{field}?(@ != {escaped})')"
-                    " = TRUE"
                 )
 
             elif "$array_contains" in operand:
@@ -354,7 +353,6 @@ def _build_metadata_filter(
                 escaped = _escape_json_path_value(val)
                 parts.append(
                     f"JSON_EXISTS(metadata, '$.{field}[*]?(@ == {escaped})')"
-                    " = TRUE"
                 )
 
             elif "$array_contains_any" in operand:
@@ -366,7 +364,6 @@ def _build_metadata_filter(
                     )
                 sub_parts = [
                     f"JSON_EXISTS(metadata, '$.{field}[*]?(@ == {_escape_json_path_value(v)})')"
-                    " = TRUE"
                     for v in vals
                 ]
                 parts.append("(" + " OR ".join(sub_parts) + ")")
@@ -377,7 +374,6 @@ def _build_metadata_filter(
             escaped = _escape_json_path_value(operand)
             parts.append(
                 f"JSON_EXISTS(metadata, '$.{field}?(@ == {escaped})')"
-                " = TRUE"
             )
         elif isinstance(operand, (str, int, float)) or operand is None:
             # Exact match — use JSON_EXISTS (inlined value) to avoid the ibm_db
@@ -386,7 +382,6 @@ def _build_metadata_filter(
             escaped = _escape_json_path_value(operand)
             parts.append(
                 f"JSON_EXISTS(metadata, '$.{field}?(@ == {escaped})')"
-                " = TRUE"
             )
 
         else:
@@ -1763,8 +1758,24 @@ class BaseRepository(ABC, Generic[M]):
             mode=mode,
         )
         # chunk_hits: list of (source_id, distance) tuples, ordered nearest-first.
+        # When no chunks exist for this scope (e.g. all stored content was below
+        # the chunk_threshold so no splits were performed), fall back to the
+        # standard parent-embedding search.  This makes short-content records
+        # findable even when a ChunkRepository is wired in.
         if not chunk_hits:
-            return []
+            return self.search(
+                query_embedding=query_embedding,
+                scope=scope,
+                top_k=top_k,
+                metric=metric,
+                mode=mode,
+                include_expired=include_expired,
+                min_confidence=min_confidence,
+                search_chunks=False,
+                metadata_filter=metadata_filter,
+                hybrid=hybrid,
+                query_text=query_text,
+            )
 
         # Step 2 — dedup: keep the best (minimum) distance per source_id,
         # preserving the chunk-rank order for stable tie-breaking.

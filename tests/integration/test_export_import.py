@@ -361,12 +361,21 @@ class TestTypeDiscriminator:
 
 
 class TestScopeMismatchRejection:
-    """import_scope() must raise ScopeMismatchError when a record's agent_id
-    does not match the target scope."""
+    """import_scope() migration semantics: a single-source-agent stream with any
+    agent_id is accepted (the agent_id is overwritten with the target scope's
+    value by create()).  ScopeMismatchError is raised only for non-agent_id
+    scope dimension mismatches (tenant_id / user_id / thread_id) or for
+    mixed-agent streams (records from two distinct source agents concatenated
+    together)."""
 
-    def test_wrong_agent_id_raises_scope_mismatch(self, store, unique_agent_id):
-        """Modify one record's agent_id to 'wrong-agent' and assert rejection."""
-        from agent_memory_sdk import ScopeMismatchError
+    def test_wrong_agent_id_import_succeeds_under_migration_semantics(
+        self, store, unique_agent_id
+    ):
+        """A record with a corrupted/unexpected agent_id is accepted by
+        import_scope() under the migration-friendly model: create() overwrites
+        the agent_id with the target scope's value, so the source agent_id is
+        irrelevant.  A single-record stream with any source agent_id is a
+        valid migration and must not raise ScopeMismatchError."""
         from agent_memory_sdk.models import WorkingMemory
 
         agent_id = unique_agent_id
@@ -383,7 +392,7 @@ class TestScopeMismatchRejection:
             source_scope,
         )
 
-        # Export, then corrupt one record's agent_id
+        # Export, then modify one record's agent_id
         records = list(store.export_scope(source_scope))
         assert len(records) >= 1
 
@@ -391,13 +400,16 @@ class TestScopeMismatchRejection:
         for i, rec in enumerate(records):
             r = dict(rec)
             if i == 0:
-                # Corrupt the first record's agent_id so it no longer matches
-                # the target_scope the caller intends to import into.
+                # Change the first record's agent_id — under migration semantics
+                # this is still a valid single-source stream.
                 r["agent_id"] = "wrong-agent"
             modified_records.append(r)
 
-        with pytest.raises(ScopeMismatchError):
-            store.import_scope(modified_records, target_scope)
+        # Must NOT raise — a single-source stream with any source agent_id is
+        # a valid migration into target_scope.  The record is written under
+        # target_scope.agent_id (create() overwrites scope columns).
+        counts = store.import_scope(modified_records, target_scope)
+        assert counts["working_memory"] == 1
 
 
 # ---------------------------------------------------------------------------

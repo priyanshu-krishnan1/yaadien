@@ -385,10 +385,10 @@ name = "agent-framework-hyperlight"
 version = "1.0.0b260730"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "agent-framework-core" },
-    { name = "hyperlight-sandbox" },
+    { name = "agent-framework-core", marker = "python_full_version < '3.14'" },
+    { name = "hyperlight-sandbox", marker = "python_full_version < '3.14'" },
     { name = "hyperlight-sandbox-backend-wasm", marker = "(python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "hyperlight-sandbox-python-guest" },
+    { name = "hyperlight-sandbox-python-guest", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3f/72/5efc5d736a30fd36f6f24e91730d79e86dc4827cffcd78a56b0e0ddfe26b/agent_framework_hyperlight-1.0.0b260730.tar.gz", hash = "sha256:399d940b5a4437f9d9facfcee41a4debb1ba22080683bb03c0b3350fff0ceaa8", size = 22327, upload-time = "2026-07-30T23:39:09.925Z" }
 wheels = [
@@ -448,15 +448,15 @@ wheels = [
 
 [[package]]
 name = "agent-framework-ollama"
-version = "1.0.0b260730"
+version = "1.0.0b260311"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "ollama" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/29/4e/c9e0e31a4592804f7cebee7e1e2f640b40ecd37c329959ba55a10ff913e6/agent_framework_ollama-1.0.0b260730.tar.gz", hash = "sha256:14a048fd0559ebc2fd45597008fe1dde31706339c5e2f674dfd66fa3ffe6eaa7", size = 10872, upload-time = "2026-07-30T23:39:13.759Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/44/c2768d347839fb1c41cbb1de12bcd12ded1a788fa9dd8836a98f2bcb3ed2/agent_framework_ollama-1.0.0b260311.tar.gz", hash = "sha256:4529656cc7b3a8f00376cbb3b72e5ec8a1ad475be9a2924911d565c49498c3bb", size = 9985, upload-time = "2026-03-11T23:19:57.969Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/5b/19da7019172d4bf23367ba80c169484dc3d64b43e0556ef4ebe26e05b1f2/agent_framework_ollama-1.0.0b260730-py3-none-any.whl", hash = "sha256:f39a12b72974170b165d64ef1fb997c0cc53c41a2140275a91ecd7e1f664e663", size = 12961, upload-time = "2026-07-30T23:38:00.742Z" },
+    { url = "https://files.pythonhosted.org/packages/62/71/6e51cdabefa518a91c27d5790cce2916b62121d52123cd02283479b2b77e/agent_framework_ollama-1.0.0b260311-py3-none-any.whl", hash = "sha256:04f11f2639185686feab727db5ab3966a3447b03d9e8f7135673e1dac286a17d", size = 11843, upload-time = "2026-03-11T23:19:51.75Z" },
 ]
 
 [[package]]
@@ -578,21 +578,21 @@ requires-dist = [
     { name = "agent-memory-sdk", extras = ["langchain"], marker = "extra == 'all'" },
     { name = "agent-memory-sdk", extras = ["mcp"], marker = "extra == 'all'" },
     { name = "agent-memory-sdk", extras = ["openai-agents"], marker = "extra == 'all'" },
-    { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7" },
-    { name = "ibm-db", specifier = ">=3.2.3" },
-    { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.2" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
+    { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.9.4" },
+    { name = "ibm-db", specifier = ">=3.2.9" },
+    { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=1.5.2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.19.0,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "ollama", marker = "extra == 'benchmark'", specifier = ">=0.3" },
-    { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.0.10" },
-    { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7" },
-    { name = "pydantic", specifier = ">=2.0" },
+    { name = "ollama", marker = "extra == 'benchmark'", specifier = ">=0.6.2" },
+    { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.19.1" },
+    { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10.1" },
+    { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
-    { name = "sentence-transformers", marker = "extra == 'benchmark'", specifier = ">=3.0" },
+    { name = "sentence-transformers", marker = "extra == 'benchmark'", specifier = ">=5.6.1" },
 ]
 provides-extras = ["langchain", "openai-agents", "mcp", "agent-framework", "all", "dev", "benchmark"]
 
@@ -747,9 +747,9 @@ name = "aiologic"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "sniffio", marker = "python_full_version < '3.14'" },
+    { name = "sniffio", marker = "python_full_version < '3.13'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "wrapt", marker = "python_full_version < '3.14'" },
+    { name = "wrapt", marker = "python_full_version < '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f1/7a/d51f2fde1e8ae8a83431f8e97b7a71e9358cdb1d4d2ce6be387fa44d68de/aiologic-0.17.1.tar.gz", hash = "sha256:2e1b93b9e88ced318c2a63ad7b382688f40cbfe40e3d42258d49dc9c5aea179d", size = 252354, upload-time = "2026-06-27T20:41:33.25Z" }
 wheels = [
@@ -1804,7 +1804,7 @@ name = "culsans"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiologic", marker = "python_full_version < '3.14'" },
+    { name = "aiologic", marker = "python_full_version < '3.13'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d9/e3/49afa1bc180e0d28008ec6bcdf82a4072d1c7a41032b5b759b60814ca4b0/culsans-0.11.0.tar.gz", hash = "sha256:0b43d0d05dce6106293d114c86e3fb4bfc63088cfe8ff08ed3fe36891447fe33", size = 107546, upload-time = "2025-12-31T23:15:38.196Z" }
@@ -4083,15 +4083,15 @@ wheels = [
 
 [[package]]
 name = "ollama"
-version = "0.5.3"
+version = "0.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/6d/ae96027416dcc2e98c944c050c492789502d7d7c0b95a740f0bb39268632/ollama-0.5.3.tar.gz", hash = "sha256:40b6dff729df3b24e56d4042fd9d37e231cee8e528677e0d085413a1d6692394", size = 43331, upload-time = "2025-08-07T21:44:10.422Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/72/5f12423b6b39ca8430fbe56f77fcf4ef60f63067c7c4a2e30e200ed9ec16/ollama-0.6.2.tar.gz", hash = "sha256:936d55daa684f474364c098611c933626f8d6c7d67065c5b7ae0c477b508b07f", size = 53145, upload-time = "2026-04-29T21:21:15.018Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/f6/2091e50b8b6c3e6901f6eab283d5efd66fb71c86ddb1b4d68766c3eeba0f/ollama-0.5.3-py3-none-any.whl", hash = "sha256:a8303b413d99a9043dbf77ebf11ced672396b59bec27e6d5db67c88f01b279d2", size = 13490, upload-time = "2025-08-07T21:44:09.353Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/ab/d6722beeb2d10f7a3b9ff49375708904fde18f82b5609a0bc4aeb5996a4d/ollama-0.6.2-py3-none-any.whl", hash = "sha256:3ad7daab28e5a973445c36a73882a3ef698c2ebb00e21e308652741577509f7d", size = 15115, upload-time = "2026-04-29T21:21:13.794Z" },
 ]
 
 [[package]]

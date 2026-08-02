@@ -1138,6 +1138,18 @@ class MemoryStore:
                     "Expected one of: " + ", ".join(sorted(counts)) + "."
                 )
 
+            # When migrating to a different agent_id, the source record's id
+            # cannot be reused in the target scope: the source row (with the
+            # same id) still exists in the same DB under the source agent.
+            # Keeping the original id would cause SQLSTATE=23505 (duplicate key
+            # on the primary key column) because Db2 primary keys are not
+            # partitioned by agent_id.  Drop the id so model_validate() generates
+            # a fresh UUID for the target row.  For same-agent restore (source and
+            # target share the same agent_id), the original id is preserved — that
+            # is the true backup/restore case where id continuity matters.
+            record_agent_id_val = record_dict.get("agent_id") or ""
+            if record_agent_id_val != scope.agent_id:
+                record_dict.pop("id", None)
             record_obj = model_cls.model_validate(record_dict)
             getattr(self, repo_attr).create(record_obj, scope)
             counts[type_name] += 1
