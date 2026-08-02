@@ -286,25 +286,24 @@ def _build_metadata_filter(
 
     The ``metadata`` column is ``VARCHAR(4096)`` JSON text.  This function
     generates predicates using ``JSON_VALUE`` (for scalar comparisons) and
-    ``JSON_QUERY`` + ``LOCATE`` (for array-membership checks), with the
-    ``FORMAT JSON`` clause and ``lax`` path mode so Db2 12.1.5 fp0 parses the
-    column as JSON and tolerates absent fields (returning NULL rather than
-    raising an error).
+    raw-column ``LOCATE`` (for array-membership checks).
 
     Known Db2 12.1.5 fp0 limitations that shaped this implementation:
 
     - ``JSON_EXISTS`` with filter predicates ``?(@ == "value")`` always returns
       NULL/false on this build regardless of the column value.
-    - ``JSON_TABLE`` with array-navigation paths (e.g. ``'strict $.tags[*]'``)
-      raises SQL0104N (unexpected token) — array path expressions beyond the
-      bare root are rejected by this build of the CLI driver.
+    - ``JSON_TABLE`` with array-navigation paths (e.g. ``'$.tags[*]'``)
+      raises SQL0104N — array path expressions beyond the bare root are
+      rejected by this build of the CLI driver.
+    - ``JSON_QUERY`` returns NULL for single-element JSON arrays on this build,
+      making it unreliable for array-membership checks.
     - ``JSON_VALUE(col, path) = ?`` with a bound ``?`` parameter causes a
       segmentation fault in the ibm_db C extension.
 
     All values are therefore inlined via ``_escape_sql_string`` (single-quote
-    doubling).  Array membership uses ``JSON_QUERY`` to extract the raw JSON
-    array text followed by ``LOCATE``-based substring matching with quote
-    boundaries to detect exact element presence.
+    doubling).  Array membership uses three ``LOCATE`` calls directly on the
+    raw ``metadata`` column text to find the quoted value within the array
+    slice bounded by the field key and its closing ``]``.
 
     **Supported operator set (ORC-3 — deliberately small):**
 
@@ -323,20 +322,19 @@ def _build_metadata_filter(
     3. **$array_contains** — single value must appear in a JSON array field::
 
            {"tags": {"$array_contains": "urgent"}}
-           → LOCATE('"urgent",',
-                 REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,
-                     'lax $.tags') AS VARCHAR(32672)), '[]'), ']', ',') || ',') > 0
-             REPLACE turns ']' → ','; the trailing '|| ,'' ensures even a
-             bare scalar JSON_QUERY result (Db2 single-element array quirk)
-             gets a trailing comma, so LOCATE finds it.
+           → (LOCATE('"tags":', metadata) > 0
+              AND LOCATE('"urgent"', metadata, LOCATE('"tags":', metadata)) > 0
+              AND LOCATE('"urgent"', metadata, LOCATE('"tags":', metadata))
+                  < LOCATE(']', metadata, LOCATE('"tags":', metadata)))
+             Finds '"urgent"' between the field key and its closing ']'.
+             Works for single- and multi-element arrays; no JSON functions.
              (value inlined; see security note)
 
     4. **$array_contains_any** — at least one of the supplied values must
        appear in a JSON array field::
 
            {"tags": {"$array_contains_any": ["urgent", "bug"]}}
-           → (LOCATE('"urgent",', REPLACE(...) || ',') > 0
-              OR LOCATE('"bug",', REPLACE(...) || ',') > 0)
+           → same triple-LOCATE per value, OR-joined
              (all values inlined; see security note)
 
     **Security note — all values are inlined as SQL string literals:**
@@ -428,29 +426,36 @@ def _build_metadata_filter(
 
             elif "$array_contains" in operand:
                 val = operand["$array_contains"]
-                # Build a quoted-element search token, e.g. '"python",'
+                # Raw-string LOCATE strategy — avoids all JSON_QUERY/JSON_TABLE
+                # quirks on Db2 12.1.5 fp0 (JSON_QUERY returns NULL for
+                # single-element arrays on this build).
                 #
-                # JSON_QUERY extracts the raw JSON array fragment.  On Db2
-                # 12.1.5 fp0 a single-element array may be returned as a bare
-                # scalar string (e.g. '"python"' rather than '["python"]'),
-                # so we cannot rely on the surrounding brackets.
+                # Python's json.dumps serialises {"tags": ["python"]} as the
+                # compact text  {"tags": ["python"]}  (key in double-quotes,
+                # colon, space, bracket).  We search directly in the VARCHAR
+                # metadata column using three LOCATE calls:
                 #
-                # Normalization: REPLACE ']' → ',' then append ',' so that
-                # every element is uniformly followed by a comma:
-                #   ["python", "sdk"]  → '["python", "sdk",,'
-                #   ["python"]         → '["python",,'   (brackets kept)
-                #   "python"           → '"python",'     (scalar, no brackets)
-                # LOCATE '"python",' then finds the element in all three forms.
-                # False-prefix guard: '"python_sdk",' does not contain
-                # '"python",' because the char after 'python' is '_', not '"'.
+                #   field_pos = LOCATE('"field":', metadata)
+                #   val_pos   = LOCATE('"value"', metadata, field_pos)
+                #   arr_end   = LOCATE(']', metadata, field_pos)
                 #
-                # Values are inlined; see security note in docstring.
-                search_token = f'\'"{_escape_sql_inner(val)}",' + "'"
-                arr_expr = (
-                    f"REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,"
-                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',') || ','"
+                # The value matches iff the field is present (field_pos > 0),
+                # the quoted value appears after the field key (val_pos > 0),
+                # and that appearance is inside the array (val_pos < arr_end).
+                #
+                # False-prefix guard: '"python"' does not appear in
+                # '"python_sdk"' because the char after 'python' is '_'
+                # not '"'.  Field names are validated by the caller so no
+                # SQL-injection risk through field.  Values are escaped via
+                # _escape_sql_inner.
+                field_key = f'\'"{field}":' + "'"    # e.g. '"tags":'
+                val_token = f'\'"{_escape_sql_inner(val)}"' + "'"   # e.g. '"python"'
+                parts.append(
+                    f"(LOCATE({field_key}, metadata) > 0"
+                    f" AND LOCATE({val_token}, metadata, LOCATE({field_key}, metadata)) > 0"
+                    f" AND LOCATE({val_token}, metadata, LOCATE({field_key}, metadata))"
+                    f" < LOCATE(']', metadata, LOCATE({field_key}, metadata)))"
                 )
-                parts.append(f"LOCATE({search_token}, {arr_expr}) > 0")
 
             elif "$array_contains_any" in operand:
                 vals = operand["$array_contains_any"]
@@ -459,12 +464,16 @@ def _build_metadata_filter(
                         f"$array_contains_any on field {field!r} requires a "
                         f"non-empty list of values; got {vals!r}."
                     )
-                arr_expr = (
-                    f"REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,"
-                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',') || ','"
-                )
+                # Same raw-string LOCATE strategy as $array_contains, but
+                # the outer condition is an OR across all candidate values.
+                field_key = f'\'"{field}":' + "'"
                 locate_clauses = " OR ".join(
-                    f"LOCATE('\"{_escape_sql_inner(v)}\",', {arr_expr}) > 0"
+                    f"(LOCATE({field_key}, metadata) > 0"
+                    f" AND LOCATE('\"{_escape_sql_inner(v)}\"', metadata,"
+                    f" LOCATE({field_key}, metadata)) > 0"
+                    f" AND LOCATE('\"{_escape_sql_inner(v)}\"', metadata,"
+                    f" LOCATE({field_key}, metadata))"
+                    f" < LOCATE(']', metadata, LOCATE({field_key}, metadata)))"
                     for v in vals
                 )
                 parts.append(f"({locate_clauses})")
