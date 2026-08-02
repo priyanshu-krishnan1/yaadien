@@ -147,25 +147,19 @@ jobs:
         # healthy we drop the placeholder DB and recreate it with the right page
         # size.  The integration tests connect to TESTDB so the name stays the same.
         #
-        # We copy a script into the container with docker cp and run it as db2inst1
-        # to avoid shell quoting complexity.
+        # Each db2 command is run in its own docker exec call to avoid heredoc
+        # indentation issues and to ensure each command's exit code is checked
+        # individually.  db2 drop returns RC=0 on success; db2 create returns
+        # RC=0; any non-zero exit fails this step immediately.
         run: |
-          # Write the recreate script on the runner
-          cat > /tmp/recreate_db.sh << 'EOF'
-          #!/bin/bash
-          . /home/db2inst1/sqllib/db2profile
-          db2 force application all
-          db2 drop database TESTDB
-          db2 create database TESTDB pagesize 32768
-          db2 connect to TESTDB
-          db2 "UPDATE DB CFG FOR TESTDB USING APPLHEAPSZ 1024 AUTOMATIC"
-          db2 connect reset
-          EOF
-
-          # Copy into the container and execute as db2inst1
           CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2)
-          docker cp /tmp/recreate_db.sh "$CONTAINER:/tmp/recreate_db.sh"
-          docker exec "$CONTAINER" bash -c "chmod +x /tmp/recreate_db.sh && su - db2inst1 -c 'bash /tmp/recreate_db.sh'"
+          run_db2() {
+            docker exec --user root "$CONTAINER" su - db2inst1 -c "db2 $*"
+          }
+          run_db2 "DROP DATABASE TESTDB"
+          run_db2 "CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
+          run_db2 "CONNECT TO TESTDB"
+          run_db2 "CONNECT RESET"
 
       - name: Run integration tests
         # Override addopts coverage flags — the integration suite covers the live
