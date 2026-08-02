@@ -225,37 +225,38 @@ jobs:
         # CREATE VECTOR INDEX — raises SQL1476N (transaction rolled back
         # due to error -1226 = too many catalog connections).
         #
-        # ROOT CAUSE of the CI failure: the probe used CREATE TABLE + DROP TABLE
-        # as its readiness signal.  Regular CREATE TABLE does NOT require a
-        # catalog-agent slot, so it succeeds even while background agents
-        # (AUTOCONFIGURE, Automated RUNSTATS) are still active and consuming
-        # all available catalog connections.  The probe therefore exits with
-        # 'ready' immediately, pytest begins migrating at once, and the first
-        # CREATE VECTOR INDEX in migration 0002_memory_tables.sql hits SQL1476N
-        # (too many catalog connections / error -1226) on every single test
-        # fixture, causing all 251 integration tests to ERROR.
+        # The probe uses CREATE VECTOR INDEX (not just CREATE TABLE) because
+        # only vector-index DDL contends for catalog-agent slots.  A plain
+        # CREATE TABLE succeeds even while catalog agents are saturated,
+        # producing a false-positive 'ready' signal.
         #
-        # FIX: probe with an actual CREATE VECTOR INDEX on a temporary table.
-        # Only when that specific DDL succeeds cleanly have the catalog-agent
-        # slots truly drained, and only then is it safe to run pytest.
+        # bash -e safety: every command whose exit code must not kill the
+        # step is explicitly guarded with '|| true' or captured into a
+        # variable assignment.  In particular:
+        #   - docker compose ps exits 4 on some versions when the service
+        #     is not found, which under bash -e would abort the step.
+        #   - docker exec with an empty/bad container ID also exits non-zero.
+        # Both are inside the retry loop and guarded so failures simply
+        # cause a retry after sleeping, not a step abort.
         # Up to 20 x 15 s = 300 s (well within the 30-min job timeout).
         run: |
           echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2)
           for i in $(seq 1 20); do
-            result=$(docker exec "$DB2_CONTAINER" su - db2inst1 -c \
+            # Resolve container ID inside the loop so a transient lookup
+            # failure is retried rather than aborting the step.
+            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
+            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
               "db2 connect to TESTDB && \
                db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
                db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
                db2 'DROP TABLE ddl_probe' && \
-               db2 terminate" 2>&1)
+               db2 terminate" 2>&1 || true)
             if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
               echo "Db2 DDL ready (vector index probe passed) after attempt $i."
               exit 0
             fi
-            echo "Attempt $i: Catalog agents still settling (SQL1476N expected). Waiting 15s..."
-            # Clean up the probe table if the VECTOR INDEX step failed mid-run
-            docker exec "$DB2_CONTAINER" su - db2inst1 -c \
+            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
+            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
               "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
               >/dev/null 2>&1 || true
             sleep 15
