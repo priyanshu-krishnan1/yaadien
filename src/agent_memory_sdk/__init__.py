@@ -43,17 +43,22 @@ from agent_memory_sdk.models import (
     WorkingMemory,
 )
 from agent_memory_sdk.store import MemoryStore
+from agent_memory_sdk.thread import Thread
 from agent_memory_sdk.types import (
     ContextCard,
     DistanceMetric,
     EmbeddingProvider,
     ErasureReport,
+    MemoryExtractor,
     NoOpConsolidator,
+    NoOpMemoryExtractor,
     NoOpReconciler,
     NoOpSummarizer,
     Reconciler,
     SearchMode,
+    SearchResult,
     Summarizer,
+    Summary,
     SupersedeDecision,
 )
 
@@ -61,6 +66,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "MemoryStore",
+    "Thread",
     "MemoryScope",
     "WorkingMemory",
     "EpisodicMemory",
@@ -84,4 +90,8 @@ __all__ = [
     "Summarizer",
     "NoOpSummarizer",
     "ErasureReport",
+    "SearchResult",
+    "Summary",
+    "MemoryExtractor",
+    "NoOpMemoryExtractor",
 ]

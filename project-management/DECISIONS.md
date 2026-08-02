@@ -4417,3 +4417,76 @@ in git history (that remains the record of what was tried), but no longer
 the approach `ci.yml` uses going forward.
 
 ---
+
+## 2026-08-02 — Workflow-only CI hardening: permissions, SHA-pinning, concurrency, CodeQL, Dependabot
+
+### Scope
+
+Follows a broader OSS-contribution-readiness audit (this session) that
+found 16 gaps across licensing, community-health files, and CI/CD. Most of
+those need a product decision (LICENSE holder, canonical repo URL, PyPI
+publish timing) and were deliberately left for later. This entry covers
+only the subset that needed no product decision — pure workflow hardening
+— applied to `ci.yml` and `package-check.yml`, plus two new files.
+
+### Changes
+
+- **`permissions: contents: read`** added at the top of `ci.yml` and
+  `package-check.yml` (workflow-level default). No job needs more —
+  `codecov-action` uploads via its own token, not `GITHUB_TOKEN`. The new
+  `codeql.yml`'s `analyze` job escalates to `security-events: write` at the
+  job level only, since that's the one job that actually needs it (to
+  upload SARIF results to the Security tab).
+- **Every third-party Action pinned to a full commit SHA**, not a mutable
+  version tag, with a `# vX.Y.Z` comment for readability. SHAs were
+  resolved via `git ls-remote` against each action's real repo (not
+  invented) and cross-checked for annotated-vs-lightweight tags —
+  `github/codeql-action@v3` turned out to be an annotated tag, so the
+  peeled commit SHA (`a2983b8b...`) was used, not the tag-object SHA
+  (`47be0dbd...`) `git ls-remote --refs` alone would have returned:
+  - `actions/checkout` → `11d5960a326750d5838078e36cf38b85af677262` (v4.4.0)
+  - `actions/setup-python` → `a26af69be951a213d495a4c3e4e4022e16d87065` (v5.6.0)
+  - `actions/cache` → `0057852bfaa89a56745cba8c7296529d2fc39830` (v4.3.0)
+  - `codecov/codecov-action` → `b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238` (v4.6.0)
+  - `github/codeql-action` (init + analyze) → `a2983b8bed1923f44751c5c43237f479442827b3` (v3.37.4)
+- **`concurrency: group: ${{ github.workflow }}-${{ github.ref }},
+  cancel-in-progress: true`** added to both existing workflows and the new
+  CodeQL workflow — a new push to the same branch/PR now cancels the
+  superseded run instead of letting it finish.
+- **`workflow_dispatch:`** added to all three workflows for manual re-runs
+  without an empty commit.
+- **Job-level `timeout-minutes`** added everywhere it was missing
+  (`lint-typecheck-test`: 10, `integration-test`: 30 — covering its
+  existing 15-min container-start step plus install/test time,
+  `security`: 10, `package-check`: 10, `codeql`'s `analyze`: 20).
+  Previously only one step (`Start Db2 and wait for healthy`) had any
+  timeout at all.
+- **New `.github/workflows/codeql.yml`** — GitHub's native semantic
+  scanner, distinct from `bandit` (Python-specific static analysis,
+  already present): CodeQL surfaces natively in the Security tab and PR
+  annotations. Python needs no Autobuild step (interpreted language) —
+  `init` → `analyze` directly. Runs on push/PR to `main`, weekly on a
+  schedule (catches new query-pack findings against unchanged code), and
+  on manual dispatch.
+- **New `.github/dependabot.yml`** — two ecosystems: `pip` (weekly,
+  catches outdated/vulnerable Python deps proactively rather than only
+  when `pip-audit` happens to run in CI) and `github-actions` (weekly,
+  specifically so the SHA-pinning above doesn't become permanent manual
+  toil — Dependabot natively understands the `sha # vX.Y.Z` pattern and
+  bumps both together).
+
+### What this does not cover
+
+The remaining 11 items from the OSS-readiness audit (LICENSE file,
+CODE_OF_CONDUCT.md, SECURITY.md, CONTRIBUTING.md, issue/PR templates,
+CODEOWNERS, README/pyproject.toml repo-URL mismatch against the actual
+`git remote`, PyPI publish workflow, CHANGELOG.md, `uv.lock` vs.
+pip-only-documented tooling) are unchanged — those need a decision from
+the project owner, not a workflow edit.
+
+**Made during:** Workflow hardening pass (this session), following the
+OSS-contribution-readiness audit.
+
+**Supersedes:** Nothing — first entry recording this hardening pass.
+
+---

@@ -119,7 +119,10 @@ import logging
 import math
 from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_memory_sdk.thread import Thread
 
 from agent_memory_sdk.exceptions import ScopeMismatchError
 from agent_memory_sdk.exceptions import StaleWriteError as StaleWriteError  # re-export
@@ -145,8 +148,11 @@ from agent_memory_sdk.types import (
     IngestDecision,
     NoOpConsolidator,
     NoOpIngestResolver,
+    NoOpMemoryExtractor,
     NoOpReconciler,
     NoOpSummarizer,
+    SearchResult,
+    Summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -351,6 +357,7 @@ class MemoryStore:
         chunk_overlap: int = 200,
         ingest_resolver: Any | None = None,
         resolver_k: int = 5,
+        memory_extractor: Any | None = None,
     ) -> None:
         # Kept for erase_all() (PIPE-5), which needs to reach memory_chunks
         # even when this instance was built without chunking enabled (e.g.
@@ -426,6 +433,9 @@ class MemoryStore:
         self._summarizer = summarizer if summarizer is not None else NoOpSummarizer()
         self._ingest_resolver = (
             ingest_resolver if ingest_resolver is not None else NoOpIngestResolver()
+        )
+        self._memory_extractor = (
+            memory_extractor if memory_extractor is not None else NoOpMemoryExtractor()
         )
 
         if consolidate_every_n < 1:
@@ -1542,6 +1552,843 @@ class MemoryStore:
         recent = repo.list_all(scope, limit=needed + len(seen_ids))
         backfill = [record for record in recent if record.id not in seen_ids][:needed]
         return results + backfill
+
+    # ------------------------------------------------------------------
+    # THRD-1: add_messages() / get_messages() / delete_message()
+    # Message ingestion primitives over WorkingMemory rows
+    # ------------------------------------------------------------------
+
+    def add_messages(
+        self,
+        messages: list[dict],
+        scope: MemoryScope,
+        extract_memories: bool = True,
+    ) -> list[str]:
+        """Ingest a list of message dicts as :class:`~agent_memory_sdk.models.WorkingMemory` rows.
+
+        Each dict must contain at minimum a ``"content"`` key (string).
+        Optional recognised keys:
+
+        * ``"id"``       — caller-supplied ID; used verbatim as the record's id.
+        * ``"metadata"`` — dict merged into the record's metadata.
+
+        All remaining keys (e.g. ``"role"``) are absorbed into ``metadata``.
+        For example::
+
+            store.add_messages(
+                [{"role": "user", "content": "Hello!"}],
+                scope,
+            )
+
+        produces a :class:`~agent_memory_sdk.models.WorkingMemory` with
+        ``content="Hello!"`` and ``metadata={"role": "user"}``.
+
+        Args:
+            messages:         List of dicts, each with at minimum ``"content"``.
+            scope:            Must include at minimum agent_id.
+            extract_memories: When ``True`` (default) and a real
+                              ``memory_extractor`` is configured, invoke it
+                              after all messages are written to extract durable
+                              memories from the batch.  Pass ``False`` to skip
+                              extraction for this call.
+
+        Returns:
+            List of persisted record IDs (strings), in the same order as
+            the input *messages* list.
+        """
+        ids: list[str] = []
+        stored_records: list[_MemoryBase] = []
+        for msg in messages:
+            msg = dict(msg)  # shallow copy — don't mutate caller's dict
+            content: str = msg.pop("content")
+            record_id: str | None = msg.pop("id", None)
+            metadata: dict = msg.pop("metadata", {})
+            # Any remaining keys (e.g. "role") go into metadata.
+            metadata.update(msg)
+
+            kwargs: dict = {
+                "agent_id": scope.agent_id,
+                "content": content,
+                "metadata": metadata,
+            }
+            if record_id is not None:
+                kwargs["id"] = record_id
+
+            record = WorkingMemory(**kwargs)
+            stored = self.remember(record, scope)
+            ids.append(stored.id)
+            stored_records.append(stored)
+
+        if extract_memories and not isinstance(self._memory_extractor, NoOpMemoryExtractor):
+            try:
+                derived = self._memory_extractor(stored_records, scope)
+            except Exception:
+                logger.exception(
+                    "MemoryExtractor raised an exception; derived memories not written."
+                )
+                derived = []
+            for derived_record in derived:
+                repo_attr = _MODEL_TO_REPO_ATTR.get(type(derived_record))
+                if repo_attr is None:
+                    logger.warning(
+                        "MemoryExtractor returned unknown type %s; skipping.",
+                        type(derived_record).__name__,
+                    )
+                    continue
+                try:
+                    getattr(self, repo_attr).create(derived_record, scope)
+                except Exception:
+                    logger.exception(
+                        "Failed to persist derived %s from MemoryExtractor.",
+                        type(derived_record).__name__,
+                    )
+
+        return ids
+
+    def get_messages(
+        self,
+        scope: MemoryScope,
+        start: int = 0,
+        end: int | None = None,
+    ) -> list[WorkingMemory]:
+        """Return working-memory rows in chronological order (oldest first).
+
+        Fetches all non-deleted rows via :meth:`working.list_all` (which
+        returns newest-first), reverses them into chronological order, then
+        applies Python ``list[start:end]`` slice semantics.
+
+        Args:
+            scope: Must include at minimum agent_id.
+            start: Start index of the slice (default 0).
+            end:   End index of the slice, exclusive (default None = all).
+
+        Returns:
+            List of :class:`~agent_memory_sdk.models.WorkingMemory` records,
+            oldest first, sliced to ``[start:end]``.
+        """
+        newest_first = self.working.list_all(scope, limit=1000)
+        chronological = list(reversed(newest_first))
+        return chronological[start:end]
+
+    def delete_message(
+        self,
+        message_id: str,
+        scope: MemoryScope,
+    ) -> int:
+        """Soft-delete (tombstone) a single working-memory row.
+
+        Sets ``deleted_at`` on the row without issuing a hard ``DELETE``.
+        The tombstoned row remains in the database for audit/recovery purposes
+        and is excluded from all normal reads.
+
+        .. note::
+            **Deliberate divergence from Oracle's hard-delete semantics.**
+            Oracle Agent Memory Server's ``DELETE /v1/messages/{id}`` issues
+            a hard ``DELETE`` and the row is gone immediately.  This SDK
+            uses a tombstone (``deleted_at`` timestamp) instead, consistent
+            with the rest of the SDK's soft-delete philosophy.  Hard removal
+            is handled separately via :meth:`purge_expired`.
+
+        Args:
+            message_id: UUID of the working-memory row to tombstone.
+            scope:      Must include at minimum agent_id.
+
+        Returns:
+            ``1`` if the row was found and tombstoned; ``0`` if not found
+            (wrong scope or already deleted).
+        """
+        found: bool = self.working.forget(message_id, scope)
+        return 1 if found else 0
+
+    # ------------------------------------------------------------------
+    # THRD-8: delete_memory() — table-agnostic durable-memory soft-delete
+    # ------------------------------------------------------------------
+
+    def delete_memory(
+        self,
+        memory_id: str,
+        scope: MemoryScope,
+    ) -> int:
+        """Soft-delete (tombstone) a durable-memory record by ID across facts,
+        profiles, and procedures — without knowing which table it lives in.
+
+        Tries each of the three durable memory repositories in order
+        (facts → profiles → procedures) and returns ``1`` on the first hit,
+        stopping as soon as a match is found.  Returns ``0`` if the ID is not
+        found in any of the three tables.
+
+        This method operates on the three durable 'memory-like' record types
+        (facts, profiles, procedures).  It deliberately excludes working and
+        episodic memory — use delete_message() for conversation turns.
+
+        Unlike Oracle's OracleAgentMemory.delete_memory(id) which does a
+        global lookup by id alone, this method requires a scope — this SDK's
+        isolation boundary enforces agent_id on every operation (see
+        project-management/DECISIONS.md VER-5 entry).  scope.agent_id is
+        always required.
+
+        Args:
+            memory_id: UUID of the record to tombstone.
+            scope:     Must include at minimum agent_id.
+
+        Returns:
+            ``1`` if the record was found and tombstoned in any of the three
+            tables; ``0`` if not found in any of them.
+        """
+        if self.facts.forget(memory_id, scope):
+            return 1
+        if self.profiles.forget(memory_id, scope):
+            return 1
+        if self.procedures.forget(memory_id, scope):
+            return 1
+        return 0
+
+    # ------------------------------------------------------------------
+    # THRD-7: delete_user() / delete_agent()
+    # Cascading identity-scoped delete via erase_all()
+    # ------------------------------------------------------------------
+
+    def delete_user(
+        self,
+        user_id: str,
+        agent_id: str,
+        tenant_id: str | None = None,
+        cascade: bool = True,
+    ) -> ErasureReport:
+        """Permanently remove all memory records belonging to a specific user.
+
+        **Critical SDK constraint:** :class:`~agent_memory_sdk.models.EntityProfile`
+        always requires a non-nullable ``agent_id`` — a "user" in this SDK exists
+        only within the scope of one agent.  This method therefore does **not**
+        replicate Oracle's cross-agent global identity model; ``agent_id`` is a
+        required parameter (not optional) that scopes the deletion precisely.
+
+        Args:
+            user_id:   The user whose data should be erased.
+            agent_id:  The agent whose scope contains this user.  Required —
+                       see the constraint note above.
+            tenant_id: Optional tenant qualifier.  ``None`` means "match rows
+                       with no tenant" (the default scope).
+            cascade:   When ``True`` (default) all six tables are hard-deleted
+                       via :meth:`erase_all`.  When ``False`` only the
+                       ``entity_profiles`` table is touched — useful when the
+                       caller wants to remove the identity record while leaving
+                       episodic/working memory intact for audit purposes.
+
+        Returns:
+            An :class:`~agent_memory_sdk.types.ErasureReport` with per-table
+            row counts, a total, and a UTC timestamp.
+        """
+        scope = MemoryScope(
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            user_id=user_id,
+        )
+        if cascade:
+            return self.erase_all(scope)
+
+        n = self.profiles.erase_all(scope)
+        rows: dict[str, int] = {
+            "working_memory": 0,
+            "episodic_memory": 0,
+            "semantic_facts": 0,
+            "entity_profiles": n,
+            "procedural_memory": 0,
+            "memory_chunks": 0,
+        }
+        return ErasureReport(
+            rows_deleted=rows,
+            total_deleted=n,
+            erased_at=datetime.now(timezone.utc),
+        )
+
+    def delete_agent(
+        self,
+        agent_id: str,
+        tenant_id: str | None = None,
+        cascade: bool = True,
+    ) -> ErasureReport:
+        """Permanently remove all memory records belonging to an agent.
+
+        Erases every record in scope for the given agent (and optionally
+        tenant), across all users and threads.  This is the "wipe an entire
+        agent" operation — wider than :meth:`delete_user`, which is scoped to
+        a single user within an agent.
+
+        Args:
+            agent_id:  The agent whose data should be erased.
+            tenant_id: Optional tenant qualifier.
+            cascade:   When ``True`` (default) all six tables are hard-deleted
+                       via :meth:`erase_all`.  When ``False`` only
+                       ``entity_profiles`` rows are removed.
+
+        Returns:
+            An :class:`~agent_memory_sdk.types.ErasureReport` with per-table
+            row counts, a total, and a UTC timestamp.
+        """
+        scope = MemoryScope(
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+        )
+        if cascade:
+            return self.erase_all(scope)
+
+        n = self.profiles.erase_all(scope)
+        rows: dict[str, int] = {
+            "working_memory": 0,
+            "episodic_memory": 0,
+            "semantic_facts": 0,
+            "entity_profiles": n,
+            "procedural_memory": 0,
+            "memory_chunks": 0,
+        }
+        return ErasureReport(
+            rows_deleted=rows,
+            total_deleted=n,
+            erased_at=datetime.now(timezone.utc),
+        )
+
+    # ------------------------------------------------------------------
+    # THRD-4: get_summary() — token-budget-aware thread transcript
+    # ------------------------------------------------------------------
+
+    def get_summary(
+        self,
+        scope: MemoryScope,
+        except_last: int = 0,
+        token_budget: int | None = None,
+    ) -> Summary:
+        """Return a deterministic, budget-truncated plain-text transcript.
+
+        Fetches all working-memory rows for *scope* in chronological order
+        (oldest first), drops the last *except_last* messages, formats each
+        remaining message as ``"{role} (-): {content}"``, and optionally
+        truncates the result to fit within *token_budget* whitespace-split
+        tokens.
+
+        No LLM call is made.  This is a pure, deterministic transcript —
+        distinct from :attr:`~agent_memory_sdk.types.ContextCard.summary`
+        (which is an optional LLM-generated narrative from the configured
+        :class:`~agent_memory_sdk.types.Summarizer`).
+
+        Args:
+            scope:        Must include at minimum agent_id.
+            except_last:  Number of most-recent messages to exclude from the
+                          transcript (default 0 — include everything).  Must
+                          be >= 0.
+            token_budget: Optional maximum number of whitespace-split tokens
+                          to include.  ``None`` (default) means no limit.
+                          Must be >= 0 if provided.
+
+        Returns:
+            A :class:`~agent_memory_sdk.types.Summary` with:
+
+            * ``content`` — the formatted transcript (``"\\n"``-joined lines).
+            * ``message_count`` — number of messages included.
+            * ``truncated`` — ``True`` if *token_budget* cut the transcript
+              short; ``False`` otherwise.
+
+        Raises:
+            ValueError: if ``except_last < 0`` or ``token_budget < 0``.
+        """
+        if except_last < 0:
+            raise ValueError(
+                f"except_last must be >= 0; got {except_last!r}."
+            )
+        if token_budget is not None and token_budget < 0:
+            raise ValueError(
+                f"token_budget must be >= 0; got {token_budget!r}."
+            )
+
+        # Fetch all working memory (newest-first) and reverse to chronological.
+        newest_first = self.working.list_all(scope, limit=10000)
+        chronological = list(reversed(newest_first))
+
+        # Drop the last except_last messages.
+        if except_last > 0:
+            chronological = (
+                chronological[:-except_last] if except_last < len(chronological) else []
+            )
+
+        if not chronological:
+            return Summary(content="", message_count=0, truncated=False)
+
+        # Format each message as "{role} (-): {content}".
+        lines = [
+            f"{msg.metadata.get('role', 'unknown')} (-): {msg.content}"
+            for msg in chronological
+        ]
+
+        # Apply token_budget if set.
+        if token_budget is None:
+            return Summary(
+                content="\n".join(lines),
+                message_count=len(lines),
+                truncated=False,
+            )
+
+        # Whitespace-split token approximation.
+        included: list[str] = []
+        tokens_used = 0
+        for line in lines:
+            line_tokens = len(line.split())
+            if tokens_used + line_tokens > token_budget:
+                break
+            included.append(line)
+            tokens_used += line_tokens
+
+        truncated = len(included) < len(lines)
+        return Summary(
+            content="\n".join(included),
+            message_count=len(included),
+            truncated=truncated,
+        )
+
+    # ------------------------------------------------------------------
+    # THRD-3: search() — raw-text fan-out facade across record types
+    # ------------------------------------------------------------------
+
+    def search(
+        self,
+        query: str,
+        scope: MemoryScope,
+        record_types: list[str] | None = None,
+        max_results: int = 10,
+        metadata_filter: dict | None = None,
+        exact_agent_match: bool = True,
+        exact_thread_match: bool = True,
+    ) -> list[SearchResult]:
+        """Fan-out semantic search across one or more memory record types.
+
+        Embeds *query* once via the configured ``embedding_provider``, then
+        calls each requested repository's ``search()`` method and assembles
+        a flat list of :class:`~agent_memory_sdk.types.SearchResult` objects.
+
+        Results are collected in the order: working → episodic → facts →
+        profiles → procedures (filtered to *record_types*), each capped at
+        *max_results* per type, and the final list is truncated to
+        *max_results* total.
+
+        Args:
+            query:           Raw text query to embed and search with.
+                             Must be a non-empty string.
+            scope:           Must include at minimum agent_id.
+            record_types:    Which repositories to search.  Defaults to all
+                             five: ``["working", "episodic", "facts",
+                             "profiles", "procedures"]``.  Pass a subset to
+                             restrict the fan-out.
+            max_results:     Maximum total results to return (also used as
+                             the per-type ``top_k``).  Default 10.
+            metadata_filter: Optional ORC-3 metadata filter dict forwarded
+                             to every per-type ``search()`` call.
+            exact_agent_match:  When ``True`` (default), post-fetch filter
+                             keeps only results whose ``agent_id`` matches
+                             ``scope.agent_id`` exactly.  When ``False``, no
+                             agent-id post-filtering is applied to results.
+            exact_thread_match: When ``True`` (default), post-fetch filter
+                             keeps only results whose ``thread_id`` matches
+                             ``scope.thread_id`` exactly (including
+                             ``None == None`` — the 'unscoped-only' query).
+                             When ``False``, no thread-id post-filtering is
+                             applied.
+
+        Note:
+            These flags add an *additive Python-side filter* on results
+            returned by the per-type repositories.  They do NOT modify
+            ``_scope_predicates()`` or the underlying SQL — the core
+            repository isolation layer (VER-5) is untouched.  See the dated
+            2026-08-02 EPIC-8-addendum entry in
+            project-management/DECISIONS.md for the full rationale.
+
+            This SDK defaults to exact matching on all dimensions
+            (``exact_agent_match=True``, ``exact_thread_match=True``), which
+            is consistent with the rest of the SDK's always-exact-by-default
+            scope behavior.  Oracle's SearchScope defaults to fuzzy thread
+            matching; this SDK deliberately does not follow that convention.
+
+        Returns:
+            A list of :class:`~agent_memory_sdk.types.SearchResult` objects,
+            at most *max_results* entries, in working → episodic → facts →
+            profiles → procedures order (within requested types).
+
+        Raises:
+            ValueError: if *query* is empty, if no ``embedding_provider`` is
+                configured, if an unrecognized name appears in *record_types*,
+                or if embedding the query raises.
+        """
+        if not query or not query.strip():
+            raise ValueError(
+                "MemoryStore.search() requires a non-empty query string."
+            )
+
+        if self._embedding_provider is None:
+            raise ValueError(
+                "MemoryStore.search() requires an embedding_provider= "
+                "configured at construction time"
+            )
+
+        _ALL_TYPES: list[str] = ["working", "episodic", "facts", "profiles", "procedures"]
+        _TYPE_TO_ATTR: dict[str, str] = {
+            "working": "working",
+            "episodic": "episodic",
+            "facts": "facts",
+            "profiles": "profiles",
+            "procedures": "procedures",
+        }
+
+        if record_types is None:
+            record_types = _ALL_TYPES
+        else:
+            for name in record_types:
+                if name not in _TYPE_TO_ATTR:
+                    raise ValueError(
+                        f"Unknown record_type {name!r}. Expected one of: "
+                        "working, episodic, facts, profiles, procedures."
+                    )
+            # Preserve the canonical ordering even if the caller supplied an
+            # arbitrary order — keeps output deterministic.
+            record_types = [t for t in _ALL_TYPES if t in set(record_types)]
+
+        # Embed query once.
+        query_embedding: list[float] = self._embedding_provider(query)
+
+        all_results: list[SearchResult] = []
+        for type_name in record_types:
+            repo = getattr(self, _TYPE_TO_ATTR[type_name])
+            records = repo.search(
+                query_embedding,
+                scope,
+                top_k=max_results,
+                metadata_filter=metadata_filter,
+            )
+            for record in records:
+                all_results.append(
+                    SearchResult(
+                        id=record.id,
+                        content=record.content,
+                        record_type=type_name,
+                        distance=None,
+                        record=record,
+                    )
+                )
+
+        # Apply exact_agent_match / exact_thread_match post-fetch filters
+        # (THRD-10).  These are additive, post-SQL filters on the Python
+        # result objects — _scope_predicates() in repositories/base.py is
+        # never touched.
+        filtered: list[SearchResult] = []
+        for result in all_results:
+            record = result.record
+            if exact_agent_match and getattr(record, "agent_id", None) != scope.agent_id:
+                continue
+            if exact_thread_match and getattr(record, "thread_id", None) != scope.thread_id:
+                continue
+            filtered.append(result)
+        all_results = filtered
+
+        return all_results[:max_results]
+
+    # ------------------------------------------------------------------
+    # THRD-2: add_memory() / add_user() / add_agent()
+    # Convenience wrappers for durable memory and identity profiles
+    # ------------------------------------------------------------------
+
+    def add_memory(
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        memory_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> str:
+        """Store a durable semantic fact and return its persisted ID.
+
+        Builds a :class:`~agent_memory_sdk.models.SemanticFact` from
+        *content* and *scope*, then calls :meth:`remember` to persist it.
+        ENH-2 content-hash deduplication applies automatically because the
+        write goes through ``remember()`` → ``create()``.
+
+        Args:
+            content:   The fact text to store.
+            scope:     Scoping value; ``agent_id`` is required.
+            memory_id: Optional caller-supplied ID.  When given, it is set
+                       on the record before writing so the caller can later
+                       look up the row by a known key.
+            metadata:  Optional dict merged into the record's metadata.
+
+        Returns:
+            The persisted record's ``.id`` (string).
+        """
+        fact = SemanticFact(
+            agent_id=scope.agent_id,
+            user_id=scope.user_id,
+            thread_id=scope.thread_id,
+            tenant_id=scope.tenant_id,
+            content=content,
+            metadata=metadata or {},
+        )
+        if memory_id is not None:
+            fact.id = memory_id
+        stored = self.remember(fact, scope)
+        return stored.id
+
+    def add_user(
+        self,
+        user_id: str,
+        profile_text: str,
+        scope: MemoryScope | None = None,
+    ) -> str:
+        """Upsert a user identity profile and return its persisted ID.
+
+        Performs an upsert on :class:`~agent_memory_sdk.models.EntityProfile`
+        keyed on ``(agent_id, user_id)`` with no thread scoping.  If a
+        profile already exists for this ``(agent_id, user_id)`` pair, its
+        content is updated in-place; otherwise a new profile row is created.
+
+        Args:
+            user_id:      The user to create or update.
+            profile_text: The full profile content to store.
+            scope:        Must have ``agent_id`` set.
+
+        Returns:
+            The persisted record's ``.id`` (string).
+
+        Raises:
+            ValueError: if *scope* is ``None`` (agent_id cannot be inferred).
+        """
+        if scope is None:
+            raise ValueError("add_user() requires a scope with agent_id set")
+
+        profile_scope = MemoryScope(
+            tenant_id=scope.tenant_id,
+            agent_id=scope.agent_id,
+            user_id=user_id,
+            thread_id=None,
+        )
+
+        existing = self.profiles.list_all(profile_scope, limit=1)
+        if existing:
+            record = existing[0]
+            record.content = profile_text
+            updated = self.profiles.update(record, profile_scope)
+            return updated.id
+
+        profile = EntityProfile(
+            agent_id=scope.agent_id,
+            user_id=user_id,
+            tenant_id=scope.tenant_id,
+            content=profile_text,
+        )
+        stored = self.remember(profile, profile_scope)
+        return stored.id
+
+    def add_agent(
+        self,
+        agent_id: str,
+        profile_text: str,
+        scope: MemoryScope | None = None,
+    ) -> str:
+        """Upsert an agent-level identity profile and return its persisted ID.
+
+        Same upsert semantics as :meth:`add_user`, but scoped to the agent
+        only (``user_id=None``, ``thread_id=None``).  *scope* is optional —
+        ``agent_id`` is taken from the *agent_id* parameter directly, so no
+        external scope is required.
+
+        Args:
+            agent_id:     The agent to create or update.
+            profile_text: The full profile content to store.
+            scope:        Optional; only ``tenant_id`` is used when provided.
+
+        Returns:
+            The persisted record's ``.id`` (string).
+        """
+        agent_scope = MemoryScope(
+            tenant_id=scope.tenant_id if scope is not None else None,
+            agent_id=agent_id,
+            user_id=None,
+            thread_id=None,
+        )
+
+        existing = self.profiles.list_all(agent_scope, limit=1)
+        if existing:
+            record = existing[0]
+            record.content = profile_text
+            updated = self.profiles.update(record, agent_scope)
+            return updated.id
+
+        profile = EntityProfile(
+            agent_id=agent_id,
+            user_id=None,
+            tenant_id=scope.tenant_id if scope is not None else None,
+            content=profile_text,
+        )
+        stored = self.remember(profile, agent_scope)
+        return stored.id
+
+    # ------------------------------------------------------------------
+    # THRD-9: async facades for LLM/embedder-calling entry points
+    # Thin asyncio.to_thread wrappers — no duplicated logic
+    # ------------------------------------------------------------------
+
+    async def search_async(
+        self,
+        query: str,
+        scope: MemoryScope,
+        record_types: list[str] | None = None,
+        max_results: int = 10,
+        metadata_filter: dict | None = None,
+    ) -> list[SearchResult]:
+        """Async wrapper over :meth:`search`.
+
+        Uses :func:`asyncio.to_thread` so the synchronous Db2 round-trips
+        and any configured ``embedding_provider`` call are offloaded to a
+        thread, keeping the event loop unblocked.  All arguments are forwarded
+        unchanged; see :meth:`search` for the full parameter documentation.
+        """
+        import asyncio
+        return await asyncio.to_thread(
+            self.search, query, scope, record_types, max_results, metadata_filter
+        )
+
+    async def add_messages_async(
+        self,
+        messages: list[dict],
+        scope: MemoryScope,
+        *,
+        extract_memories: bool = True,
+    ) -> list[str]:
+        """Async wrapper over :meth:`add_messages`.
+
+        Uses :func:`asyncio.to_thread` so both the Db2 write path and any
+        configured :class:`~agent_memory_sdk.types.MemoryExtractor` (THRD-5)
+        run in a thread, keeping the event loop unblocked.  All arguments are
+        forwarded unchanged.
+        """
+        import asyncio
+        return await asyncio.to_thread(
+            self.add_messages, messages, scope, extract_memories=extract_memories
+        )
+
+    async def get_context_card_async(
+        self,
+        scope: MemoryScope,
+        max_turns: int = 20,
+        query: str | None = None,
+        include_long_term: bool = False,
+        min_results_by_type: dict | None = None,
+        long_term_top_k: int = 5,
+    ) -> ContextCard:
+        """Async wrapper over :meth:`get_context_card`.
+
+        Uses :func:`asyncio.to_thread` so the synchronous Db2 round-trips
+        and any configured :class:`~agent_memory_sdk.types.Summarizer` or
+        embedding call run in a thread, keeping the event loop unblocked.
+        All arguments are forwarded unchanged.
+        """
+        import asyncio
+        return await asyncio.to_thread(
+            self.get_context_card,
+            scope,
+            max_turns,
+            query,
+            include_long_term,
+            min_results_by_type,
+            long_term_top_k,
+        )
+
+    # ------------------------------------------------------------------
+    # THRD-6: create_thread() / get_thread() / delete_thread()
+    # Thread facade — bound-scope convenience object
+    # ------------------------------------------------------------------
+
+    def create_thread(
+        self,
+        thread_id: str,
+        agent_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> Thread:
+        """Return a :class:`~agent_memory_sdk.thread.Thread` bound to *thread_id*.
+
+        Thread creation is **schema-less by default** — a thread with zero
+        writes has no rows yet.  No DDL, no metadata table, no INSERT is
+        issued by this method.  ``get_thread()`` locates an existing thread
+        by finding its most-recent WorkingMemory row; if none exist yet, this
+        method and ``get_thread()`` are equivalent (both return a
+        ``Thread`` handle over an empty scope).
+
+        Args:
+            thread_id:  The identifier for this thread.
+            agent_id:   Required — the agent that owns this thread.
+            tenant_id:  Optional tenant identifier.
+            user_id:    Optional user identifier.
+
+        Returns:
+            A :class:`~agent_memory_sdk.thread.Thread` bound to the given scope.
+        """
+        from agent_memory_sdk.thread import Thread
+
+        scope = MemoryScope(
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+        return Thread(self, scope)
+
+    def get_thread(
+        self,
+        thread_id: str,
+        agent_id: str,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> Thread:
+        """Re-open an existing thread by constructing its scope and returning a handle.
+
+        Requires ``agent_id`` as a real parameter — there is no global
+        thread lookup by ``thread_id`` alone.  Every read path in this SDK
+        (``get_by_id``, ``list_all``, ``search``) hard-requires
+        ``scope.agent_id`` as the VER-5-audited isolation boundary.  A
+        thread with no existing rows is returned as an empty handle (no
+        error is raised).
+
+        Args:
+            thread_id:  The thread to re-open.
+            agent_id:   Required — the agent that owns this thread.
+            tenant_id:  Optional tenant identifier.
+            user_id:    Optional user identifier.
+
+        Returns:
+            A :class:`~agent_memory_sdk.thread.Thread` bound to the given scope.
+        """
+        from agent_memory_sdk.thread import Thread
+
+        scope = MemoryScope(
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+        return Thread(self, scope)
+
+    def delete_thread(self, scope: MemoryScope) -> ErasureReport:
+        """Hard-delete all records for *scope*, including thread_id-scoped rows.
+
+        A one-line reuse of :meth:`erase_all` — does not duplicate its
+        cascade logic.  Appropriate for removing an entire thread's data
+        (conversation turns, extracted facts, profiles) in one call.
+
+        Args:
+            scope: Must include at minimum ``agent_id``.  Set ``thread_id``
+                   to erase only that thread's rows; leave it ``None`` to
+                   erase an entire agent's data.
+
+        Returns:
+            An :class:`~agent_memory_sdk.types.ErasureReport` with per-table
+            counts and an ``erased_at`` timestamp.
+        """
+        return self.erase_all(scope)
 
     # ------------------------------------------------------------------
     # Internal helpers
