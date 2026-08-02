@@ -44,7 +44,7 @@
 CREATE TABLE memory_chunks (
     id           VARCHAR(36)              NOT NULL,
     source_table VARCHAR(64)              NOT NULL,
-    source_id    VARCHAR(36)             NOT NULL,
+    source_id    VARCHAR(64)             NOT NULL,
     chunk_index  INTEGER                 NOT NULL,
     chunk_text   CLOB(4096)              NOT NULL,
     embedding    VECTOR(1536, FLOAT32)            NOT NULL,
