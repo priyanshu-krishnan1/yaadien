@@ -207,6 +207,36 @@ jobs:
         run: docker compose -f /tmp/docker-compose.db2.yml up -d --wait
         timeout-minutes: 15
 
+      - name: Wait for Db2 DDL readiness (catalog-agent drain)
+        # docker compose --wait only verifies that `db2 connect to TESTDB`
+        # succeeds — it does NOT mean Db2's post-CREATE background agents
+        # (AUTOCONFIGURE, Automated RUNSTATS, configuration advisor) have
+        # finished consuming their catalog-agent slots.  When those agents
+        # are still running, any DDL that needs a catalog agent — such as
+        # CREATE VECTOR INDEX — raises SQL1476N (transaction rolled back
+        # due to error -1226 = too many catalog connections).  This extra
+        # step polls a trivial DDL round-trip (CREATE TABLE + DROP TABLE)
+        # until it succeeds without error, proving the catalog slots have
+        # drained and DDL is safe to run.  Up to 10 × 15 s = 150 s extra.
+        run: |
+          echo "Polling Db2 DDL readiness..."
+          for i in $(seq 1 10); do
+            result=$(docker exec $(docker compose -f /tmp/docker-compose.db2.yml ps -q db2) \
+              su - db2inst1 -c \
+              "db2 connect to TESTDB && \
+               db2 'CREATE TABLE ddl_probe (id INT)' && \
+               db2 'DROP TABLE ddl_probe' && \
+               db2 terminate" 2>&1)
+            if echo "$result" | grep -q "DB20000I"; then
+              echo "Db2 DDL ready after attempt $i."
+              exit 0
+            fi
+            echo "Attempt $i: DDL not ready yet (catalog agents still settling). Waiting 15s..."
+            sleep 15
+          done
+          echo "WARNING: Db2 DDL probe did not confirm readiness after 150s; proceeding anyway."
+          exit 0
+
       - name: Run integration tests
         # Override addopts coverage flags — the integration suite covers the live
         # DB path only (77 tests); the 85% threshold applies to the full unit suite
