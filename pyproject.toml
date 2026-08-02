@@ -83,7 +83,7 @@ dev = [
 # beyond the base install) but needed for a retrieval-quality number worth comparing
 # to vendor-reported LongMemEval figures.
 benchmark = [
-    "sentence-transformers>=3.0",
+    "sentence-transformers>=5.6.1",
     "ollama>=0.6.2",
 ]
 
