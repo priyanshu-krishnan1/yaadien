@@ -325,17 +325,18 @@ def _build_metadata_filter(
            {"tags": {"$array_contains": "urgent"}}
            → LOCATE('"urgent",',
                  REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,
-                     'lax $.tags') AS VARCHAR(32672)), '[]'), ']', ',')) > 0
-             The REPLACE turns ']' → ',' so every element is followed by ','
-             regardless of position, allowing a single LOCATE check.
+                     'lax $.tags') AS VARCHAR(32672)), '[]'), ']', ',') || ',') > 0
+             REPLACE turns ']' → ','; the trailing '|| ,'' ensures even a
+             bare scalar JSON_QUERY result (Db2 single-element array quirk)
+             gets a trailing comma, so LOCATE finds it.
              (value inlined; see security note)
 
     4. **$array_contains_any** — at least one of the supplied values must
        appear in a JSON array field::
 
            {"tags": {"$array_contains_any": ["urgent", "bug"]}}
-           → (LOCATE('"urgent",', REPLACE(...)) > 0
-              OR LOCATE('"bug",', REPLACE(...)) > 0)
+           → (LOCATE('"urgent",', REPLACE(...) || ',') > 0
+              OR LOCATE('"bug",', REPLACE(...) || ',') > 0)
              (all values inlined; see security note)
 
     **Security note — all values are inlined as SQL string literals:**
@@ -428,17 +429,26 @@ def _build_metadata_filter(
             elif "$array_contains" in operand:
                 val = operand["$array_contains"]
                 # Build a quoted-element search token, e.g. '"python",'
-                # JSON_QUERY extracts the raw JSON array fragment (e.g.
-                # '["python", "sdk"]').  REPLACE converts ']' → ',' so
-                # every element is uniformly followed by ',' regardless of
-                # position.  LOCATE then finds exact element boundaries:
-                # '"python",' in '["python", "sdk",' matches; '"python",' in
-                # '["python_sdk",' does not (next char is '_', not '"').
+                #
+                # JSON_QUERY extracts the raw JSON array fragment.  On Db2
+                # 12.1.5 fp0 a single-element array may be returned as a bare
+                # scalar string (e.g. '"python"' rather than '["python"]'),
+                # so we cannot rely on the surrounding brackets.
+                #
+                # Normalization: REPLACE ']' → ',' then append ',' so that
+                # every element is uniformly followed by a comma:
+                #   ["python", "sdk"]  → '["python", "sdk",,'
+                #   ["python"]         → '["python",,'   (brackets kept)
+                #   "python"           → '"python",'     (scalar, no brackets)
+                # LOCATE '"python",' then finds the element in all three forms.
+                # False-prefix guard: '"python_sdk",' does not contain
+                # '"python",' because the char after 'python' is '_', not '"'.
+                #
                 # Values are inlined; see security note in docstring.
                 search_token = f'\'"{_escape_sql_inner(val)}",' + "'"
                 arr_expr = (
                     f"REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,"
-                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',')"
+                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',') || ','"
                 )
                 parts.append(f"LOCATE({search_token}, {arr_expr}) > 0")
 
@@ -451,7 +461,7 @@ def _build_metadata_filter(
                     )
                 arr_expr = (
                     f"REPLACE(COALESCE(CAST(JSON_QUERY(metadata FORMAT JSON,"
-                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',')"
+                    f" 'lax $.{field}') AS VARCHAR(32672)), '[]'), ']', ',') || ','"
                 )
                 locate_clauses = " OR ".join(
                     f"LOCATE('\"{_escape_sql_inner(v)}\",', {arr_expr}) > 0"

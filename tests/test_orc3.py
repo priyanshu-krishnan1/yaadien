@@ -11,7 +11,7 @@ Coverage:
   - _build_metadata_filter: returns ("", []) when filter is None or {}
   - Exact match → JSON_VALUE(col FORMAT JSON, 'lax $.field') = 'value'
   - $not → JSON_VALUE(col FORMAT JSON, 'lax $.field') <> 'value'
-  - $array_contains → LOCATE('"value",', REPLACE(JSON_QUERY(col, 'lax $.field'), ']', ',')) > 0
+  - $array_contains → LOCATE('"value",', REPLACE(JSON_QUERY(col, 'lax $.field'), ']', ',') || ',') > 0
   - $array_contains_any → OR-joined LOCATE checks for each value
   - Multiple fields in one filter dict
   - Invalid field name → InvalidMetadataFilterError
