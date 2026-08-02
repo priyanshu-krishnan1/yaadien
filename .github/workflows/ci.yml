@@ -147,15 +147,19 @@ jobs:
         # healthy we drop the placeholder DB and recreate it with the right page
         # size.  The integration tests connect to TESTDB so the name stays the same.
         #
-        # Each db2 command is run in its own docker exec call to avoid heredoc
-        # indentation issues and to ensure each command's exit code is checked
-        # individually.  db2 drop returns RC=0 on success; db2 create returns
-        # RC=0; any non-zero exit fails this step immediately.
+        # SQL1035N is raised by DROP DATABASE when connections are still open
+        # (the healthcheck leaves one).  We must FORCE APPLICATION ALL first.
+        # db2 force returns RC=4 when there are no applications to force — that
+        # is benign, so it is run in a subshell that ignores its exit code.
+        # A brief sleep lets Db2 clean up the forced connections before DROP.
         run: |
           CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2)
           run_db2() {
             docker exec --user root "$CONTAINER" su - db2inst1 -c "db2 $*"
           }
+          # Force all connections off (RC=4 = "no apps" is fine, ignore it)
+          run_db2 "FORCE APPLICATION ALL" || true
+          sleep 5
           run_db2 "DROP DATABASE TESTDB"
           run_db2 "CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
           run_db2 "CONNECT TO TESTDB"
