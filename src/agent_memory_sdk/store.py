@@ -1560,7 +1560,7 @@ class MemoryStore:
 
     def add_messages(
         self,
-        messages: list[dict],
+        messages: list[dict[str, Any]],
         scope: MemoryScope,
         extract_memories: bool = True,
     ) -> list[str]:
@@ -1602,11 +1602,11 @@ class MemoryStore:
             msg = dict(msg)  # shallow copy — don't mutate caller's dict
             content: str = msg.pop("content")
             record_id: str | None = msg.pop("id", None)
-            metadata: dict = msg.pop("metadata", {})
+            metadata: dict[str, Any] = msg.pop("metadata", {})
             # Any remaining keys (e.g. "role") go into metadata.
             metadata.update(msg)
 
-            kwargs: dict = {
+            kwargs: dict[str, Any] = {
                 "agent_id": scope.agent_id,
                 "content": content,
                 "metadata": metadata,
@@ -1954,7 +1954,7 @@ class MemoryStore:
         scope: MemoryScope,
         record_types: list[str] | None = None,
         max_results: int = 10,
-        metadata_filter: dict | None = None,
+        metadata_filter: dict[str, Any] | None = None,
         exact_agent_match: bool = True,
         exact_thread_match: bool = True,
     ) -> list[SearchResult]:
@@ -2099,7 +2099,7 @@ class MemoryStore:
         scope: MemoryScope,
         *,
         memory_id: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Store a durable semantic fact and return its persisted ID.
 
@@ -2237,7 +2237,7 @@ class MemoryStore:
         scope: MemoryScope,
         record_types: list[str] | None = None,
         max_results: int = 10,
-        metadata_filter: dict | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Async wrapper over :meth:`search`.
 
@@ -2253,7 +2253,7 @@ class MemoryStore:
 
     async def add_messages_async(
         self,
-        messages: list[dict],
+        messages: list[dict[str, Any]],
         scope: MemoryScope,
         *,
         extract_memories: bool = True,
@@ -2276,7 +2276,7 @@ class MemoryStore:
         max_turns: int = 20,
         query: str | None = None,
         include_long_term: bool = False,
-        min_results_by_type: dict | None = None,
+        min_results_by_type: dict[str, int] | None = None,
         long_term_top_k: int = 5,
     ) -> ContextCard:
         """Async wrapper over :meth:`get_context_card`.
