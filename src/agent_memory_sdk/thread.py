@@ -18,7 +18,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent_memory_sdk.models import MemoryScope, WorkingMemory
@@ -55,7 +55,7 @@ class Thread:
 
     def add_messages(
         self,
-        messages: list[dict],
+        messages: list[dict[str, Any]],
         *,
         extract_memories: bool = True,
     ) -> list[str]:
@@ -77,7 +77,7 @@ class Thread:
         content: str,
         *,
         memory_id: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Add a durable memory fact.  See :meth:`~agent_memory_sdk.store.MemoryStore.add_memory`."""
         return self._store.add_memory(content, self._scope, memory_id=memory_id, metadata=metadata)
@@ -93,7 +93,7 @@ class Thread:
         query: str,
         record_types: list[str] | None = None,
         max_results: int = 10,
-        metadata_filter: dict | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Fan-out search.  See :meth:`~agent_memory_sdk.store.MemoryStore.search`."""
         return self._store.search(
@@ -121,7 +121,7 @@ class Thread:
         max_turns: int = 20,
         query: str | None = None,
         include_long_term: bool = False,
-        min_results_by_type: dict | None = None,
+        min_results_by_type: dict[str, int] | None = None,
         long_term_top_k: int = 5,
     ) -> ContextCard:
         """Return a structured context card.  See :meth:`~agent_memory_sdk.store.MemoryStore.get_context_card`."""
