@@ -71,7 +71,7 @@ all = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.4",
+    "ruff>=0.16.0",
     "mypy>=1.10",
     "python-dotenv>=1.0",
     # Security scanning (PH-4)
