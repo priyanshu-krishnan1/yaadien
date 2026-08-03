@@ -1,7 +1,7 @@
 # agent-memory-sdk
 
-[![CI](https://github.com/oss-ai-connector/agent-memory-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/oss-ai-connector/agent-memory-sdk/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/oss-ai-connector/agent-memory-sdk/graph/badge.svg)](https://codecov.io/gh/oss-ai-connector/agent-memory-sdk)
+[![CI](https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/priyanshu-krishnan1/yaadien/graph/badge.svg)](https://codecov.io/gh/priyanshu-krishnan1/yaadien)
 
 Governed multi-type memory system for AI agents, backed by **IBM Db2 LUW**
 and its native `VECTOR` column type. Framework-agnostic core (zero required
