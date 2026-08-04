@@ -83,6 +83,12 @@ dev = [
 # beyond the base install) but needed for a retrieval-quality number worth comparing
 # to vendor-reported LongMemEval figures.
 benchmark = [
+    # EPIC-13 BM-3: pytest-benchmark for the new four-tier benchmark suite.
+    "pytest-benchmark>=5.0",
+    # EPIC-13 BM-6: memory/CPU instrumentation (resource_sampler.py).
+    # pytest-memray is Linux+macOS only (Bloomberg Apache-2.0).
+    "pytest-memray>=1.6.0",
+    "psutil>=6.0",
     "sentence-transformers>=5.6.1",
     "ollama>=0.6.2",
 ]
@@ -130,6 +136,11 @@ addopts = [
 ]
 markers = [
     "integration: requires a live Db2 instance (skip with -m 'not integration')",
+    # EPIC-13 BM-3: four-tier benchmark markers — see benchmarks/README.md
+    "benchmark_micro: Tier 0 — CPU-only micro-benchmarks, no database required",
+    "benchmark_pr: Tier 1 — single-op latency against Db2; runs on every PR",
+    "benchmark_nightly: Tier 2 — concurrency/scale benchmarks; runs on schedule",
+    "benchmark_scale: Tier 3 — full-scale sweep; runs weekly or on demand",
 ]
 
 [tool.coverage.run]

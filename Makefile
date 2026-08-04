@@ -1,14 +1,21 @@
-.PHONY: benchmark board board-check install-hooks
+.PHONY: benchmark benchmark-pr benchmark-nightly board board-check install-hooks
 
-# Runs the on-demand benchmarking harness (benchmarks/) against a live Db2
-# instance — NOT part of PH-1/PH-2 CI. See benchmarks/README.md for setup
-# (env vars, free-tier embedding/judge options) and project-management/BENCHMARKS.md
-# for the last checked-in report.
+# EPIC-13 (BM-2): scripts/run_benchmarks.py was retired; benchmarks are now
+# driven by pytest-benchmark. See benchmarks/README.md for the new four-tier
+# architecture and project-management/BENCHMARKS.md for the last checked-in
+# report.
 #
-# Pass extra flags via ARGS, e.g.:
-#   make benchmark ARGS="--suite retrieval --embedding-provider sentence-transformers --judge gemini"
+# Run Tier 1 (PR tier) — requires DB2_* env vars:
+#   make benchmark
+# Run a specific tier:
+#   make benchmark-nightly
+# Pass extra pytest flags via ARGS, e.g.:
+#   make benchmark ARGS="-k test_remember --benchmark-json=results.json"
 benchmark:
-	python scripts/run_benchmarks.py $(ARGS)
+	pytest benchmarks/ -m benchmark_pr $(ARGS)
+
+benchmark-nightly:
+	pytest benchmarks/ -m benchmark_nightly $(ARGS)
 
 # Regenerate project-management/BOARD.html from project-management/board/
 # (epics/*.json, stories/*.json). See project-management/board/README.md.
