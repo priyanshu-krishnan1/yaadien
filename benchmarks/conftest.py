@@ -53,6 +53,7 @@ from typing import Any
 import pytest
 
 from agent_memory_sdk.db.connection import ConnectionPool
+from agent_memory_sdk.db.migrate import Migrator
 from agent_memory_sdk.models import MemoryScope
 from agent_memory_sdk.store import MemoryStore
 from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
@@ -104,12 +105,19 @@ def db_pool() -> Generator[ConnectionPool, None, None]:
     set, so ``pytest benchmarks/`` on a machine with no Db2 credentials
     skips rather than errors — keeping the ``not integration`` unit suite
     unaffected.
+
+    Migrations are applied once per session before any benchmark touches the
+    database, matching the ``migrated_pool`` pattern in
+    ``tests/integration/conftest.py``.  On a freshly started Db2 container
+    this creates all application tables and vector indexes; on a pre-migrated
+    database it is a fast no-op (only the schema_migrations table is read).
     """
     if not os.environ.get("DB2_HOSTNAME"):
         pytest.skip("DB2_HOSTNAME not set — skipping Db2 benchmark fixtures")
 
     pool = ConnectionPool()
     try:
+        Migrator(pool).run()
         yield pool
     finally:
         pool.close()
