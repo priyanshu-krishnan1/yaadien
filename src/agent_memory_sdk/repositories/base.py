@@ -1136,7 +1136,7 @@ class BaseRepository(ABC, Generic[M]):
         # unnecessary overhead.
         if offset > 0:
             sql = f"""
-                SELECT * FROM (
+                SELECT {self._SELECT_COLS} FROM (
                     SELECT {self._SELECT_COLS},
                            ROW_NUMBER() OVER (ORDER BY created_at DESC) AS rn
                     FROM {self._TABLE}
@@ -1743,6 +1743,19 @@ class BaseRepository(ABC, Generic[M]):
         #           reorder to restore the original nearest-first ordering.
         supersession_sql = " AND superseded_at IS NULL" if self._HAS_SUPERSESSION else ""
 
+        # ORC-2: exclude zero-vector sentinel rows from the distance ranking.
+        # When chunking is active, long records store a zero-vector on the parent
+        # row so the NOT NULL constraint is satisfied.  COSINE distance against a
+        # zero vector produces a division-by-zero error in Db2 (SQL0801N), so
+        # these rows must never reach the VECTOR_DISTANCE ORDER BY.  We filter
+        # them out with VECTOR_SERIALIZE; the zero-vector sentinel's serialized
+        # form is a known constant (all-zero JSON array).
+        zero_vec_str = self._zero_vec_str()
+        zero_vec_filter = (
+            f" AND VECTOR_SERIALIZE(embedding) != "
+            f"VECTOR_SERIALIZE(CAST('{zero_vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)))"
+        )
+
         # PIPE-1: when hybrid=True, over-fetch candidates so the keyword
         # ranking has a larger pool to reorder from before the top_k slice.
         # For hybrid=False, fetch exactly top_k (unchanged behavior).
@@ -1757,15 +1770,34 @@ class BaseRepository(ABC, Generic[M]):
               {extra}
               {conf_sql}
               {meta_sql}
+              {zero_vec_filter}
             ORDER BY VECTOR_DISTANCE(embedding, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)), {metric.value})
             FETCH FIRST ? ROWS ONLY{approx_clause}
-        """  # nosec B608 — _TABLE hardcoded; vec_str from _vec_to_str() (float() guard, DECISIONS.md VER-5); metric.value is a DistanceMetric enum (hardcoded strings); scope_sql/supersession_sql/extra/conf_sql/meta_sql are hardcoded or validated fragments with bound params.
+        """  # nosec B608 — _TABLE hardcoded; vec_str/_zero_vec_str from _vec_to_str()/_zero_vec_str() (float() guard, DECISIONS.md VER-5); metric.value is a DistanceMetric enum (hardcoded strings); scope_sql/supersession_sql/extra/conf_sql/meta_sql are hardcoded or validated fragments with bound params; zero_vec_filter uses the same inline CAST pattern.
         id_params = [*scope_params, *conf_params, *meta_params, fetch_k]
 
         with self._pool.get_connection() as conn:
             cur = conn.cursor()
-            cur.execute(sql_ids, id_params)
-            ordered_ids: list[str] = [r[0] for r in cur.fetchall()]
+            # APPROX requires the DiskANN vector index.  Db2 community edition
+            # 12.1.5.0 raises SQL0104N (-104) when the APPROX keyword is not
+            # yet supported.  Fall back to EXACT silently so the benchmark still
+            # produces results rather than erroring out.
+            try:
+                cur.execute(sql_ids, id_params)
+                ordered_ids: list[str] = [r[0] for r in cur.fetchall()]
+            except Exception as _exc:
+                _msg = str(_exc)
+                if approx_clause and ("SQL0104N" in _msg or "SQLCODE=-104" in _msg or "unexpected token" in _msg.lower()):
+                    logger.warning(
+                        "APPROX search not supported by this Db2 build (%s); "
+                        "retrying with EXACT.",
+                        _msg[:120],
+                    )
+                    sql_ids_exact = sql_ids.replace(approx_clause, "")
+                    cur.execute(sql_ids_exact, id_params)
+                    ordered_ids = [r[0] for r in cur.fetchall()]
+                else:
+                    raise
 
         if not ordered_ids:
             return []

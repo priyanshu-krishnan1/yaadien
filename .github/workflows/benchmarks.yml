@@ -167,6 +167,19 @@ jobs:
           echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
           exit 0
 
+      - name: Expand Db2 transaction log for benchmark workloads
+        # The default LOGSECOND=8 (8×4 MB = 32 MB secondary log) is
+        # insufficient for the 1000-message batch benchmark (SQL0964C log full).
+        # Increase secondary log files from 8 → 64 (256 MB secondary pool).
+        # LOGFILSIZ stays at the default 1024 × 4 KB = 4 MB per file.
+        # This step is non-fatal (log config is advisory, not required).
+        run: |
+          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
+          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+            "db2 connect to TESTDB && \
+             db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGSECOND 64' && \
+             db2 terminate" >/dev/null 2>&1 || true
+
       # ────────────────────────────────────────────────────────────────────────
       # 4. Run benchmarks
       # ────────────────────────────────────────────────────────────────────────

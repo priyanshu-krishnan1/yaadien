@@ -110,22 +110,26 @@ def _seed_hierarchy(store: MemoryStore, agent_id: str, tenant_id: str | None) ->
                 )
                 total += 3
 
-            # One profile per user (agent-scoped).
-            profile_scope = MemoryScope(
-                tenant_id=tenant_id,
+        # One profile per user (agent-scoped, seeded once outside the
+        # thread loop so the row count matches what is actually inserted).
+        # EntityProfile uses dedup-on-write, so inserting the same content
+        # multiple times within the same agent scope is idempotent — only
+        # one row lands per user.  Counting one here keeps total consistent.
+        profile_scope = MemoryScope(
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            user_id=f"cascade-user-{u}",
+        )
+        store.remember(
+            EntityProfile(
                 agent_id=agent_id,
+                tenant_id=tenant_id,
                 user_id=f"cascade-user-{u}",
-            )
-            store.remember(
-                EntityProfile(
-                    agent_id=agent_id,
-                    tenant_id=tenant_id,
-                    user_id=f"cascade-user-{u}",
-                    content=f"cascade-profile-u{u}",
-                ),
-                profile_scope,
-            )
-            total += 1
+                content=f"cascade-profile-u{u}",
+            ),
+            profile_scope,
+        )
+        total += 1
 
         # One procedural memory per agent (no user scoping).
         agent_scope = MemoryScope(
