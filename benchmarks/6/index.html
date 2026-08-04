@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agent-memory-sdk benchmark report — run 6</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+           font-size: 14px; line-height: 1.6; color: #1f2328;
+           background: #ffffff; margin: 0; padding: 24px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 4px; }
+    .meta { color: #57606a; font-size: 13px; margin-bottom: 20px; }
+    .meta span { margin-right: 16px; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    thead tr { background: #f7f8fa; }
+    th { padding: 8px 10px; text-align: left; border-bottom: 2px solid #e5e7eb;
+         font-weight: 600; white-space: nowrap; }
+    th.num { text-align: right; }
+    td { padding: 7px 10px; border-bottom: 1px solid #e5e7eb;
+         font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+    td.name { font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+               max-width: 400px; overflow-wrap: break-word; }
+    td.num { text-align: right; }
+    tr:hover { background: #f7f8fa; }
+    .histograms { margin-top: 32px; }
+    .histograms h2 { font-size: 1.1rem; margin-bottom: 12px; }
+    .histograms ul { list-style: none; padding: 0; }
+    .histograms li { margin-bottom: 6px; }
+    .histograms a { color: #3b82d4; text-decoration: none; }
+    .histograms a:hover { text-decoration: underline; }
+    footer { margin-top: 40px; padding-top: 12px; border-top: 1px solid #e5e7eb;
+              font-size: 12px; color: #57606a; text-align: center; }
+    .empty { color: #57606a; font-style: italic; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>agent-memory-sdk benchmark report</h1>
+  <div class="meta">
+    <span>Run <strong>#6</strong></span>
+    <span>Commit <code>944503cda0fd</code></span>
+    <span>Branch <code>main</code></span>
+    <span>Generated 2026-08-04 15:19 UTC</span>
+    <span>CPU: Intel(R) Xeon(R) 6973P-C</span>
+    
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Test</th>
+        <th class="num">Min</th>
+        <th class="num">Max</th>
+        <th class="num">Mean</th>
+        <th class="num">StdDev</th>
+        <th class="num">Median</th>
+        <th class="num">Rounds</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="name">test_content_hash[long-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]</td><td class="num">37.42 µs</td><td class="num">85.98 µs</td><td class="num">41.75 µs</td><td class="num">2.02 µs</td><td class="num">41.54 µs</td><td class="num">11,999</td></tr>
+      <tr><td class="name">test_content_hash[medium-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]</td><td class="num">4.49 µs</td><td class="num">33.76 µs</td><td class="num">4.94 µs</td><td class="num">588.3 ns</td><td class="num">4.89 µs</td><td class="num">46,564</td></tr>
+      <tr><td class="name">test_content_hash[short-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]</td><td class="num">1.16 µs</td><td class="num">13.82 µs</td><td class="num">1.23 µs</td><td class="num">302.5 ns</td><td class="num">1.21 µs</td><td class="num">8,382</td></tr>
+      <tr><td class="name">test_metadata_filter_array_contains</td><td class="num">1.08 µs</td><td class="num">16.95 µs</td><td class="num">1.20 µs</td><td class="num">275.9 ns</td><td class="num">1.18 µs</td><td class="num">104,998</td></tr>
+      <tr><td class="name">test_metadata_filter_array_contains_any</td><td class="num">2.29 µs</td><td class="num">16.85 µs</td><td class="num">2.57 µs</td><td class="num">416.1 ns</td><td class="num">2.53 µs</td><td class="num">75,330</td></tr>
+      <tr><td class="name">test_metadata_filter_exact</td><td class="num">851.0 ns</td><td class="num">53.26 µs</td><td class="num">1.31 µs</td><td class="num">720.1 ns</td><td class="num">1.32 µs</td><td class="num">8,108</td></tr>
+      <tr><td class="name">test_metadata_filter_not</td><td class="num">934.0 ns</td><td class="num">20.98 µs</td><td class="num">1.05 µs</td><td class="num">271.2 ns</td><td class="num">1.03 µs</td><td class="num">123,335</td></tr>
+      <tr><td class="name">test_pydantic_model_construction[entity_profile-EntityProfile-payload3]</td><td class="num">3.24 µs</td><td class="num">26.86 µs</td><td class="num">3.97 µs</td><td class="num">582.2 ns</td><td class="num">3.94 µs</td><td class="num">27,390</td></tr>
+      <tr><td class="name">test_pydantic_model_construction[episodic_memory-EpisodicMemory-payload1]</td><td class="num">3.21 µs</td><td class="num">21.87 µs</td><td class="num">3.92 µs</td><td class="num">589.6 ns</td><td class="num">3.87 µs</td><td class="num">24,484</td></tr>
+      <tr><td class="name">test_pydantic_model_construction[procedural_memory-ProceduralMemory-payload4]</td><td class="num">3.19 µs</td><td class="num">19.39 µs</td><td class="num">3.86 µs</td><td class="num">564.9 ns</td><td class="num">3.81 µs</td><td class="num">36,282</td></tr>
+      <tr><td class="name">test_pydantic_model_construction[semantic_fact-SemanticFact-payload2]</td><td class="num">3.39 µs</td><td class="num">17.48 µs</td><td class="num">4.09 µs</td><td class="num">578.2 ns</td><td class="num">4.05 µs</td><td class="num">36,421</td></tr>
+      <tr><td class="name">test_pydantic_model_construction[working_memory-WorkingMemory-payload0]</td><td class="num">3.26 µs</td><td class="num">21.65 µs</td><td class="num">3.94 µs</td><td class="num">564.3 ns</td><td class="num">3.90 µs</td><td class="num">19,880</td></tr>
+      <tr><td class="name">test_pydantic_model_validate[entity_profile-EntityProfile-payload3]</td><td class="num">3.11 µs</td><td class="num">29.24 µs</td><td class="num">3.75 µs</td><td class="num">593.2 ns</td><td class="num">3.69 µs</td><td class="num">44,018</td></tr>
+      <tr><td class="name">test_pydantic_model_validate[episodic_memory-EpisodicMemory-payload1]</td><td class="num">3.17 µs</td><td class="num">21.96 µs</td><td class="num">3.81 µs</td><td class="num">664.4 ns</td><td class="num">3.74 µs</td><td class="num">43,534</td></tr>
+      <tr><td class="name">test_pydantic_model_validate[procedural_memory-ProceduralMemory-payload4]</td><td class="num">3.12 µs</td><td class="num">23.79 µs</td><td class="num">3.74 µs</td><td class="num">583.0 ns</td><td class="num">3.68 µs</td><td class="num">24,816</td></tr>
+      <tr><td class="name">test_pydantic_model_validate[semantic_fact-SemanticFact-payload2]</td><td class="num">3.23 µs</td><td class="num">23.70 µs</td><td class="num">3.85 µs</td><td class="num">561.1 ns</td><td class="num">3.80 µs</td><td class="num">38,018</td></tr>
+      <tr><td class="name">test_pydantic_model_validate[working_memory-WorkingMemory-payload0]</td><td class="num">3.17 µs</td><td class="num">18.73 µs</td><td class="num">3.81 µs</td><td class="num">562.3 ns</td><td class="num">3.76 µs</td><td class="num">39,385</td></tr>
+      <tr><td class="name">test_rrf_fuse[1000]</td><td class="num">204.79 µs</td><td class="num">283.35 µs</td><td class="num">210.95 µs</td><td class="num">4.63 µs</td><td class="num">209.51 µs</td><td class="num">3,381</td></tr>
+      <tr><td class="name">test_rrf_fuse[100]</td><td class="num">17.55 µs</td><td class="num">46.58 µs</td><td class="num">18.63 µs</td><td class="num">1.23 µs</td><td class="num">18.37 µs</td><td class="num">29,329</td></tr>
+      <tr><td class="name">test_rrf_fuse[10]</td><td class="num">2.16 µs</td><td class="num">48.02 µs</td><td class="num">2.51 µs</td><td class="num">545.3 ns</td><td class="num">2.40 µs</td><td class="num">62,748</td></tr>
+      <tr><td class="name">test_scope_predicates[full-scope2]</td><td class="num">292.7 ns</td><td class="num">1.43 µs</td><td class="num">307.8 ns</td><td class="num">34.2 ns</td><td class="num">304.7 ns</td><td class="num">61,909</td></tr>
+      <tr><td class="name">test_scope_predicates[minimal-scope0]</td><td class="num">225.0 ns</td><td class="num">13.28 µs</td><td class="num">257.6 ns</td><td class="num">114.2 ns</td><td class="num">250.0 ns</td><td class="num">137,099</td></tr>
+      <tr><td class="name">test_scope_predicates[partial-scope1]</td><td class="num">232.4 ns</td><td class="num">3.61 µs</td><td class="num">245.8 ns</td><td class="num">31.0 ns</td><td class="num">242.4 ns</td><td class="num">197,434</td></tr>
+      <tr><td class="name">test_split_chunks[1000]</td><td class="num">346.0 ns</td><td class="num">33.93 µs</td><td class="num">400.1 ns</td><td class="num">197.1 ns</td><td class="num">384.0 ns</td><td class="num">194,326</td></tr>
+      <tr><td class="name">test_split_chunks[20000]</td><td class="num">3.83 µs</td><td class="num">77.65 µs</td><td class="num">4.15 µs</td><td class="num">766.0 ns</td><td class="num">4.02 µs</td><td class="num">68,148</td></tr>
+      <tr><td class="name">test_split_chunks[200]</td><td class="num">71.7 ns</td><td class="num">333.3 ns</td><td class="num">76.2 ns</td><td class="num">5.8 ns</td><td class="num">75.3 ns</td><td class="num">42,109</td></tr>
+      <tr><td class="name">test_split_chunks[5000]</td><td class="num">957.0 ns</td><td class="num">23.55 µs</td><td class="num">1.07 µs</td><td class="num">283.9 ns</td><td class="num">1.04 µs</td><td class="num">197,785</td></tr>
+      <tr><td class="name">test_split_chunks[60000]</td><td class="num">11.36 µs</td><td class="num">43.28 µs</td><td class="num">11.95 µs</td><td class="num">944.9 ns</td><td class="num">11.79 µs</td><td class="num">33,261</td></tr>
+      <tr><td class="name">test_vec_to_str[1536]</td><td class="num">378.10 µs</td><td class="num">756.24 µs</td><td class="num">403.23 µs</td><td class="num">39.88 µs</td><td class="num">395.73 µs</td><td class="num">1,896</td></tr>
+      <tr><td class="name">test_vec_to_str[3072]</td><td class="num">770.45 µs</td><td class="num">939.60 µs</td><td class="num">802.28 µs</td><td class="num">16.91 µs</td><td class="num">799.08 µs</td><td class="num">1,104</td></tr>
+      <tr><td class="name">test_vec_to_str[384]</td><td class="num">93.30 µs</td><td class="num">185.26 µs</td><td class="num">98.58 µs</td><td class="num">5.56 µs</td><td class="num">97.49 µs</td><td class="num">6,802</td></tr>
+      <tr><td class="name">test_vec_to_str[768]</td><td class="num">187.87 µs</td><td class="num">283.74 µs</td><td class="num">197.72 µs</td><td class="num">4.74 µs</td><td class="num">196.77 µs</td><td class="num">4,218</td></tr>
+    </tbody>
+  </table>
+
+
+
+  <footer>Made with IBM Bob &bull; agent-memory-sdk benchmarks</footer>
+</div>
+</body>
+</html>
+
