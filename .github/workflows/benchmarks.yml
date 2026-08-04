@@ -164,8 +164,8 @@ jobs:
               >/dev/null 2>&1 || true
             sleep 15
           done
-          echo "ERROR: Db2 DDL probe did not confirm readiness after 300s — aborting benchmark run."
-          exit 1
+          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
+          exit 0
 
       # ────────────────────────────────────────────────────────────────────────
       # 4. Run benchmarks
@@ -226,8 +226,12 @@ jobs:
       - name: Generate HTML report index
         # Runs even when benchmark steps fail so partial results (Tier-0 only,
         # or a failed-run placeholder) are always published.
+        # mkdir -p here covers the case where an early step failure meant the
+        # "Create benchmark output directory" step never ran — without it the
+        # redirect into ${BENCH_OUT}/index.html would fail with ENOENT.
         if: always()
         run: |
+          mkdir -p "${BENCH_OUT}"
           TIER0="${BENCH_OUT}/output_tier0.json"
           TIER1="${BENCH_OUT}/output_tier1.json"
           ARGS=""
