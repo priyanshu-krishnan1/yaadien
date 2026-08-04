@@ -835,6 +835,20 @@ class BaseRepository(ABC, Generic[M]):
         "created_at, updated_at, expires_at, version, deleted_at"
     )
 
+    # Plain alias list for the *outer* SELECT of the ROW_NUMBER pagination
+    # subquery.  When the inner query includes VECTOR_SERIALIZE(embedding) AS
+    # embedding, the outer query must reference the already-computed column by
+    # its alias ("embedding") rather than calling VECTOR_SERIALIZE again on a
+    # CLOB/VARCHAR result — doing so raises SQL0440N.  Repos that override
+    # _SELECT_COLS must override _SELECT_OUTER_COLS to match.
+    _SELECT_OUTER_COLS = (
+        "id, tenant_id, agent_id, user_id, thread_id, "
+        "content, metadata, "
+        "embedding, "
+        "confidence, content_hash, "
+        "created_at, updated_at, expires_at, version, deleted_at"
+    )
+
     # ------------------------------------------------------------------
     # CRUD methods
     # ------------------------------------------------------------------
@@ -1136,7 +1150,7 @@ class BaseRepository(ABC, Generic[M]):
         # unnecessary overhead.
         if offset > 0:
             sql = f"""
-                SELECT {self._SELECT_COLS} FROM (
+                SELECT {self._SELECT_OUTER_COLS} FROM (
                     SELECT {self._SELECT_COLS},
                            ROW_NUMBER() OVER (ORDER BY created_at DESC) AS rn
                     FROM {self._TABLE}

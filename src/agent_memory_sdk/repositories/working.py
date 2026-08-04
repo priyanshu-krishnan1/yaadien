@@ -47,6 +47,17 @@ class WorkingMemoryRepository(BaseRepository[WorkingMemory]):
         "consolidated_at"
     )
 
+    # Plain alias list for the outer SELECT of the ROW_NUMBER pagination
+    # subquery (see BaseRepository._SELECT_OUTER_COLS).
+    _SELECT_OUTER_COLS = (
+        "id, tenant_id, agent_id, user_id, thread_id, "
+        "content, metadata, "
+        "embedding, "
+        "confidence, content_hash, "
+        "created_at, updated_at, expires_at, version, deleted_at, "
+        "consolidated_at"
+    )
+
     def _model_from_row(self, row: tuple[Any, ...]) -> WorkingMemory:
         """Map a DB-API result row to a :class:`WorkingMemory` instance.
 
