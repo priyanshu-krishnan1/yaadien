@@ -1,0 +1,14 @@
+{
+  "id": "BRUN-1",
+  "epic_id": "EPIC-12",
+  "title": "Re-run Run C with corrected OllamaJudge (think-block stripping fix)",
+  "summary": "The OllamaJudge fix for <think> block mis-parsing has landed in code but Run C's 62.0% score was produced pre-fix. Re-run and remove the 're-run' caveat from BENCHMARKS.md.",
+  "status": "Done",
+  "description": "Run C in BENCHMARKS.md was produced while OllamaJudge still mis-parsed <think> reasoning blocks as part of the verdict (deepseek-r1:8b score 62.0%). The fix has since landed in benchmarks/common/llm_judge.py. Re-run scripts/run_benchmarks.py --suite retrieval --judge ollama:deepseek-r1:8b against the same Run C configuration (no-SDK baseline) and update BENCHMARKS.md's Run C section and summary table, removing the '(pre-fix — re-run)' caveat. Requires local Ollama daemon with deepseek-r1:8b pulled and a live Db2 instance.\n\n**Status: Abandoned** — EPIC-13's BM-2 will delete scripts/run_benchmarks.py, benchmarks/common/llm_judge.py, and benchmarks/retrieval_quality/dataset.py as part of the harness retirement. This story depends on exactly those three modules. Rather than executing a run against a harness that is being retired, this story is explicitly abandoned: the Run C corrected measurement will be captured under EPIC-16 (BM-16), which rewrites the retrieval quality suite against the real LongMemEval dataset. The '(pre-fix — re-run)' caveat is acknowledged debt that EPIC-16 retires entirely by switching to a deterministic IR metric rather than an LLM judge. Abandoned in favour of EPIC-16.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Explicitly abandoned to unblock EPIC-13 BM-2. The old harness (scripts/run_benchmarks.py + llm_judge.py + dataset.py) will be deleted by BM-2. Re-measurement of Run C is subsumed by EPIC-16's full retrieval-quality rewrite on the real LongMemEval dataset. Abandonment recorded here per the cross-epic gate in BM-2's story description."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "BM-19",
+  "epic_id": "EPIC-16",
+  "title": "SDK configuration comparison on real data",
+  "summary": "Re-run BM-17/BM-18 across vector-only vs hybrid, consolidation on/off, reconciliation on/off, top-k sweep, and _s vs _m — testing BENCH-5's 'SDK wins at scale' hypothesis against real data instead of a synthetic proxy.",
+  "status": "To Do",
+  "description": "Re-run BM-17 (deterministic) and BM-18 (judged) across a configuration matrix: vector-only vs. hybrid RRF retrieval; consolidation off vs. on (reusing BENCH-3a's consolidator from EPIC-6); reconciliation off vs. on (reusing BENCH-3b's reconciler); a top-k sweep; and `longmemeval_s` (short) vs. `longmemeval_m` (500 sessions) specifically to test the \"SDK wins at scale\" hypothesis BENCH-5 (EPIC-6) raised but only confirmed analytically against a synthetic proxy, due to the Db2 Fyre outage — this story is the first chance to test it on real conversational data with a live Db2 instance.\n\nAcceptance: a configuration matrix exists with IR metrics per cell; an explicit verdict is recorded per configuration — confirmed / partially confirmed / refuted — rather than only reporting favorable results; an honest statement is written wherever a configuration does not help, matching this project's existing practice (e.g. TRU-4's re-run discipline) of not overstating wins. Depends on BM-17 and BM-18.",
+  "comments": []
+}

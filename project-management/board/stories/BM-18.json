@@ -1,0 +1,9 @@
+{
+  "id": "BM-18",
+  "epic_id": "EPIC-16",
+  "title": "LLM-judged end-to-end accuracy (offline tier)",
+  "summary": "Wire LongMemEval's own judge prompt with a local Ollama model for the full 500-question run; report per-category accuracy with judge/model/seed stamped; quantify judge variance directly answering BENCH-1's finding. Never a merge gate.",
+  "status": "To Do",
+  "description": "Wire LongMemEval's own official judge prompt (not the discarded `common/llm_judge.py`) with a local Ollama model to run the full 500-question `longmemeval_s` end to end, reporting per-category accuracy with the judge, model, seed, and top-k explicitly stamped on every result. This tier is reported, never gated — it directly implements Finding 4 from the strategy doc's executive summary. Quantify judge variance by running a fixed subset of questions 3x and reporting the spread between runs, which is the concrete, measured answer to what BENCH-1 found only anecdotally (a judge answering CORRECT on empty context).\n\nAcceptance: per-category accuracy is comparable *in kind* to published LongMemEval figures, with every deviation from the published methodology explicitly enumerated (different judge model, different embedding provider, etc. — do not imply apples-to-apples where it isn't); judge variance is a reported number from the 3x-repeated subset, not an assumption; results are appended to BENCHMARKS.md as a new dated run without overwriting Runs A-D. Depends on BM-16.",
+  "comments": []
+}

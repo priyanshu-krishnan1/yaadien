@@ -1,0 +1,9 @@
+{
+  "id": "BM-21",
+  "epic_id": "EPIC-17",
+  "title": "Tier 2 nightly workflow",
+  "summary": ".github/workflows/benchmark-nightly.yml — scheduled + dispatchable, 50k-row corpus, full matrix + Locust ramp + selectivity sweep + IR metrics + memray checks, opens an issue on regression.",
+  "status": "To Do",
+  "description": "Write `.github/workflows/benchmark-nightly.yml`, scheduled (`0 3 * * *`) and `workflow_dispatch`-able against a 50k-row/50-scope corpus in the Db2 container: the full `pytest -m benchmark` matrix across all P0/P1 capabilities, BM-14's Locust ramp (1->50 users, 15 min, mixed 70/30 read/write with leak assertions), BM-15's pool-saturation sweep, BM-23's filter-selectivity sweep with `MON_GET_PKG_CACHE_STMT` capture, an APPROX-vs-EXACT recall check at 50k rows, BM-17's deterministic IR metrics on `longmemeval_s`, and BM-6's memray peak-RSS checks on `export_scope()`/deep `list_all()`. Push results to `gh-pages` and open a labelled issue on any regression.\n\nAcceptance: completes within a 2-hour budget; results are published to `gh-pages`; a regression opens a labelled GitHub issue automatically; `workflow_dispatch` accepts corpus-size and scenario inputs so it can be run ad hoc, not just on schedule. Depends on BM-20, BM-14, and BM-17.",
+  "comments": []
+}

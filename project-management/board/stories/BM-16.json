@@ -1,0 +1,9 @@
+{
+  "id": "BM-16",
+  "epic_id": "EPIC-16",
+  "title": "Adopt the real LongMemEval dataset",
+  "summary": "Download and cache longmemeval_s/longmemeval_oracle from HuggingFace and build the adapter mapping sessions to add_messages() and questions to store.search(), replacing the synthetic dataset BM-2 removed.",
+  "status": "To Do",
+  "description": "Download `longmemeval_s` and `longmemeval_oracle` (xiaowu0162, ICLR 2025, Apache-2.0) from HuggingFace, cache locally and in CI so runs are offline after first fetch. Write `benchmarks/quality/longmemeval_adapter.py`: maps a LongMemEval session/haystack into `add_messages()` calls under a per-question `MemoryScope` (~150 LOC per the strategy doc's estimate), and maps a question into a `store.search()` call, plus the reverse mapping needed to compute Recall@k against the dataset's own labelled evidence sessions. This is the direct replacement for the synthetic `retrieval_quality/dataset.py` BM-2 removed — the report itself already states synthetic results are \"explicitly NOT comparable to vendor-reported LongMemEval figures,\" and this dataset is free and Apache-2.0 licensed, so there is no reason not to use the real one.\n\nAcceptance: all 500 questions ingest successfully end to end; per-question scope isolation is verified (no cross-question leakage in the adapter itself); dataset caching keeps CI runs fully offline after the first fetch; licensing and attribution are recorded in `benchmarks/README.md`. Depends on BM-3.",
+  "comments": []
+}

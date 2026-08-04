@@ -1,0 +1,9 @@
+{
+  "id": "BM-24",
+  "epic_id": "EPIC-18",
+  "title": "APPROX vs. EXACT recall & vector index characterization",
+  "summary": "Measure APPROX recall against EXACT ground truth at 1k/50k/500k/1M rows; measure CREATE VECTOR INDEX build time and storage vs row count; sweep embedding dimension. Recall regression fails the nightly tier.",
+  "status": "To Do",
+  "description": "Measure APPROX search-mode recall against EXACT ground truth at 1k/50k/500k/1M rows (the 1M-row point runs only in EPIC-17's Tier 3, against the live Db2 instance — Tiers 0-2 cover up to 500k in the ephemeral container). Measure `CREATE VECTOR INDEX ... WITH DISTANCE COSINE` (DiskANN) build time and on-disk storage size as a function of row count, and sweep embedding dimension (384/768/1536/3072) to see how both recall and build time respond.\n\nAcceptance: the Recall@10(APPROX)/Recall@10(EXACT) ratio is reported at every scale, against a documented floor of >=0.95 (per Phase 5.1's invariant table); an index-build-time-vs-row-count curve exists; a documented guideline states when APPROX search is safe to use by default versus when EXACT should be forced; a recall-ratio regression below the 0.95 floor fails the nightly Tier 2 workflow (BM-21), not just the weekly one. Depends on BM-4.",
+  "comments": []
+}

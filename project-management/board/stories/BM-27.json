@@ -1,0 +1,9 @@
+{
+  "id": "BM-27",
+  "epic_id": "EPIC-19",
+  "title": "Baselines, budgets, and the regression policy",
+  "summary": "Commit benchmarks/baselines.json, document per-tier alert/fail thresholds, write the baseline-update policy, and require a benchmark check on the board's story template for future perf-sensitive work.",
+  "status": "To Do",
+  "description": "Commit `benchmarks/baselines.json` capturing the committed baseline for every P0 metric from the Phase 4 gap-analysis matrix. Document the per-tier alert and fail thresholds EPIC-17's workflows actually enforce (BM-20's 150%/300% wall-clock thresholds, the hard round-trip-count and correctness-invariant gates, BM-24's 0.95 recall floor) in `benchmarks/README.md`, and write the policy for updating a baseline: what justifies moving it (an intentional tradeoff, a hardware/runner change), who approves the change, and where the change itself is recorded (a DECISIONS.md entry, following this project's existing pattern for every other consequential change).\n\nAcceptance: `benchmarks/baselines.json` is committed and consumed by the Tier 1/2 workflows rather than living only as documentation; thresholds are documented per tier in `benchmarks/README.md`; the board's story template (wherever new stories are scaffolded) is updated to require a benchmark check as part of the acceptance criteria for any story touching a perf-sensitive path per the Phase 1.2 capability inventory. Depends on BM-20 and BM-21.",
+  "comments": []
+}

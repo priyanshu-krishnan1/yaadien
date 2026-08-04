@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-18",
+  "title": "Db2-specific depth",
+  "description": "The capability inventory's Section H documents three implementation constraints that are \"almost certainly a top-3 latency contributor\" and have \"never been measured\": vectors cannot be bound as parameters (every write/search inlines a ~20 KB SQL string literal at dim 1536), metadata-filter values can't be bound either (`$array_contains` uses three `LOCATE()` calls on raw `VARCHAR(4096)`, non-sargable by construction), and partial/filtered indexes aren't supported on this Db2 build. This epic measures all three: metadata-filter selectivity and index effectiveness via `MON_GET_PKG_CACHE_STMT` server-side monitoring (BM-23), APPROX-vs-EXACT vector-index recall and build-time characterization up to 1M rows (BM-24), and the vector-literal inlining cost broken out by dimension (BM-25). These are the numbers that inform concrete product recommendations (a generated column for common filter paths, a default `embedding_dim`, an APPROX-safety guideline) rather than just gating CI. Depends on EPIC-13 (BM-4, for the seeded 50k/500k corpora these sweeps run against).",
+  "comments": []
+}

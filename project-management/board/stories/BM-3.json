@@ -1,0 +1,14 @@
+{
+  "id": "BM-3",
+  "epic_id": "EPIC-13",
+  "title": "Benchmark fixtures & Db2 lifecycle",
+  "summary": "Build benchmarks/conftest.py: session-scoped pool, protocol-wiring-parametrized MemoryStore factory, reserved-tenant teardown, and the four pytest markers every later story filters on.",
+  "status": "Done",
+  "description": "Write `benchmarks/conftest.py` providing: a session-scoped `ConnectionPool` fixture honouring the existing `DB2_*` env vars; a `MemoryStore` factory fixture parametrized over protocol wiring (all-NoOp / resolver-on / consolidator-on / fully-wired, matching the SDK's pluggable-protocol axis from the capability inventory); a pool-size parametrization fixture; automatic teardown scoped to a reserved `tenant_id` prefix so benchmark runs never leave residual rows; and the four pytest markers `benchmark_micro`, `benchmark_pr`, `benchmark_nightly`, `benchmark_scale` registered in `pyproject.toml` so every later story (BM-7 through BM-25) can select into the right CI tier from day one instead of retrofitting markers later.\n\nAcceptance: a trivial benchmark runs locally against the Db2 container (reusing `ci.yml`'s existing boot job) and against the live instance with only env-var changes; teardown leaves zero residual rows, verified by a scope-scan after a deliberately-failed run; markers are selectable via `pytest -m` and documented in `benchmarks/README.md`. Depends on BM-2.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "benchmarks/conftest.py created with session-scoped db_pool, pool_size sweep, memory_store parametrized over 4 wiring variants (noop/resolver_on/consolidator_on/fully_wired), benchmark_scope with erase_all() teardown. pyproject.toml updated with pytest-benchmark>=5.0 and 4 new markers (benchmark_micro/pr/nightly/scale)."
+    }
+  ]
+}

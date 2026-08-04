@@ -1,0 +1,14 @@
+{
+  "id": "BM-5",
+  "epic_id": "EPIC-13",
+  "title": "DB round-trip counting proxy",
+  "summary": "CountingConnection/CountingCursor wrapping the pool — the single custom primitive that makes SDK-internal round-trip fan-out (dedup, ingest-resolver, multi-type search, context-card) countably measurable and CI-gateable, independent of runner speed.",
+  "status": "Done",
+  "description": "Build `benchmarks/common/counting.py`: a `CountingConnection`/`CountingCursor` pair wrapping the `ConnectionPool`'s raw `ibm_db` handles, exposing per-SDK-call `execute`/`fetch` counts via a `round_trips` pytest fixture and an `assert_round_trips(n)` helper. This is the highest-value custom piece BENCHMARK_STRATEGY.md identifies — nothing off the shelf knows what constitutes \"one SDK call,\" and this is the only metric in the whole strategy that is genuinely immune to GHA runner-speed noise, which is why Tier 1 (EPIC-17's BM-20) gates PRs on it instead of on wall-clock. Makes A3 (dedup pre-SELECT), A7 (ingest-resolver pre-search), B9 (multi-type fan-out), and B11 (context-card composite) countably measurable for the first time.\n\nAcceptance: counts verified against known-shape operations (e.g. `get_by_id()` must count exactly 1); zero measurable overhead when the proxy is disabled (benchmarked against a direct-pool baseline); works transparently across all 5 repositories plus the shared chunk repo; covered by its own unit tests, not just used inside benchmarks. Depends on BM-3.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "benchmarks/common/counting.py created: CountingCursor/CountingConnection/CountingPool proxy stack + RoundTripCounter + RoundTripsFixture. counting_pool (session) and round_trips (function) pytest fixtures. tests/test_counting.py: 25 unit tests, all passing."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "BM-12",
+  "epic_id": "EPIC-15",
+  "title": "Locust harness for the SDK",
+  "summary": "benchmarks/load/locustfile.py with a MemoryStoreUser base class dispatching blocking ibm_db calls through gevent's threadpool, plus tasks for the 5 core operations and headless CSV output.",
+  "status": "To Do",
+  "description": "Build `benchmarks/load/locustfile.py`. Locust's concurrency model is gevent greenlets; `ibm_db` is a blocking C extension gevent cannot monkeypatch, so a naive Locust `User` would stall the whole greenlet hub. Implement the documented workaround — dispatching each blocking call through `gevent.get_hub().threadpool.apply(...)` in a shared base `MemoryStoreUser` class (~5 lines per the strategy doc, ~20 LOC total). This is not speculative: the repo's own `benchmarks/isolation_load/run.py` already proves `ibm_db` works correctly under Python threads, which is the same underlying mechanism. Add tasks for search / remember / add_messages / get_context_card / list_all, and headless CSV output.\n\nAcceptance: 50 concurrent users sustained without greenlet-hub starvation, verified by comparing achieved RPS against a single-user baseline multiplied by user count (a stalled hub would show sub-linear scaling); a headless run exits non-zero on a configured threshold breach; CSV percentiles are emitted per Locust's built-in reporting. Depends on BM-4.",
+  "comments": []
+}

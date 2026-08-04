@@ -1,0 +1,14 @@
+{
+  "id": "BM-9",
+  "epic_id": "EPIC-14",
+  "title": "Read-path benchmarks (B1-B14)",
+  "summary": "search() across corpus-size x search-mode x distance-metric; chunk vs. parent search; hybrid RRF vs. vector-only; list_all() offset sweep; multi-type fan-out; context-card and summary composites — with embed time isolated from DB time throughout.",
+  "status": "Done",
+  "description": "The largest single story in this epic: `search()` swept across corpus sizes (1k/10k/100k/500k, using BM-4's seeded corpora), the 3 search modes (EXACT/APPROX/DEFAULT), and the 4 distance metrics (B1-B3); chunk search versus parent-record search, the exact code path where the ORC-2 routing bug previously lived (B4); hybrid RRF fusion versus vector-only, quantifying the Python-side ranking cost (B5); metadata filters across all 4 operators (B6, feeding BM-23's deeper selectivity work); `list_all()` offset sweep 0/1k/10k/100k, covering both SQL shapes the offset=0-vs-offset>0 code path produces (B7); the multi-type facade `store.search()` fan-out, asserting round-trip count equals the number of `record_types` queried (B9); `get_context_card()` with and without `include_long_term` (B11); `get_summary()` across thread lengths 10/100/1000 turns (B12); `get_messages(start, end)` range sweep (B13). Query-embedding time is isolated from DB time in every fixture so an embedding-provider regression can never masquerade as a DB regression.\n\nAcceptance: a latency-vs-corpus-size curve exists for `search()`; round-trip counts are asserted for `store.search()` and `get_context_card()` fan-out; the ms-embed-vs-ms-DB split is explicit in every read-path result; hybrid overhead is a reported number, not an impression. Depends on BM-4 and BM-5.",
+  "comments": [
+    {
+      "date": "2026-08-06",
+      "text": "benchmarks/read/ created: 10 test files (test_search_modes.py/B1-B3, test_search_corpus_size.py/B4-latency-curve, test_chunk_vs_parent_search.py/B4-ORC2, test_hybrid_rrf.py/B5, test_metadata_filters.py/B6, test_list_all_offset.py/B7, test_multi_type_search.py/B9, test_context_card.py/B11, test_get_summary.py/B12, test_get_messages.py/B13). 61 tests collected. embed_ms isolated in benchmark.extra_info on every test. Round-trips asserted: multi-type fan-out = 2×n_types; get_context_card(include_long_term=True)=5; list_all offset always=1. API note: DistanceMetric.DOT used (not DOT_PRODUCT); store.search() exists as multi-type facade."
+    }
+  ]
+}

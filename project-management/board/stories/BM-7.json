@@ -1,0 +1,14 @@
+{
+  "id": "BM-7",
+  "epic_id": "EPIC-14",
+  "title": "Tier-0 micro-benchmarks (no database)",
+  "summary": "pytest -m benchmark_micro over _vec_to_str, _build_metadata_filter, _rrf_fuse, _split_chunks, _scope_predicates, _content_hash, and Pydantic construction, against a fake DBAPI connection — the 90-second, noise-free tier that runs on every push.",
+  "status": "Done",
+  "description": "Write `benchmarks/micro/test_*.py` covering the SDK-side CPU-only hot paths against a fake DBAPI connection: `_vec_to_str` (the vector-literal serializer, dimension-swept 384/768/1536/3072, with statement size in bytes reported at each dimension), `_build_metadata_filter` (all 4 operators: exact, `$not`, `$array_contains`, `$array_contains_any`), `_rrf_fuse` (the hybrid-retrieval Python-side ranking step), `_split_chunks` (ORC-2 chunking), `_scope_predicates` (the hierarchical predicate builder), `_content_hash` (dedup), and Pydantic model construction/validation cost.\n\nAcceptance: runs in <90s total with no Db2 dependency at all; results are deterministic under `pytest-codspeed`'s Valgrind instruction counting (immune to GHA's 2-3x wall-clock variance, per the strategy doc's Finding 5); `_vec_to_str` statement-size-in-bytes is reported per dimension, quantifying the ~20 KB-per-write cost the capability inventory flags as \"almost certainly a top-3 latency contributor... never been measured.\" This is the exact tier BM-20 (EPIC-17) wires into the every-push smoke gate. Depends on BM-3.",
+  "comments": [
+    {
+      "date": "2026-08-06",
+      "text": "benchmarks/micro/ created: 7 test files (test_vec_to_str.py, test_metadata_filter.py, test_rrf_fuse.py, test_split_chunks.py, test_scope_predicates.py, test_content_hash.py, test_pydantic_models.py). 32 tests all passing in <90s, no DB2 dependency. _vec_to_str statement-size-in-bytes reported per dimension (384/768/1536/3072) via benchmark.extra_info. All 4 metadata filter operators covered. @pytest.mark.benchmark_micro on every test."
+    }
+  ]
+}

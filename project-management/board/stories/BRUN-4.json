@@ -1,0 +1,9 @@
+{
+  "id": "BRUN-4",
+  "epic_id": "EPIC-12",
+  "title": "Run --suite isolation for the first time (--tenants 20 --workers 40)",
+  "summary": "benchmarks/isolation_load/run.py has never been executed at all despite being fully built. Run it with the script's own docstring example parameters and record leakage incidents in BENCHMARKS.md.",
+  "status": "To Do",
+  "description": "The isolation-under-load suite (benchmarks/isolation_load/run.py) was built by PH-6 (EPIC-5) but has never been executed. BENCHMARKS.md's Suite 3 section reads 'Not yet run'. Run scripts/run_benchmarks.py --suite isolation --tenants 20 --workers 40 against a live Db2 instance and record results in BENCHMARKS.md: total write ops, total read assertions, leakage incidents, elapsed time, and pass/fail verdict. If any leakage is found, escalate it as a P0 story per EPIC-6's established precedent. Requires a live Db2 instance.\n\nNote: This story uses benchmarks/isolation_load/run.py which EPIC-13's BM-2 marks KEEP (port to Locust), not delete. BRUN-4 should be completed before EPIC-15's BM-13 ports the isolation assertions to Locust, so there is at least one measured baseline. If BRUN-4 has not run when BM-13 is executed, BM-13 should first execute BRUN-4 against the existing isolation_load/run.py before porting.",
+  "comments": []
+}

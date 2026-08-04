@@ -1,0 +1,14 @@
+{
+  "id": "BM-6",
+  "epic_id": "EPIC-13",
+  "title": "Memory & CPU instrumentation",
+  "summary": "Wire pytest-memray for per-benchmark peak-allocation limits and a psutil RSS/CPU sampler shared between pytest and Locust runs.",
+  "status": "Done",
+  "description": "Add `pytest-memray` (Bloomberg, Apache-2.0, Linux+macOS — matching this project's constraint set exactly) for per-benchmark peak-allocation limits, and build `benchmarks/common/resource_sampler.py`: a `psutil`-based RSS/CPU sampler usable both from pytest benchmark bodies and from Locust `User` classes in EPIC-15, so the same instrumentation answers \"is `export_scope()` really streaming?\" (C8) and \"does a 60-minute Locust soak leak?\" (BM-14) with one shared tool.\n\nAcceptance: peak RSS is reported for `export_scope()` over a 50k-row scope (BM-4's seeded corpus); a deliberately introduced leak (e.g. materializing the export iterator into a list) is caught by the memray limit, proving the gate actually fires; the sampler adds <2% wall-clock overhead when attached. Depends on BM-3.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "benchmarks/common/resource_sampler.py created: ResourceSampler context manager, SamplerSnapshot frozen dataclass, sample_resources decorator. psutil-based RSS/CPU background thread. Works from pytest and Locust User classes. tests/test_resource_sampler.py: 12 unit tests, all passing."
+    }
+  ]
+}

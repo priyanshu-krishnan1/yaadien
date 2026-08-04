@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-17",
+  "title": "CI tiering & regression gating",
+  "description": "Finding 5 of BENCHMARK_STRATEGY.md's executive summary: GHA wall-clock is too noisy to gate on directly — shared runners vary 2-3x on identical work. This epic wires the four-tier GHA strategy Phase 6 designs, each gating on a runner-speed-invariant signal instead of raw wall-clock: Tier 0 smoke tests using CodSpeed instruction counting on every push (BM-20, combined with Tier 1 PR gating on round-trip counts and correctness invariants, reusing the existing `ci.yml` Db2 container job verbatim), a nightly Tier 2 running the full matrix plus Locust ramps plus IR metrics (BM-21), and a weekly Tier 3 against the live Db2 instance for million-row-scale numbers an ephemeral container cannot hold (BM-22, with a `concurrency` guard so it never overlaps EPIC-12's BRUN-3/BRUN-4, which also require live-Db2 access). This directly fixes the methodology flaw BENCH-1 (EPIC-6) found: deterministic metrics gate merges, non-deterministic LLM-judged metrics inform and are stamped with judge/model/seed but never block a PR. Depends on EPIC-14 (BM-7/8/9), EPIC-15 (BM-14, for the nightly Locust ramp), and EPIC-16 (BM-17, for the nightly IR-metrics run).",
+  "comments": []
+}

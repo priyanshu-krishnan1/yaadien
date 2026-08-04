@@ -1,0 +1,14 @@
+{
+  "id": "BRUN-3",
+  "epic_id": "EPIC-12",
+  "title": "Execute BENCH-5's small/medium/large scale runs with live LLM judge",
+  "summary": "BENCH-5 (EPIC-6) closed Done but scale results are analytical estimates, not measured values — the Db2 Fyre server was offline at the time. Run the small/medium/large --extra-turns-per-session matrix with the live llama3.1:8b judge.",
+  "status": "Done",
+  "description": "BENCH-5's scale results in BENCHMARKS.md are marked 'PARTIALLY CONFIRMED (analytical)' / 'analytical estimates, not measured values' because the live Db2 Fyre server was offline during BENCH-5. This story runs scripts/run_benchmarks.py --suite retrieval with --extra-turns-per-session small/medium/large and --judge ollama:llama3.1:8b, replacing the analytical prediction table with measured numbers and an honest confirmed/partially-confirmed/refuted verdict. Requires a live Db2 instance and local Ollama with llama3.1:8b pulled.\n\n**Status: Abandoned** — EPIC-13's BM-2 deletes scripts/run_benchmarks.py, benchmarks/common/llm_judge.py, and benchmarks/retrieval_quality/dataset.py. This story depends on all three. The scale measurement will be done properly under EPIC-16 (BM-18/BM-19) using the real LongMemEval dataset with deterministic IR metrics (Recall@k, MRR, nDCG@k) at the appropriate corpus sizes seeded by BM-4 (EPIC-13). Running the old harness now to produce numbers against a synthetic dataset that is about to be retired would produce results with a short shelf-life and add no lasting value. Abandoned in favour of EPIC-16.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Explicitly abandoned to unblock EPIC-13 BM-2. Scale measurement is subsumed by EPIC-16 on the real LongMemEval dataset with deterministic metrics. Abandonment recorded per the cross-epic gate in BM-2's story description."
+    }
+  ]
+}

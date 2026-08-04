@@ -1,0 +1,14 @@
+{
+  "id": "BM-4",
+  "epic_id": "EPIC-13",
+  "title": "Deterministic corpus seeding at 1k / 50k / 500k",
+  "summary": "benchmarks/seed_corpus.py — seeded, resumable, size-parametrized corpus generation with a metadata-cardinality knob so filter selectivity is controllable, feeding every downstream perf/scale/Db2-depth story.",
+  "status": "Done",
+  "description": "Write `benchmarks/seed_corpus.py`: size-parametrized (1k / 50k / 500k rows per scope), seeded for reproducibility, resumable after interruption, with controlled metadata cardinality (so filter selectivity becomes a knob for BM-23) and a content-length distribution spanning `chunk_threshold` (so seeded corpora naturally exercise both chunked and unchunked records for BM-8/BM-9), plus multi-tenant/agent/user/thread fan-out for the isolation and scale scenarios in EPIC-15. Uses the retained `hashing` embedding provider by default — deterministic, offline, no model download, which is what makes CI-tier seeding viable at all. Extends the existing `common/scope_gen.py` rather than reimplementing scope generation.\n\nAcceptance: 1k rows seed in <30s and 50k in <5min on a GHA runner (measured, not estimated); an identical seed value produces a byte-identical corpus across two runs; interrupting mid-seed and re-running resumes rather than restarting; a documented `--purge` path removes a seeded corpus cleanly. This is the fixture every story in EPIC-14, EPIC-15, and EPIC-18 depends on. Depends on BM-3.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "benchmarks/seed_corpus.py created: CLI with --size 1k/50k/500k, --seed, --purge, --cardinality-category/topic. JSON checkpoint-based resumability every 500 rows. Deterministic per-row RNG. Bimodal content-length distribution covering chunk_threshold. 5-tenant x 4-agent x 10-user x 8-thread fan-out via make_scope()."
+    }
+  ]
+}

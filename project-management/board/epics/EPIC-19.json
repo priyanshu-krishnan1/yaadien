@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-19",
+  "title": "Reporting, baselines & publication",
+  "description": "The closing epic: turn every prior epic's output into a single trustworthy report and a committed regression policy. BM-26 rewrites BENCHMARKS.md around the new methodology, explicitly preserving Runs A-D (EPIC-6) and any BRUN-1..4 entries (EPIC-12) as historical record with a note that they used the synthetic dataset and, for Run A, a confounded judge — history is preserved, not overwritten, matching this project's existing discipline of never silently replacing a recorded run. BM-27 commits baselines and the per-tier alert/fail-threshold policy that EPIC-17's gates actually enforce, and updates the board's own story template to require a benchmark check on future perf-sensitive work. Depends on EPIC-16 (BM-18/BM-19, for the real-dataset comparison section) and EPIC-17 (BM-20/BM-21, for the thresholds BM-27 documents).",
+  "comments": []
+}

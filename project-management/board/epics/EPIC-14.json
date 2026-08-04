@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-14",
+  "title": "Single-operation performance coverage",
+  "description": "Phase 4 of BENCHMARK_STRATEGY.md built a capability-by-capability gap matrix across the SDK's write path (A1-A12), read path (B1-B14), and adapters (G1-G4), marking each P0/P1/P2 and noting what benchmark support exists today versus what's missing. This epic is that matrix turned into benchmark code: Tier-0 no-database micro-benchmarks on the SQL-building hot paths (BM-7), the full write path including dedup/chunking/ingest-resolution round-trip deltas (BM-8), the full read path including corpus-size and search-mode sweeps (BM-9), lifecycle/governance bulk operations with peak-RSS measurement (BM-10), and adapter overhead versus direct SDK calls (BM-11). Every P0 row in the gap matrix must have a corresponding benchmark by the end of this epic — that is the acceptance bar the strategy doc sets for a functioning Tier 1 CI gate in EPIC-17. Depends on EPIC-13 (BM-4's seeded corpora and BM-5's round-trip counter are required fixtures for every story here).",
+  "comments": []
+}

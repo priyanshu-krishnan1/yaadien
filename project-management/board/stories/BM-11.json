@@ -1,0 +1,14 @@
+{
+  "id": "BM-11",
+  "epic_id": "EPIC-14",
+  "title": "Adapter overhead benchmarks (G1-G4)",
+  "summary": "Measure each of the 4 adapters' overhead against the equivalent direct SDK call — LangChain, OpenAI Agents Db2Session, MCP tool round-trip, MS Agent Framework provider.",
+  "status": "Done",
+  "description": "Benchmark each adapter against the equivalent direct `MemoryStore` call it wraps: LangChain's `Db2ChatMessageHistory`/`Db2MemoryStore` (G1), OpenAI Agents' `Db2Session` (G2), the MCP server's 4 tools including protocol framing overhead (G3), and the MS Agent Framework's `before_run`/`after_run` hooks (G4). Benchmarks must skip cleanly when the adapter's optional extra isn't installed, matching the existing test-suite convention for these same adapters.\n\nAcceptance: a delta-latency-versus-direct-SDK number exists per adapter; MCP payload size is recorded separately from latency, since framing overhead and DB latency are different problems with different fixes. Depends on BM-3 (does not need the larger seeded corpora BM-4 produces — adapter overhead is measured at small, fixed scale).",
+  "comments": [
+    {
+      "date": "2026-08-06",
+      "text": "benchmarks/adapters/ created: 4 test files (test_langchain_adapter.py/G1, test_openai_agents_adapter.py/G2, test_mcp_adapter.py/G3, test_agent_framework_adapter.py/G4). Each file skips cleanly when adapter optional dependency is not installed (pytest.importorskip). MCP payload size recorded in benchmark.extra_info['payload_size_bytes'] separately from latency. Each adapter has paired adapter-vs-direct benchmark tests so delta-latency is computable from benchmark report output."
+    }
+  ]
+}

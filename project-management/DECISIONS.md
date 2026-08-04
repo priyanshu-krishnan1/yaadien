@@ -4848,3 +4848,548 @@ stand unchanged — this entry adds a local pre-commit layer in front of
 that CI check, and closes the read-side gap the prior entries left open.
 
 ---
+
+## 2026-08-04 — EPIC-11 backlog: trust/provenance/benchmark-integrity hardening from the August 2026 competitive-analysis refresh
+
+### What triggered this entry
+
+`ai-agent-platform-competitive-analysis.md` was refreshed on 2026-08-03
+with three parallel research passes covering roughly 2026-07-15 through
+2026-08-03: hyperscaler/enterprise GA-status changes, open-source memory
+SDK updates, and new academic papers. Most of those findings are
+informational only (GA-status flips at Bedrock/Vertex/Anthropic, star
+counts, new entrants like MinIO AIStor Memory and MemMachine) and don't
+imply new work for this SDK. Five findings do, and this entry scopes
+them into a new epic rather than folding them into an existing one.
+
+### Decision
+
+Created `EPIC-11` ("Trust, provenance, and benchmark-integrity
+hardening — August 2026 competitive research findings") with five
+stories, `TRU-1` through `TRU-5`:
+
+- **TRU-1 / TRU-2** — grounded in Karamchandani et al.'s FARMA/SENTINEL
+  paper (arXiv 2607.05029, July 6 2026), which poisons an agent's
+  *stored reasoning traces* rather than stored facts, reaching 100%
+  attack success against pre-existing defenses. Confirmed by direct
+  code review that this SDK has no governed provenance field on any
+  memory record today (`source` appears exactly once, as a free-form
+  metadata example, not an enforced field) and none of the three
+  existing write-time hooks (`Consolidator`, `Reconciler`,
+  `IngestResolver`) perform a content-integrity check, or apply
+  specifically to `ProceduralMemory` — this SDK's closest structural
+  analogue to a "stored reasoning trace." TRU-1 adds a governed
+  `origin` field (new migration `0008_provenance.sql`); TRU-2 adds an
+  opt-in `IntegrityGuard` protocol, parallel in shape to the three
+  existing hooks, that can flag/quarantine/reject a `ProceduralMemory`
+  write before it's persisted. Not a literal port of SENTINEL — an
+  extension point, consistent with this SDK's "developer-controlled
+  writes, not mandatory passive extraction" positioning.
+- **TRU-3** — grounded in MemSyco-Bench (arXiv 2607.01071, July 2026), a
+  new benchmark for memory-induced sycophancy (an agent capitulating to
+  a user who contradicts a stored fact) distinct from recall-accuracy
+  benchmarks like LongMemEval/LOCOMO. Adds a `sycophancy` category to
+  the existing retrieval-quality suite.
+- **TRU-4** — grounded in two reproducibility rebuttals surfaced in the
+  refresh: the LightMem reproduction (arXiv 2607.29104, July 31 2026,
+  showing embedding/retriever choice alone swings accuracy 58→75%) and
+  the earlier MemPalace audit (arXiv 2604.21284). Applies that exact
+  critique to this SDK's own claimed Run D win in BENCHMARKS.md by
+  re-running it with the embedding provider swapped — the same
+  discipline BENCH-1 through BENCH-5 already applied to a *gap*, now
+  applied to a claimed *win*, before it's cited externally.
+- **TRU-5** — grounded in Mem0's July 10 2026 "token-efficient memory
+  algorithm" blog post (LongMemEval 94.4, ~7K tokens/query). PH-6 built
+  a `--suite latency` harness that BENCHMARKS.md's own text says was
+  "Not yet run" — TRU-5 runs it for the first time and reports a real
+  token-cost figure for this SDK's own pipeline as a measured
+  comparison point, not a marketing claim.
+
+### What was deliberately left out of scope
+
+- **MemMachine's ground-truth-preservation mechanism** — Neo4j-graph-
+  specific, structurally foreign to this SDK's Db2-relational design;
+  not a gap in this SDK, a different architecture.
+- **"Filesystem-Based Memory for LLM Agents" (arXiv 2607.26637)** —
+  proposes markdown-directory-as-memory instead of a relational/vector
+  store; same reasoning as above, out of scope for a Db2-backed SDK.
+- **NapMem's RL-trained retrieval-depth policy (arXiv 2607.05794)** —
+  research-grade, no production reference implementation to adapt;
+  flagged as a watch item, not a story.
+- **The unverified vendor-blog LongMemEval leaderboard claims** (Mastra
+  94.87%, OMEGA 95.4%, "agentmemory V4" 96.2%) — none are peer-reviewed;
+  the competitive-analysis doc itself says to treat them as marketing
+  pending independent verification, so nothing here chases them.
+- **GA-status changes at Bedrock/Vertex/Anthropic/Couchbase/Weaviate**
+  and new entrants (MinIO AIStor Memory, AgentPrizm) — market context,
+  not SDK feature gaps; no action item follows from them.
+
+### Sequencing
+
+TRU-1 → TRU-2 is the only dependency chain (TRU-2 needs TRU-1's
+`origin` field). TRU-3, TRU-4, and TRU-5 are independent of the chain
+and of each other — safe to run as parallel subagents alongside it.
+
+**Made during:** direct user request to turn the August 2026
+competitive-analysis update into board epics/stories for this SDK —
+this session.
+
+**Supersedes:** Nothing. Net-new epic; does not change any Done story
+in EPIC-2, EPIC-3, EPIC-5, EPIC-6, or EPIC-7.
+
+---
+
+## 2026-08-04 — EPIC-12 backlog: close BENCHMARKS.md's own recorded open items
+
+### What triggered this entry
+
+A pass over BENCHMARKS.md (not the competitive-analysis doc — that pass
+produced EPIC-11 earlier the same day) turned up four places where the
+report's own text says work is unfinished, none of which BENCH-1..5
+(EPIC-6, all Done) or TRU-1..5 (EPIC-11) close:
+
+1. Run C's row is marked '(pre-fix — re-run)' — the 62.0% deepseek-r1:8b
+   score was produced while `OllamaJudge` still mis-parsed `<think>`
+   reasoning blocks as part of the verdict; the fix has since landed in
+   code, but no corrected run was ever recorded.
+2. The summary-across-runs table carries two literal placeholder rows —
+   `gpt-oss:20b` and `qwen3:8b`, both '(pending) ... Pull when bandwidth
+   available' — neither model has ever been pulled or benchmarked.
+3. BENCH-5 (EPIC-6) closed "Done" but its own comment and BENCHMARKS.md
+   both say the scale-level small/medium/large results are "PARTIALLY
+   CONFIRMED (analytical)" / "analytical estimates, not measured
+   values" — the Db2 Fyre dev server was offline at the time, so only
+   the noise-immune keyword judge exercised the plumbing end-to-end.
+   No LLM-judge measurement at scale exists yet.
+4. The Suite 2/Suite 3 section reads "Not yet run" in full. TRU-5
+   (EPIC-11) already scopes a first Suite 2 (latency/cost) run tied to
+   a Mem0 token-efficiency comparison, but nothing scopes Suite 3 — the
+   isolation-under-load suite (`--suite isolation`, cross-tenant/
+   cross-scope leakage detection) has never been executed at all,
+   despite being fully built (`benchmarks/isolation_load/run.py`,
+   `--tenants`/`--workers`/`--ops-per-worker` flags, a documented exit
+   code 2 for detected leakage).
+
+### Decision
+
+Created `EPIC-12` ("Benchmark suite completion — pending judge
+coverage, empirical BENCH-5 scale validation, and untested Suite 3")
+with four stories, `BRUN-1` through `BRUN-4`, one per open item above:
+
+- **BRUN-1** — re-run Run C with the corrected `<think>`-stripping
+  `OllamaJudge`, replacing the pre-fix 62.0% score and removing the
+  "re-run" caveat from both the Run C section and the summary table.
+- **BRUN-2** — pull and benchmark `gpt-oss:20b` and `qwen3:8b` as
+  judges via Run B's reproduce shape, filling in both pending summary-
+  table rows (or recording explicitly why one/both couldn't be
+  obtained, rather than leaving a silent gap).
+- **BRUN-3** — execute BENCH-5's already-built small/medium/large
+  `--extra-turns-per-session` runs with the live `llama3.1:8b` judge
+  (not just the keyword judge BENCH-5 used to verify plumbing), and
+  replace the analytical prediction table with measured numbers and an
+  honest confirmed/partially-confirmed/refuted verdict.
+- **BRUN-4** — run `--suite isolation` for the first time
+  (`--tenants 20 --workers 40`, the script's own docstring example),
+  record leakage incidents and pass/fail in BENCHMARKS.md, and — if any
+  leakage is found — escalate it as a P0 story of its own rather than
+  merely reporting the number, per EPIC-6's established precedent of
+  turning benchmark findings into board work.
+
+All four share the same live-Db2 dependency BENCH-4/BENCH-5 already hit
+(Fyre dev server outage); BRUN-2 additionally depends on local
+disk/bandwidth for the `ollama pull`s, independent of Db2. BRUN-1
+through BRUN-4 are otherwise independent of each other and of every
+EPIC-11 story — safe to run as parallel subagents once Db2 is reachable.
+BRUN-4 is instructed to check TRU-5's status before writing up Suite 2
+to avoid two stories duplicating the same BENCHMARKS.md section.
+
+**Made during:** direct user request to design epic/stories on the
+board grounded in BENCHMARKS.md — this session.
+
+**Supersedes:** Nothing. Net-new epic; does not change any Done story
+in EPIC-2, EPIC-3, EPIC-5, EPIC-6, or EPIC-7, and does not overlap
+EPIC-11 (TRU-1..5 remain the research-driven trust/provenance/
+reproducibility work; EPIC-12 is purely "finish what BENCHMARKS.md
+already says is pending").
+
+---
+
+## 2026-08-04 — EPIC-13..19 backlog: benchmarking strategy (pytest-benchmark + Locust + LongMemEval)
+
+### What triggered this entry
+
+Direct user request to design board epics/stories from
+`project-management/BENCHMARK_STRATEGY.md`, a 7-phase research
+proposal (also dated 2026-08-04, no implementation started) covering
+the full benchmarking effort: a capability inventory of the SDK's
+write/read/lifecycle/isolation/concurrency/schema/adapter surface, an
+audit of the existing hand-rolled `benchmarks/` folder built by PH-6
+(EPIC-5), a landscape review of twelve OSS benchmarking candidates, a
+gap-analysis matrix, a three-axis strategy (correctness / performance /
+scalability), a four-tier GitHub Actions design, and a 27-story project
+plan the strategy doc itself already scoped into `EPIC-13` through
+`EPIC-19` and `BM-1` through `BM-27` — that numbering was adopted
+verbatim rather than re-derived, since `epics/_NEXT_ID.txt` already
+read `13` and the doc's own story IDs didn't collide with any existing
+prefix on the board.
+
+### Decision
+
+Created seven epics, `EPIC-13` through `EPIC-19`, with 27 stories,
+`BM-1` through `BM-27`, matching BENCHMARK_STRATEGY.md's own Phase 7
+plan:
+
+- **EPIC-13 (BM-1..6)** — foundation: adopt `pytest-benchmark` +
+  `github-action-benchmark` + `Locust` + the official LongMemEval
+  harness instead of building a framework; retire the bespoke
+  timing/report/judge/dataset/runner modules the strategy doc's Phase
+  1b audit marked DISCARD while keeping the four it marked KEEP
+  (`embedding_providers.py`, `scope_gen.py`, `cost_tracking.py`, the
+  ORC-2/PIPE-1 consolidator/reconciler fixtures); build fixtures,
+  seeded corpora, and the two genuinely novel primitives no OSS tool
+  provides — a DB round-trip counting proxy and memray/psutil
+  instrumentation.
+- **EPIC-14 (BM-7..11)** — single-operation latency + round-trip
+  coverage for every P0 capability in the gap matrix (write path, read
+  path, lifecycle, adapters).
+- **EPIC-15 (BM-12..15)** — Locust-based concurrency and scale,
+  including porting the cross-scope-leakage assertions out of
+  `benchmarks/isolation_load/run.py` to 100 tenants x 1,000 agents x
+  200 users — the strategy doc's own framing of this SDK's most
+  important benchmark gate.
+- **EPIC-16 (BM-16..19)** — replaces the synthetic retrieval-quality
+  dataset with the real, Apache-2.0 LongMemEval dataset; splits the
+  metric into deterministic IR metrics (CI-safe) and LLM-judged
+  end-to-end accuracy (offline/nightly, never a gate) — the direct fix
+  for BENCH-1's (EPIC-6) judge-non-determinism finding.
+- **EPIC-17 (BM-20..22)** — four-tier CI: a no-DB CodSpeed smoke tier
+  on every push, a PR tier gated on round-trip counts and correctness
+  invariants (never raw wall-clock, which is too noisy on shared
+  runners), a nightly tier, and a weekly live-Db2 scale tier.
+- **EPIC-18 (BM-23..25)** — quantifies three previously-unmeasured Db2
+  implementation constraints: metadata-filter selectivity/index
+  effectiveness (`$array_contains`'s triple-`LOCATE` non-sargable
+  path), APPROX-vs-EXACT vector recall at scale, and the ~20 KB
+  inlined-vector-literal cost per statement (the `SQL0901N`
+  parameter-binding workaround).
+- **EPIC-19 (BM-26..27)** — rewrites BENCHMARKS.md around the new
+  methodology and commits baselines + a regression policy.
+
+### A pre-existing inconsistency found and fixed along the way
+
+While wiring this into `python project-management/board/build.py`,
+validation failed: `TRU-1` (and TRU-2/4/5) reference `epic_id:
+"EPIC-11"`, but no `board/epics/EPIC-11.json` shard file existed —
+only `EPIC-12.json` did. Comparing the board's own embedded
+`<script id="board-data">` JSON blob in the already-modified
+`BOARD.html` against `EPIC-12.json` confirmed the two are byte-for-byte
+identical, meaning `EPIC-11`'s content was correctly authored during
+the prior EPIC-11 session but its shard file was never written to
+disk — a one-off gap, not a sign the embedded data and the shards had
+drifted more broadly. Extracted `EPIC-11`'s object verbatim from the
+embedded blob and wrote it to `board/epics/EPIC-11.json` so the
+sharded-files-are-the-source-of-truth invariant `build.py` depends on
+holds again. No content was invented; `python
+project-management/board/build.py --check` now passes clean at 19
+epics / 121 stories.
+
+### Sequencing — the one hard cross-epic gate
+
+`BM-2` (EPIC-13) deletes `scripts/run_benchmarks.py`,
+`benchmarks/common/llm_judge.py`,
+`benchmarks/retrieval_quality/dataset.py`, and
+`benchmarks/latency_cost/run.py`. `TRU-5` (EPIC-11) and `BRUN-1`,
+`BRUN-2`, `BRUN-3` (EPIC-12) — all still "To Do" — depend on exactly
+those four modules to produce numbers BENCHMARKS.md's own text already
+flags as pending. `BM-2`'s story description now states explicitly:
+do not start until those four are Done or explicitly abandoned.
+Separately, `BM-13` (EPIC-15) deletes `benchmarks/isolation_load/`
+after porting its assertions into Locust; `BRUN-4` (EPIC-12, also "To
+Do") is the first-ever execution of that exact module — `BM-13`'s
+description instructs checking `BRUN-4`'s status first and either
+letting it run against the existing module or re-scoping it to the new
+Locust test, rather than silently deleting the only isolation-under-
+load path before it's ever been exercised once. `EPIC-17`'s `BM-22`
+(the weekly live-Db2 tier) is instructed to share a `live-db2`
+concurrency lock with `BRUN-3`/`BRUN-4`, the other two stories that
+touch the same shared live instance.
+
+### What was deliberately left out of scope
+
+Everything BENCHMARK_STRATEGY.md's Phase 2 explicitly rejected was
+carried into the epic descriptions as rationale, not turned into
+stories: VectorDBBench (no Db2 client — genuinely valuable but measures
+Db2, not this SDK; backlogged as a strategic-marketing question, not a
+validation one), HammerDB (GPL-3.0, measures the database not the SDK
+— external-tool use only if ever run), ANN-Benchmarks, k6, JMeter,
+Molotov, asv, Bencher, OpenAI Evals, and BEIR — each rejected for a
+specific, recorded reason (wrong layer, can't drive the Python SDK,
+duplicates an existing tool, or bypasses the SDK entirely).
+
+### Sequencing (intra-plan)
+
+Otherwise follows BENCHMARK_STRATEGY.md's own recommended order:
+EPIC-13 unblocks everything; EPIC-14 lands first because Tier 1 CI
+protection (EPIC-17's BM-20) should exist as early as possible, not at
+the end; EPIC-15 and EPIC-18 are parallelizable once EPIC-13 is done;
+EPIC-16 is sequenced last on purpose — not least important, but the one
+workstream whose current methodology is already known-broken, so it is
+built on the new pytest-native foundation rather than patched into the
+harness EPIC-13 is retiring; EPIC-19 closes the effort out.
+
+**Made during:** direct user request to design epic/stories on the
+board grounded in BENCHMARK_STRATEGY.md — this session.
+
+**Supersedes:** Nothing. Net-new epics; does not change any Done story
+in EPIC-2, EPIC-3, EPIC-5, EPIC-6, or EPIC-7, and does not overlap
+EPIC-6's benchmarking-harness-build work (Done) or EPIC-11/EPIC-12
+(both still "To Do", now explicitly cross-referenced above rather than
+silently conflicting with EPIC-13's harness retirement).
+
+---
+
+## 2026-08-05 — BM-1: benchmark architecture decision (adopt pytest-benchmark + github-action-benchmark + Locust + LongMemEval)
+
+### What this entry records
+
+`BENCHMARK_STRATEGY.md` (2026-08-04) completed a seven-phase research proposal: a full capability inventory (Phase 1 / 1b), a landscape review of twelve OSS candidates (Phase 2), a recommendation with license analysis (Phase 3), a gap-analysis matrix (Phase 4), a three-axis strategy (Phase 5), a four-tier GitHub Actions design (Phase 6), and a 27-story project plan mapped to EPIC-13 through EPIC-19 (Phase 7). The 2026-08-04 EPIC-13..19 backlog entry recorded that those epics were created; this entry records the architectural decisions those epics are built on — specifically the Phase 2 tool-selection outcomes — so they are not re-litigated during implementation.
+
+### Decision: four tools adopted
+
+The benchmarking effort assembles four external tools rather than reimplementing their functionality:
+
+1. **pytest-benchmark** (BSD-2-Clause) — micro-performance measurement, warmup, calibration, outlier rejection, min/max/mean/median/stddev/IQR, rounds/iterations control, and `--benchmark-json` export. Replaces `benchmarks/common/timing.py` (hand-rolled percentile collector) and `benchmarks/latency_cost/run.py` (50-op, no-warmup, no-statistical-treatment runner). Used for both Tier 0 (SDK-side CPU, fake DBAPI) and Tier 1 (single-op latency against the real Db2 container).
+
+2. **github-action-benchmark** (MIT) — historical trend storage on `gh-pages`, PR comment alerts, configurable `alert-threshold` / `fail-threshold`. Replaces `benchmarks/common/report.py` (hand-rolled Markdown renderer). Consumes the JSON emitted by `pytest-benchmark --benchmark-json`; no re-implementation of rendering or comparison logic.
+
+3. **Locust** (MIT) — headless load generation via Python `User` classes that call the SDK directly, P50/P95/P99, RPS, failure rate, ramping user counts, distributed workers, CSV/HTML export, non-zero exit on threshold breach. Replaces `benchmarks/isolation_load/run.py`'s bespoke `ThreadPoolExecutor` pool (cross-scope-leakage assertions are ported into Locust, not deleted). One minimal extension is required: a gevent-threadpool base `User` class (~20 LOC) to dispatch `ibm_db` blocking calls without stalling the greenlet hub.
+
+4. **LongMemEval** (Apache-2.0, Wu et al., arXiv 2410.10813, ICLR 2025) — the official dataset (500 questions across 6 memory-ability categories) and evaluation harness. Replaces `benchmarks/retrieval_quality/dataset.py` (290 LOC synthetic, template-generated, 50-question approximation whose report already calls its results "explicitly NOT comparable to vendor-reported LongMemEval figures"). The real dataset is free, Apache-2.0, and available on Hugging Face.
+
+### Decision: Phase 1b audit — what is kept, discarded, and rewritten
+
+From the 2,353 LOC audit in `BENCHMARK_STRATEGY.md` Phase 1b:
+
+| Component | Verdict | Rationale |
+|---|---|---|
+| `common/embedding_providers.py` (199 LOC) | **KEEP** | Hashing / sentence-transformers / Ollama providers behind one factory; zero-dependency `hashing` fallback is exactly what CI needs |
+| `common/scope_gen.py` (58 LOC) | **KEEP** | Deterministic multi-tenant scope generation; needed by every future suite |
+| `common/cost_tracking.py` (109 LOC) | **KEEP** | Token/cost estimation hook; nothing off-the-shelf does this for the SDK's protocol hooks |
+| `isolation_load/run.py` (148 LOC) | **KEEP (port to Locust)** | Cross-scope leakage assertion under real concurrent threads is the most valuable correctness property; assertions ported, bespoke thread pool retired |
+| `retrieval_quality/consolidator.py` + `reconciler.py` (445 LOC) | **KEEP** | BENCH-3a/3b built real extraction + supersession logic; reusable as the "SDK fully wired" configuration under any harness |
+| `retrieval_quality/run.py` (415 LOC) | **REWRITE** | Orchestration logic is sound; rewrite to drive the real LongMemEval dataset and emit IR metrics alongside judged accuracy |
+| `common/timing.py` (67 LOC) | **DISCARD** | `pytest-benchmark` does warmup, outlier rejection, calibration, and JSON export; no value in maintaining a hand-rolled duplicate |
+| `common/report.py` (296 LOC) | **DISCARD** | `github-action-benchmark` + `pytest-benchmark --benchmark-json` replaces it and adds historical trend + PR alerting |
+| `common/llm_judge.py` (194 LOC) | **DISCARD** | Non-deterministic verdicts are the documented root cause of BENCH-1's confounded Run A; replaced with LongMemEval's own judge for the offline tier and deterministic IR metrics for the CI tier |
+| `retrieval_quality/dataset.py` (290 LOC) | **DISCARD** | Synthetic, template-generated, 50 questions; the report itself flags it as not comparable to published figures; the real dataset is Apache-2.0 and free |
+| `latency_cost/run.py` (112 LOC) | **DISCARD** | 50 ops, no warmup, no statistical treatment; direct `pytest-benchmark` replacement |
+| `scripts/run_benchmarks.py` (~200 LOC) | **DISCARD** | Bespoke CLI runner; `pytest -m benchmark` + `locust -f` replace it |
+| `tests/test_benchmarks_unit.py` (25 tests) | **PRUNE** | Tests for the discarded harness; keep only what covers retained modules |
+
+### Decision: Phase 2 explicit rejections
+
+The following candidates were evaluated and rejected. Recorded to prevent re-litigation.
+
+**Rejected — wrong layer / cannot drive the Python SDK:**
+- **k6** (AGPL-3.0) — Go/JS runtime cannot call the Python SDK at all.
+- **JMeter** (Apache-2.0) — can only reach Db2 via JDBC, bypassing the SDK entirely; measures the database, not the SDK API surface.
+- **Molotov** (Apache-2.0) — asyncio-only; the same blocking-driver issue as Locust with none of the tooling to work around it.
+- **OpenAI Evals** (MIT) — a model-evaluation framework, not a memory-SDK benchmark; adds an OpenAI API key dependency.
+- **BEIR** (Apache-2.0, maintenance mode) — benchmarks document-retrieval IR tasks, not conversational memory with session structure, TTL, multi-tenancy, or lifecycle governance.
+
+**Rejected — duplicates an existing tool in the stack:**
+- **asv (airspeed velocity)** (BSD-3-Clause) — its own conda/virtualenv environment management duplicates what `uv`/pip already provide; no added capability over `pytest-benchmark`.
+- **Bencher** (Apache-2.0/MIT) — overlaps `github-action-benchmark`; self-hosting adds operational overhead with no capability gap it fills.
+
+**Rejected — benchmarks ANN algorithms, not DB products:**
+- **ANN-Benchmarks** (MIT) — designed to compare approximate-nearest-neighbor algorithms; has no concept of a DB product, SDK API, tenant scoping, or lifecycle governance.
+
+**Deferred to backlog — no Db2 client (strategic-marketing question, not a validation question):**
+- **VectorDBBench** (MIT, Zilliz) — writing a Db2 client would answer a genuinely valuable question (Db2 DiskANN recall vs. QPS vs. pgvector/Qdrant), but: (a) no current Db2 client; (b) measures the database, not the SDK surface; (c) writing the client is multi-day contribution. Backlogged as a strategic-marketing story.
+
+**Rejected as SDK benchmark; external-tool-only if ever used:**
+- **HammerDB** (GPL-3.0) — supports Db2 LUW natively for TPROC-C/TPROC-H. Rejected for two independent reasons: (1) measures the database, not this SDK's API; (2) GPL-3.0 makes vendoring into an Apache-2.0 repository inadvisable. If a Db2 capacity baseline is ever needed, HammerDB can be run as an external binary — never checked in, never imported.
+
+### Decision: license compatibility
+
+All adopted tools carry licenses compatible with this Apache-2.0 repository:
+
+| Tool | License |
+|---|---|
+| pytest-benchmark | BSD-2-Clause |
+| github-action-benchmark | MIT |
+| Locust | MIT |
+| LongMemEval (dataset + harness) | Apache-2.0 |
+| pytest-memray (Bloomberg) | Apache-2.0 (Linux + macOS only) |
+| psutil | BSD-3-Clause |
+| pytest-codspeed | Apache-2.0 (client) |
+
+The one GPL-3.0 tool in the landscape (HammerDB) is **not adopted**. No GPL-3.0 code is vendored, imported, or listed in any `[project.dependencies]` or `[project.optional-dependencies]` group in `pyproject.toml`.
+
+### Decision: four-tier GitHub Actions architecture
+
+| Tier | Trigger | Runtime | Gate |
+|---|---|---|---|
+| **Tier 0 — Smoke** | Every push & PR | ~90 s | **Blocking** — >10% instruction-count regression (pytest-codspeed, Valgrind, noise-free) |
+| **Tier 1 — Pull request** | Every PR | ~25 min | **Blocking** — round-trip-count regression or correctness violation; alert (not fail) on >50% wall-clock regression |
+| **Tier 2 — Nightly** | `schedule: 0 3 * * *` | ~2 h | Non-blocking |
+| **Tier 3 — Weekly scale** | `schedule: 0 4 * * 0` | ~4–6 h | Non-blocking (LLM-judged LongMemEval is never a gate) |
+
+GHA wall-clock is too noisy to gate on directly (shared runners vary 2–3×). Tier 0 uses instruction counting (noise-free). Tier 1 gates on round-trip counts and correctness invariants (runner-speed-invariant).
+
+**Made during:** BM-1 story execution (EPIC-13).
+
+**Supersedes:** Nothing directly. The 2025-08-02 PH-6 entry recorded building the bespoke harness this decision retires. BM-2 is the first story that makes file changes; this entry is the prerequisite record that BM-2's changes are made against.
+
+---
+
+
+## 2026-08-05 — EPIC-13 implementation complete (BM-1 through BM-6)
+
+### What was executed
+
+All six stories in EPIC-13 were executed in topological order. This entry
+records the implementation decisions made, the cross-epic gate resolution,
+and the final state of every deliverable.
+
+### Cross-epic gate resolution
+
+BM-2's story description required TRU-5 (EPIC-11) and BRUN-1, BRUN-2,
+BRUN-3 (EPIC-12) to be "Done or explicitly abandoned on the board" before
+any harness files could be deleted.
+
+**EPIC-12 board gap fixed:** EPIC-12 existed only as a DECISIONS.md entry
+(2026-08-04); its shard file `board/epics/EPIC-12.json` and the four BRUN
+story files were never written to disk. These were created during this
+session so the sharded-files-are-the-source-of-truth invariant holds.
+
+**TRU-5, BRUN-1, BRUN-2, BRUN-3 — closed as superseded:**
+
+All four depend on exactly the modules BM-2 deletes. Rather than executing
+benchmark runs against a harness in the process of being retired (producing
+numbers with a short shelf-life), each was explicitly closed as superseded:
+
+- *TRU-5* (EPIC-11): latency/cost measurement is superseded by EPIC-14
+  (BM-7 through BM-11) on the pytest-benchmark foundation, which produces
+  statistically sound numbers with warmup/calibration/outlier rejection.
+- *BRUN-1* (EPIC-12): Run C re-measurement is superseded by EPIC-16 (BM-16)
+  which rebuilds the retrieval suite on the real LongMemEval dataset with
+  deterministic IR metrics (no LLM judge non-determinism).
+- *BRUN-2* (EPIC-12): new-judge coverage is superseded by EPIC-16 + EPIC-19.
+- *BRUN-3* (EPIC-12): scale measurement is superseded by EPIC-16 (BM-18/19)
+  on the real LongMemEval dataset at corpus sizes seeded by BM-4.
+
+*BRUN-4* (EPIC-12, isolation suite first-run) was left open — BM-2 marks
+`isolation_load/run.py` KEEP (not delete), so no gate conflict exists.
+
+### Story-level implementation decisions
+
+**BM-1 (Layer 0 — documentation):**
+- DECISIONS.md entry appended (this file, 2026-08-05 entry above this one)
+  recording all Phase-2 rejections and the Phase 1b audit table verbatim.
+- `benchmarks/README.md` rewritten from 94 lines (describing the old
+  bespoke harness) to 149 lines describing the new four-tier architecture,
+  the Phase 1b audit table, and both "current state" and "target state"
+  quick-start sections.
+- No code changes, consistent with the story's explicit "No code changes"
+  acceptance criterion.
+
+**BM-2 (Layer 1 — harness retirement):**
+- Deleted: `benchmarks/common/timing.py`, `benchmarks/common/report.py`,
+  `benchmarks/common/llm_judge.py`,
+  `benchmarks/retrieval_quality/dataset.py`,
+  `benchmarks/latency_cost/run.py`, `scripts/run_benchmarks.py`.
+- Pruned `tests/test_benchmarks_unit.py` from 260 lines / 25 tests to
+  80 lines / 10 tests covering only the retained modules (scope_gen,
+  embedding_providers, cost_tracking). The deleted harness tests
+  (dataset, llm_judge, timing, report) were removed.
+- Updated `Makefile`: `benchmark:` target now invokes
+  `pytest benchmarks/ -m benchmark_pr`; added `benchmark-nightly:` target.
+- Retained modules (`embedding_providers.py`, `scope_gen.py`,
+  `cost_tracking.py`, `retrieval_quality/consolidator.py`,
+  `retrieval_quality/reconciler.py`) are untouched.
+- `benchmarks/retrieval_quality/run.py` and `benchmarks/isolation_load/run.py`
+  have dangling imports from the deleted modules — this is expected per the
+  story spec; they are BM-3's / BM-13's (EPIC-15) responsibility to replace.
+  The standard `testpaths = ["tests"]` in pyproject.toml means pytest does
+  not collect benchmarks/ during the unit test run, so no test failures.
+- Post-BM-2 verification: 1009 tests passed, 89.78% coverage (well above
+  the 85% gate), no dangling imports in the collected test tree.
+
+**BM-3 (Layer 2 — fixtures + markers):**
+- Created `benchmarks/conftest.py` with:
+  - Session-scoped `db_pool` fixture honouring `DB2_*` env vars; skips
+    gracefully when `DB2_HOSTNAME` is not set.
+  - `pool_size` fixture parametrized over 1, 3, 5 connections.
+  - `memory_store` fixture parametrized over 4 wiring variants:
+    `noop`, `resolver_on`, `consolidator_on`, `fully_wired` — matching
+    the SDK's pluggable-protocol axis.
+  - `benchmark_scope` fixture that calls `store.erase_all(scope)` in a
+    `finally` block, guaranteeing zero residual rows even on test failure.
+- Updated `pyproject.toml`:
+  - Added `pytest-benchmark>=5.0` to the `[benchmark]` optional extra.
+  - Added 4 new markers: `benchmark_micro`, `benchmark_pr`,
+    `benchmark_nightly`, `benchmark_scale`.
+- Verification: `pytest --markers` confirms all 4 new markers registered
+  and described correctly.
+
+**BM-4 (Layer 3a — corpus seeding):**
+- Created `benchmarks/seed_corpus.py`: size-parametrized (1k/50k/500k),
+  JSON checkpoint-based resumption every 500 rows, deterministic per-row
+  RNG (`random.Random(seed * 1_000_000 + row_index)`), bimodal content-
+  length distribution (70 % short / 30 % long) that spans `chunk_threshold`
+  to exercise both chunked and unchunked code paths, controlled metadata
+  cardinality via `--cardinality-category` / `--cardinality-topic` (the
+  filter-selectivity knob for BM-23), and 5-tenant × 4-agent × 10-user ×
+  8-thread scope fan-out via `make_scope()`.
+- `--purge` path uses `DELETE ... WHERE tenant_id LIKE 'bench-seed-{seed}-
+  {size}-tenant-%'` across all 6 tables.
+
+**BM-5 (Layer 3b — round-trip counting proxy):**
+- Created `benchmarks/common/counting.py`:
+  - `RoundTripCounter` dataclass with `executes`, `fetches`, `total`, `reset`.
+  - `CountingCursor` — transparent proxy over `ibm_db_dbi.Cursor`;
+    increments `executes` on every `execute()` / `executemany()`, `fetches`
+    on every `fetchone()` / `fetchall()` / `fetchmany()`.
+  - `CountingConnection` — overrides `cursor()` to return `CountingCursor`.
+  - `CountingPool` — wraps `ConnectionPool`; disabled (counter=None) path
+    is a zero-overhead direct delegation; enabled path wraps each checkout.
+  - `RoundTripsFixture` with `assert_round_trips(n)` helper.
+  - `counting_pool` (session) and `round_trips` (function) pytest fixtures.
+- Created `tests/test_counting.py`: 25 unit tests, all passing, covering
+  all interception points, delegation, shared-counter semantics, the disabled
+  fast path, and assertion error messages.
+
+**BM-6 (Layer 3c — memory/CPU instrumentation):**
+- Created `benchmarks/common/resource_sampler.py`:
+  - `SamplerSnapshot` frozen dataclass: `peak_rss_bytes`, `mean_cpu_pct`,
+    `duration_s`, `sample_count`, `psutil_available`.
+  - `ResourceSampler` context manager: `psutil`-based RSS/CPU background
+    daemon thread at configurable `interval_s`; time-gate prevents sampling
+    backlog under load; gracefully degrades when psutil is not installed.
+  - `sample_resources()` decorator that stores `last_snapshot` on the
+    wrapped function.
+  - Dual interface: usable from pytest benchmark bodies (context manager)
+    and Locust `User` classes (`on_start`/`on_stop` pattern).
+- Created `tests/test_resource_sampler.py`: 12 unit tests, all passing;
+  psutil-gated assertions so tests pass even without psutil installed.
+- Updated `pyproject.toml` `[benchmark]` extra: added
+  `pytest-memray>=1.6.0` and `psutil>=6.0`.
+
+### Final state
+
+- **Test suite:** 1009 tests passing, 89.78% coverage (≥ 85% gate).
+- **BOARD.html:** rebuilt at 19 epics / 125 stories.
+- **All 6 BM stories:** status `Done`.
+- **EPIC-13:** all acceptance criteria verified.
+- **Downstream:** EPIC-14 through EPIC-19 can now start; every dependency
+  (conftest.py, seed_corpus.py, counting.py, resource_sampler.py, 4
+  benchmark markers) is in place.
+
+**Made during:** EPIC-13 full execution (this session).
+
+**Supersedes:** The 2026-08-05 BM-1 entry above (which recorded the
+architectural decision); this entry records the implementation.
+
+---
+

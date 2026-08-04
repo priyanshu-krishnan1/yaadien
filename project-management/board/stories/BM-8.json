@@ -1,0 +1,14 @@
+{
+  "id": "BM-8",
+  "epic_id": "EPIC-14",
+  "title": "Write-path benchmarks (A1-A7, A10)",
+  "summary": "remember() across all 5 types; create() with dedup on/off; chunking across 5 content sizes; ingest resolver on/off; add_messages() batch sweep — every configuration asserting round-trip counts via BM-5's proxy.",
+  "status": "Done",
+  "description": "Benchmark: `remember()` dispatch across all 5 record types (A1); `create()` with content-hash dedup on vs. off, quantifying the extra round-trip A3 documents (A2/A3); chunking (ORC-2) across content sizes 200/1k/5k/20k/60k chars, crossing `chunk_threshold` (A5); ingest resolution (PIPE-2) on vs. off, quantifying the read+write round-trip cost A7 documents (A7); `add_messages()` batch-size sweep 1/10/100/1000 (A10); `update()` with and without chunk rewrite, including the contention case (A4/A6). Every configuration asserts round-trip counts via BM-5's `CountingCursor`, not just latency.\n\nAcceptance: P50/P95/P99 recorded for every configuration; round-trip counts recorded and asserted (not just observed); dedup and ingest-resolver overhead each quantified as an explicit before/after delta; results exported as JSON consumable by `github-action-benchmark` (BM-20). Depends on BM-4 (seeded corpora) and BM-5 (round-trip proxy).",
+  "comments": [
+    {
+      "date": "2026-08-06",
+      "text": "benchmarks/write/ created: 6 test files (test_remember_all_types.py/A1, test_dedup.py/A2-A3, test_chunking.py/A5, test_ingest_resolver.py/A7, test_add_messages.py/A10, test_update.py/A4-A6). 38 tests collected. Round-trip counts asserted: dedup-ON 1st write=2 (SELECT+INSERT), 2nd write=1 (SELECT only); dedup-OFF=1 (INSERT only); add_messages(batch)=batch_size; short update=1; long update>=3. Graceful skip when DB2_HOSTNAME not set."
+    }
+  ]
+}

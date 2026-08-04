@@ -1,0 +1,14 @@
+{
+  "id": "BRUN-2",
+  "epic_id": "EPIC-12",
+  "title": "Pull and benchmark gpt-oss:20b and qwen3:8b as judges, fill summary-table placeholders",
+  "summary": "BENCHMARKS.md has two literal placeholder rows — gpt-oss:20b and qwen3:8b, both '(pending) ... Pull when bandwidth available'. Run both as judges via Run B's shape and fill in those rows.",
+  "status": "Done",
+  "description": "BENCHMARKS.md's summary-across-runs table contains two placeholder rows for gpt-oss:20b and qwen3:8b marked 'Pull when bandwidth available'. This story runs scripts/run_benchmarks.py --suite retrieval --judge ollama:gpt-oss:20b and --judge ollama:qwen3:8b against the synthetic dataset (Run B shape), records scores, and fills in both placeholder rows or documents why a model could not be obtained. Requires local disk/bandwidth for ollama pulls and a live Db2 instance.\n\n**Status: Abandoned** — EPIC-13's BM-2 deletes scripts/run_benchmarks.py and benchmarks/common/llm_judge.py (OllamaJudge). This story depends on both. The synthetic dataset (benchmarks/retrieval_quality/dataset.py) is also being deleted — new judge coverage will be measured against the real LongMemEval dataset under EPIC-16, which produces scores that are actually comparable to vendor-reported figures. The placeholder rows are acknowledged debt; rather than fill them with numbers produced by a synthetic dataset about to be retired, the summary table will be rebuilt from scratch by EPIC-19. Abandoned in favour of EPIC-16 + EPIC-19.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Explicitly abandoned to unblock EPIC-13 BM-2. Both OllamaJudge and the synthetic dataset are being deleted. Judge-model coverage is subsumed by EPIC-16 on the real LongMemEval dataset. Abandonment recorded per the cross-epic gate in BM-2's story description."
+    }
+  ]
+}

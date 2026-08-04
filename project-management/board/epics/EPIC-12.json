@@ -1,0 +1,6 @@
+{
+  "id": "EPIC-12",
+  "title": "Benchmark suite completion — pending judge coverage, empirical BENCH-5 scale validation, and untested Suite 3",
+  "description": "Closes the four open items BENCHMARKS.md's own text records as incomplete: (1) BRUN-1 — re-run Run C with the corrected OllamaJudge (think-block stripping fix landed in code, score of 62.0% never re-measured); (2) BRUN-2 — pull and benchmark gpt-oss:20b and qwen3:8b as judges, filling the two placeholder rows in the summary-across-runs table; (3) BRUN-3 — execute BENCH-5's already-built small/medium/large --extra-turns-per-session runs with the live llama3.1:8b judge (BENCH-5 closed Done but used keyword judge only, all scale results are analytical estimates, not measured values); (4) BRUN-4 — run --suite isolation for the first time (--tenants 20 --workers 40), record leakage incidents, and escalate a P0 story if any leakage is found. All four depend on a live Db2 instance; BRUN-2 additionally requires local disk/bandwidth for ollama pulls.",
+  "comments": []
+}

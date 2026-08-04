@@ -1,0 +1,9 @@
+{
+  "id": "BM-26",
+  "epic_id": "EPIC-19",
+  "title": "Rewrite BENCHMARKS.md around the new methodology",
+  "summary": "Restructure the report around deterministic-vs-judged separation, with methodology deviations stated up front and every historical run (Runs A-D, BRUN-1..4) preserved rather than overwritten.",
+  "status": "To Do",
+  "description": "Restructure `project-management/BENCHMARKS.md`: methodology and its deviations from published benchmarks stated up front, deterministic metrics (BM-17's IR metrics, BM-5's round-trip counts) kept visually and structurally separate from LLM-judged metrics (BM-18) so a reader can never mistake one for the other. Preserve Runs A-D from EPIC-6 and any BRUN-1 through BRUN-4 entries from EPIC-12 as historical record, with an explicit note that they were produced against the synthetic dataset (and, for Run A, a since-fixed judge bug) — matching this project's existing discipline (already visible in the Run C '(pre-fix — re-run)' annotation) of never silently replacing a recorded run.\n\nAcceptance: every number in the rewritten report carries provenance — runner type, Db2 version, embedding provider and model, judge and model where applicable, seed, corpus size, and commit SHA; the comparability statement is unambiguous about exactly what may and may not be compared to vendor-published figures; no historical run is deleted or silently overwritten. Depends on BM-18 and BM-19.",
+  "comments": []
+}

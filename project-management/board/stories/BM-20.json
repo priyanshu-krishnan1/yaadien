@@ -1,0 +1,9 @@
+{
+  "id": "BM-20",
+  "epic_id": "EPIC-17",
+  "title": "Tier 0 + Tier 1 workflows",
+  "summary": ".github/workflows/benchmark-pr.yml — CodSpeed smoke tests on every push plus PR-gated round-trip-count and correctness-invariant checks, reusing the existing Db2 container job.",
+  "status": "To Do",
+  "description": "Write `.github/workflows/benchmark-pr.yml` implementing Tier 0 (pytest-codspeed instruction counting on BM-7's micro-benchmarks, no database, every push) and Tier 1 (BM-8/BM-9's write/read-path benchmarks against a 1k-row seeded corpus, reusing the existing Db2 container job from `ci.yml` verbatim — no new infrastructure to operate). Wire `github-action-benchmark` to publish results to `gh-pages` with `alert-threshold: 150%` (comment only) and `fail-threshold: 300%` (hard fail) for wall-clock, per Finding 5's guidance that GHA wall-clock is noisy and must never be a hard gate on its own. Hard-fail independently on any round-trip-count regression (BM-5's counter — deterministic, runner-invariant) or any correctness-invariant violation (leak count > 0, etc., per Phase 5.1's invariant table).\n\nAcceptance: total added PR wall-clock is <=25 minutes; a deliberately injected extra `SELECT` in a hot path fails the round-trip gate; a deliberate 2x wall-clock slowdown produces a PR comment but does not fail the build; the trend chart renders correctly on `gh-pages`. Depends on BM-7, BM-8, BM-9, and BM-5.",
+  "comments": []
+}

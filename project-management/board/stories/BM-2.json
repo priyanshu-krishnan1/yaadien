@@ -1,0 +1,14 @@
+{
+  "id": "BM-2",
+  "epic_id": "EPIC-13",
+  "title": "Retire the bespoke harness, retain the valuable parts",
+  "summary": "Delete the hand-rolled timing/report/judge/dataset/runner modules the Phase 1b audit marked DISCARD; keep and relocate the four modules it marked KEEP.",
+  "status": "Done",
+  "description": "Per the Phase 1b audit table, delete `benchmarks/common/timing.py` (superseded by pytest-benchmark's own warmup/outlier-rejection/JSON export), `benchmarks/common/report.py` (superseded by github-action-benchmark), `benchmarks/common/llm_judge.py` (the documented root cause of BENCH-1's confounded Run A — non-deterministic verdicts), `benchmarks/retrieval_quality/dataset.py` (synthetic, template-generated, explicitly non-comparable to published figures per its own report text), `benchmarks/latency_cost/run.py` (no warmup, no statistical treatment), and `scripts/run_benchmarks.py` (superseded by `pytest -m benchmark` / `locust -f`). Retain and relocate `benchmarks/common/embedding_providers.py`, `benchmarks/common/scope_gen.py`, `benchmarks/common/cost_tracking.py`, `benchmarks/retrieval_quality/consolidator.py`, and `benchmarks/retrieval_quality/reconciler.py` into the new structure BM-3 will assemble. Prune `tests/test_benchmarks_unit.py` down to only the tests covering the retained modules. Update `Makefile` targets accordingly.\n\n**Do not start this story until TRU-5 (EPIC-11) and BRUN-1, BRUN-2, BRUN-3 (EPIC-12) are Done or explicitly marked abandoned** — check their status on the board first. All four depend on exactly the modules this story deletes. Acceptance: `pytest` green including the 85% coverage gate; no dangling imports; the retained modules have unchanged public behavior, verified by the surviving unit tests. Depends on BM-1.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "6 files deleted (timing.py, report.py, llm_judge.py, dataset.py, latency_cost/run.py, scripts/run_benchmarks.py). 5 modules retained. tests/test_benchmarks_unit.py pruned to 10 tests covering retained modules. Makefile updated to use pytest -m benchmark_pr. Test suite: 1009 passed, 89.78% coverage."
+    }
+  ]
+}

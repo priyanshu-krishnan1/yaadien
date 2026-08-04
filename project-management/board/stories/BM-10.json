@@ -1,0 +1,14 @@
+{
+  "id": "BM-10",
+  "epic_id": "EPIC-14",
+  "title": "Lifecycle & governance benchmarks (C1-C8)",
+  "summary": "forget(), purge_expired() at scale, erase_all() on large scopes, cascade deletes over deep hierarchies, reconcile() over growing candidate sets, and export/import round-trip with peak-RSS measurement.",
+  "status": "Done",
+  "description": "Benchmark: `forget()` soft delete (C1); `purge_expired()` over 1k and 100k expired rows (C2); `erase_all()` over large scopes, asserting `ErasureReport` completeness across all 6 tables including orphan chunks (C3); cascade deletes (`delete_user`/`delete_agent`) over deep hierarchies (C4); `reconcile()` + soft-supersession over growing candidate-set sizes (C7); `export_scope()`/`import_scope()` round-trip over 1k and 100k rows, with peak RSS measured via BM-6's memray wiring to confirm the export `Iterator` actually streams rather than materializing (C8).\n\nAcceptance: rows/s reported for every bulk operation; erasure completeness is asserted, not assumed, across all 6 tables; export peak RSS stays flat as row count grows (a growing RSS curve would mean the \"streaming\" claim in the docstring is false — flag as a bug if found, matching this project's practice of turning benchmark findings into board work rather than a silent report line). Depends on BM-4 and BM-6.",
+  "comments": [
+    {
+      "date": "2026-08-06",
+      "text": "benchmarks/lifecycle/ created: 6 test files (test_forget.py/C1, test_purge_expired.py/C2, test_erase_all.py/C3, test_cascade_delete.py/C4, test_reconcile.py/C7, test_export_import.py/C8). 76 tests collected. ErasureReport completeness asserted across all 6 tables. export_scope() confirmed as streaming (500-row batch pages, generator yield-per-record). RSS stays bounded. API notes: purge_expired() requires tombstoned rows; reconcile() takes (memory_type, scope); delete_user()/delete_agent() take cascade=True. ResourceSampler used for peak RSS measurement."
+    }
+  ]
+}

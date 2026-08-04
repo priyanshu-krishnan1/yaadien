@@ -1,0 +1,14 @@
+{
+  "id": "BM-1",
+  "epic_id": "EPIC-13",
+  "title": "Decide and record the benchmark architecture",
+  "summary": "Land the DECISIONS.md entry adopting pytest-benchmark + github-action-benchmark + Locust + LongMemEval, with every rejected alternative and its rationale recorded so this research is not re-litigated.",
+  "status": "Done",
+  "description": "Write the DECISIONS.md entry (dated, following this project's existing entry format) adopting `pytest-benchmark`, `github-action-benchmark`, `Locust`, and the official LongMemEval harness/dataset as the four external tools this benchmarking effort assembles rather than reimplements, per BENCHMARK_STRATEGY.md Phase 3. Explicitly record the rejections and their rationale from Phase 2: VectorDBBench (no Db2 client — backlog as a strategic-marketing story), HammerDB (measures the database, not the SDK; GPL-3.0 makes vendoring inadvisable, external-tool use only), ANN-Benchmarks (benchmarks ANN algorithms, not DB products), k6/JMeter/Molotov (cannot drive the Python SDK, or bypass it via JDBC), asv (duplicates env/matrix management `uv`/pip already provide), Bencher (overlaps github-action-benchmark), OpenAI Evals and BEIR (wrong layer — model-eval and document-IR, not conversational memory). Rewrite `benchmarks/README.md` to describe the new architecture (the four-tier structure from Phase 6, which components are kept/discarded/rewritten per the Phase 1b audit table) so a contributor reading it understands the target shape before BM-2 starts moving files.\n\nAcceptance: DECISIONS.md entry dated and merged; `benchmarks/README.md` rewritten; license compatibility of every adopted tool recorded (BSD-2 pytest-benchmark, MIT Locust/github-action-benchmark, Apache-2.0 LongMemEval/pytest-memray, BSD-3 psutil — all compatible with this Apache-2.0 repo). No code changes. Independent of every other story in this epic; everything else depends on it.",
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "DECISIONS.md entry added (dated 2026-08-05) recording pytest-benchmark/github-action-benchmark/Locust/LongMemEval adoption and all Phase-2 rejections. benchmarks/README.md rewritten to describe new four-tier architecture."
+    }
+  ]
+}
