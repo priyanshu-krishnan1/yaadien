@@ -65,6 +65,28 @@ def _load(path: Path) -> dict:
         return json.load(fh)
 
 
+def _load_merged(paths: list[Path]) -> tuple[dict, list[dict]]:
+    """Load and merge one or more pytest-benchmark JSON files.
+
+    Returns the metadata dict from the first file that exists (for machine/
+    Python info) and a combined, sorted list of row dicts from all files.
+    """
+    meta: dict = {}
+    rows: list[dict] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            data = _load(path)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not meta:
+            meta = data  # keep first file's metadata (machine/python info)
+        rows.extend(_extract_rows(data))
+    rows.sort(key=lambda r: (r["group"], r["name"]))
+    return meta, rows
+
+
 def _extract_rows(data: dict) -> list[dict]:
     """Return a list of row dicts extracted from the pytest-benchmark JSON."""
     benchmarks = data.get("benchmarks", [])
@@ -85,7 +107,6 @@ def _extract_rows(data: dict) -> list[dict]:
                 "iterations": stats.get("iterations", 0),
             }
         )
-    rows.sort(key=lambda r: (r["group"], r["name"]))
     return rows
 
 
@@ -310,10 +331,11 @@ def main() -> None:
         description="Generate a benchmark summary from pytest-benchmark JSON output.",
     )
     parser.add_argument(
-        "input",
-        nargs="?",
-        help="Path to pytest-benchmark JSON output file (default: benchmark_results/output.json)",
-        default="benchmark_results/output.json",
+        "inputs",
+        nargs="*",
+        help="One or more pytest-benchmark JSON output files to merge "
+             "(default: benchmark_results/output_tier0.json)",
+        default=["benchmark_results/output_tier0.json"],
     )
     parser.add_argument(
         "--html",
@@ -326,10 +348,13 @@ def main() -> None:
     parser.add_argument("--ref", default="", help="Git ref name (branch/tag).")
     args = parser.parse_args()
 
-    path = Path(args.input)
-    if not path.exists():
+    paths = [Path(p) for p in args.inputs]
+    existing = [p for p in paths if p.exists()]
+
+    if not existing:
+        missing = ", ".join(str(p) for p in paths)
         print(
-            f"generate_benchmark_summary: {path} not found — no results to summarise.",
+            f"generate_benchmark_summary: none of [{missing}] found — no results to summarise.",
             file=sys.stderr,
         )
         if args.html:
@@ -338,17 +363,7 @@ def main() -> None:
             print("## Benchmark Results\n\n> No benchmark output file found.")
         sys.exit(0)  # exit 0 so the calling shell step does not fail
 
-    try:
-        data = _load(path)
-    except (json.JSONDecodeError, OSError) as exc:
-        print(f"generate_benchmark_summary: could not parse {path}: {exc}", file=sys.stderr)
-        if args.html:
-            print(_render_html({}, [], args.run_id, args.run_number, args.sha, args.ref))
-        else:
-            print(f"## Benchmark Results\n\n> Could not parse `{path}`: {exc}")
-        sys.exit(0)
-
-    rows = _extract_rows(data)
+    data, rows = _load_merged(paths)
 
     if args.html:
         print(_render_html(data, rows, args.run_id, args.run_number, args.sha, args.ref))

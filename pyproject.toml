@@ -85,6 +85,10 @@ dev = [
 benchmark = [
     # EPIC-13 BM-3: pytest-benchmark for the new four-tier benchmark suite.
     "pytest-benchmark>=5.0",
+    # pytest-benchmark's --benchmark-histogram flag requires pygal + pygaljs.
+    # Without them the step crashes with ImportError even when all tests pass.
+    "pygal>=3.0",
+    "pygaljs>=1.0.2",
     # EPIC-13 BM-6: memory/CPU instrumentation (resource_sampler.py).
     # pytest-memray is Linux+macOS only (Bloomberg Apache-2.0).
     "pytest-memray>=1.6.0",

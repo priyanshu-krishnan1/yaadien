@@ -175,27 +175,26 @@ jobs:
 
       - name: Run Tier-0 micro-benchmarks (no database)
         # Always run first — these complete in < 90 s and are database-independent.
-        # Output is merged into the same JSON file so the summary script can
-        # produce a unified table covering both Tier-0 and Tier-1 results.
+        # Output goes to output_tier0.json; the summary script merges tier0 + tier1
+        # into a unified table (--benchmark-append was removed in pytest-benchmark
+        # 5.0 so each run writes its own file).
         run: |
           pytest benchmarks/ -m benchmark_micro \
             --no-cov \
-            --benchmark-json="${BENCH_OUT}/output.json" \
+            --benchmark-json="${BENCH_OUT}/output_tier0.json" \
             --benchmark-histogram="${BENCH_OUT}/histogram" \
             -v
         # Continue even on test failures so partial artifacts are always uploaded.
         continue-on-error: true
 
       - name: Run Tier-1 benchmark suite (benchmark_pr — requires Db2)
-        # Appends to the same JSON output produced by the Tier-0 step above.
-        # --benchmark-append merges the new results into output.json rather than
-        # overwriting so the summary covers the full run in one table.
+        # Writes to output_tier1.json (separate from Tier-0).
+        # The summary/HTML generation steps below merge both files.
         run: |
           pytest benchmarks/ -m benchmark_pr \
             --no-cov \
-            --benchmark-json="${BENCH_OUT}/output.json" \
+            --benchmark-json="${BENCH_OUT}/output_tier1.json" \
             --benchmark-histogram="${BENCH_OUT}/histogram" \
-            --benchmark-append \
             -v
         continue-on-error: true
 
@@ -204,11 +203,16 @@ jobs:
       # ────────────────────────────────────────────────────────────────────────
       - name: Generate benchmark Job Summary
         # Runs even when the benchmark step fails so partial results are surfaced.
+        # Passes both tier JSON files; the script merges them into one table.
         if: always()
         run: |
-          if [ -f "${BENCH_OUT}/output.json" ]; then
-            python scripts/generate_benchmark_summary.py \
-              "${BENCH_OUT}/output.json" \
+          TIER0="${BENCH_OUT}/output_tier0.json"
+          TIER1="${BENCH_OUT}/output_tier1.json"
+          if [ -f "$TIER0" ] || [ -f "$TIER1" ]; then
+            ARGS=""
+            [ -f "$TIER0" ] && ARGS="$ARGS $TIER0"
+            [ -f "$TIER1" ] && ARGS="$TIER1 $ARGS"
+            python scripts/generate_benchmark_summary.py $ARGS \
               >> "$GITHUB_STEP_SUMMARY"
           else
             echo "## Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
@@ -222,8 +226,12 @@ jobs:
       - name: Generate HTML report index
         if: always()
         run: |
-          python scripts/generate_benchmark_summary.py \
-            "${BENCH_OUT}/output.json" \
+          TIER0="${BENCH_OUT}/output_tier0.json"
+          TIER1="${BENCH_OUT}/output_tier1.json"
+          ARGS=""
+          [ -f "$TIER0" ] && ARGS="$ARGS $TIER0"
+          [ -f "$TIER1" ] && ARGS="$TIER1 $ARGS"
+          python scripts/generate_benchmark_summary.py $ARGS \
             --html \
             --run-id "${{ github.run_id }}" \
             --run-number "${{ github.run_number }}" \
