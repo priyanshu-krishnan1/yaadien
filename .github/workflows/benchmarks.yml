@@ -164,8 +164,8 @@ jobs:
               >/dev/null 2>&1 || true
             sleep 15
           done
-          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
-          exit 0
+          echo "ERROR: Db2 DDL probe did not confirm readiness after 300s — aborting benchmark run."
+          exit 1
 
       # ────────────────────────────────────────────────────────────────────────
       # 4. Run benchmarks
@@ -178,25 +178,25 @@ jobs:
         # Output goes to output_tier0.json; the summary script merges tier0 + tier1
         # into a unified table (--benchmark-append was removed in pytest-benchmark
         # 5.0 so each run writes its own file).
+        # No continue-on-error: any pytest failure (exit 1) or bad-argument error
+        # (exit 4) must fail the job rather than silently pass.
         run: |
           pytest benchmarks/ -m benchmark_micro \
             --no-cov \
             --benchmark-json="${BENCH_OUT}/output_tier0.json" \
             --benchmark-histogram="${BENCH_OUT}/histogram" \
             -v
-        # Continue even on test failures so partial artifacts are always uploaded.
-        continue-on-error: true
 
       - name: Run Tier-1 benchmark suite (benchmark_pr — requires Db2)
         # Writes to output_tier1.json (separate from Tier-0).
         # The summary/HTML generation steps below merge both files.
+        # No continue-on-error: a failing benchmark must fail the job.
         run: |
           pytest benchmarks/ -m benchmark_pr \
             --no-cov \
             --benchmark-json="${BENCH_OUT}/output_tier1.json" \
             --benchmark-histogram="${BENCH_OUT}/histogram" \
             -v
-        continue-on-error: true
 
       # ────────────────────────────────────────────────────────────────────────
       # 5. Generate Job Summary (Markdown table → $GITHUB_STEP_SUMMARY)
@@ -224,6 +224,8 @@ jobs:
       # 6. Generate HTML report index for gh-pages
       # ────────────────────────────────────────────────────────────────────────
       - name: Generate HTML report index
+        # Runs even when benchmark steps fail so partial results (Tier-0 only,
+        # or a failed-run placeholder) are always published.
         if: always()
         run: |
           TIER0="${BENCH_OUT}/output_tier0.json"
@@ -231,21 +233,28 @@ jobs:
           ARGS=""
           [ -f "$TIER0" ] && ARGS="$ARGS $TIER0"
           [ -f "$TIER1" ] && ARGS="$TIER1 $ARGS"
-          python scripts/generate_benchmark_summary.py $ARGS \
-            --html \
-            --run-id "${{ github.run_id }}" \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" \
-            --ref "${{ github.ref_name }}" \
-            > "${BENCH_OUT}/index.html" 2>/dev/null || \
-          cat > "${BENCH_OUT}/index.html" << 'HTMLEOF'
-          <!DOCTYPE html>
-          <html lang="en">
-          <head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>
-          <body><p>No benchmark data was produced for this run. The benchmark job
-          may have failed before generating results.</p></body>
-          </html>
-          HTMLEOF
+          if [ -n "$ARGS" ]; then
+            # At least one tier JSON exists — generate the real report.
+            # Let any script error surface rather than swallowing it.
+            python scripts/generate_benchmark_summary.py $ARGS \
+              --html \
+              --run-id "${{ github.run_id }}" \
+              --run-number "${{ github.run_number }}" \
+              --sha "${{ github.sha }}" \
+              --ref "${{ github.ref_name }}" \
+              > "${BENCH_OUT}/index.html"
+          else
+            # No JSON produced at all — write a static placeholder so the
+            # artifact and gh-pages push are never empty.
+            cat > "${BENCH_OUT}/index.html" << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>
+<body><p>No benchmark data was produced for this run. The benchmark job
+may have failed before generating results.</p></body>
+</html>
+HTMLEOF
+          fi
 
       # ────────────────────────────────────────────────────────────────────────
       # 7. Upload artifact (JSON + SVG histograms + HTML index)
