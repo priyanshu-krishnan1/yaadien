@@ -244,16 +244,11 @@ jobs:
               --ref "${{ github.ref_name }}" \
               > "${BENCH_OUT}/index.html"
           else
-            # No JSON produced at all — write a static placeholder so the
-            # artifact and gh-pages push are never empty.
-            cat > "${BENCH_OUT}/index.html" << 'HTMLEOF'
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>
-<body><p>No benchmark data was produced for this run. The benchmark job
-may have failed before generating results.</p></body>
-</html>
-HTMLEOF
+            # No JSON produced at all — write a static placeholder.
+            # printf keeps everything on one indented line so the YAML
+            # literal-block scalar is never broken by column-0 content.
+            printf '<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>\n<body><p>No benchmark data was produced for this run.</p></body>\n</html>\n' \
+              > "${BENCH_OUT}/index.html"
           fi
 
       # ────────────────────────────────────────────────────────────────────────
