@@ -1,0 +1,293 @@
+name: Benchmarks
+
+# Triggers:
+#   workflow_dispatch — manual run from the GitHub Actions UI (Actions tab →
+#                        "Benchmarks" → "Run workflow").
+#   schedule          — weekly, every Sunday at 04:00 UTC.
+#   push to main      — runs the full benchmark suite on every merge to main so
+#                       regressions are caught before the next weekly run.
+#
+# Intentionally NOT triggered on every pull_request — the Db2 service
+# container takes up to 15 minutes to become healthy and the benchmark suite
+# itself takes ~25 min; requiring that on every PR would double CI time.
+# PR-blocking performance gates are handled separately by EPIC-17 / BM-20
+# (benchmark_micro tier) which runs in the regular ci.yml job (< 90 s,
+# no Db2 dependency).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 0"   # weekly — every Sunday at 04:00 UTC
+  push:
+    branches: [main]
+
+# contents: write is required only for the gh-pages publish step.
+# All other steps need only read access.  The job-level override below
+# supplies the narrower set to each step that actually needs write.
+permissions:
+  contents: read
+
+# Cancel a superseded run on the same branch when a new push arrives so the
+# weekly/push runs don't pile up.  workflow_dispatch runs are NOT cancelled
+# because they are always intentional one-off invocations.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  benchmark:
+    name: "Benchmark suite (Db2 LUW + pytest-benchmark)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Elevated to write so the gh-pages publish step at the end can push.
+    permissions:
+      contents: write
+
+    env:
+      # ── Db2 connection — identical to ci.yml integration-test job ──────────
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
+      # ── Benchmark output directory ────────────────────────────────────────
+      BENCH_OUT: benchmark_results
+
+    steps:
+      # ────────────────────────────────────────────────────────────────────────
+      # 1. Checkout
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 2. Python setup
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: pip-benchmark-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            pip-benchmark-3.11-
+
+      # Install the package with all dependencies needed for the full benchmark
+      # suite: dev tools (pytest, ruff, etc.), benchmark extras
+      # (pytest-benchmark, pytest-memray, psutil), and all adapter extras so
+      # the BM-11 adapter-overhead benchmarks are not skipped.
+      - name: Install package and benchmark dependencies
+        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 3. Db2 service container — exact same setup as ci.yml
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Write /var/custom TESTDB-creation script
+        # Identical to ci.yml integration-test job: mounts a /var/custom script
+        # that creates TESTDB with PAGESIZE 32768 (Db2's VECTOR INDEX requires
+        # 32 KB pages) via the container's documented post-setup hook.
+        # The sed strip ensures the shebang lands at column 0 regardless of
+        # this YAML block's indentation.
+        run: |
+          mkdir -p /tmp/var-custom
+          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          if [ "$(id -un)" = "db2inst1" ]; then
+            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
+          else
+            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
+          fi
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
+          chmod +x /tmp/var-custom/01_create_testdb.sh
+
+      - name: Write docker-compose.db2.yml
+        # Identical to ci.yml: image icr.io/db2_community/db2:12.1.5.0,
+        # port 50000:50000, shm_size 1g, ARCHIVE_LOGS false, health-check polls
+        # `db2 connect to TESTDB` every 30 s with up to 30 retries (15 min max).
+        run: |
+          cat > /tmp/docker-compose.db2.yml << 'EOF'
+          services:
+            db2:
+              image: icr.io/db2_community/db2:12.1.5.0
+              platform: linux/amd64
+              privileged: true
+              environment:
+                LICENSE: accept
+                DB2INST1_PASSWORD: passw0rd
+                ARCHIVE_LOGS: "false"
+              ports:
+                - "50000:50000"
+              shm_size: "1g"
+              volumes:
+                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
+              healthcheck:
+                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
+                interval: 30s
+                timeout: 60s
+                retries: 30
+                start_period: 300s
+          EOF
+
+      - name: Start Db2 and wait for healthy
+        # docker compose up --wait blocks until the healthcheck passes.
+        # 300s start_period + 30×30s retries = 15 min max.
+        run: docker compose -f /tmp/docker-compose.db2.yml up -d --wait
+        timeout-minutes: 15
+
+      - name: Wait for Db2 DDL readiness (catalog-agent drain)
+        # Identical to ci.yml: polls CREATE VECTOR INDEX (the only DDL that
+        # contends for catalog-agent slots) up to 20×15s = 300s.
+        # A plain CREATE TABLE succeeds even while catalog agents are settling
+        # so only the vector-index probe produces a reliable ready signal.
+        run: |
+          echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
+          for i in $(seq 1 20); do
+            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
+            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+              "db2 connect to TESTDB && \
+               db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
+               db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
+               db2 'DROP TABLE ddl_probe' && \
+               db2 terminate" 2>&1 || true)
+            if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
+              echo "Db2 DDL ready (vector index probe passed) after attempt $i."
+              exit 0
+            fi
+            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
+            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+              "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
+              >/dev/null 2>&1 || true
+            sleep 15
+          done
+          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
+          exit 0
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 4. Run benchmarks
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Create benchmark output directory
+        run: mkdir -p "$BENCH_OUT"
+
+      - name: Run Tier-0 micro-benchmarks (no database)
+        # Always run first — these complete in < 90 s and are database-independent.
+        # Output is merged into the same JSON file so the summary script can
+        # produce a unified table covering both Tier-0 and Tier-1 results.
+        run: |
+          pytest benchmarks/ -m benchmark_micro \
+            --no-cov \
+            --benchmark-json="${BENCH_OUT}/output.json" \
+            --benchmark-histogram="${BENCH_OUT}/histogram" \
+            -v
+        # Continue even on test failures so partial artifacts are always uploaded.
+        continue-on-error: true
+
+      - name: Run Tier-1 benchmark suite (benchmark_pr — requires Db2)
+        # Appends to the same JSON output produced by the Tier-0 step above.
+        # --benchmark-append merges the new results into output.json rather than
+        # overwriting so the summary covers the full run in one table.
+        run: |
+          pytest benchmarks/ -m benchmark_pr \
+            --no-cov \
+            --benchmark-json="${BENCH_OUT}/output.json" \
+            --benchmark-histogram="${BENCH_OUT}/histogram" \
+            --benchmark-append \
+            -v
+        continue-on-error: true
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 5. Generate Job Summary (Markdown table → $GITHUB_STEP_SUMMARY)
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Generate benchmark Job Summary
+        # Runs even when the benchmark step fails so partial results are surfaced.
+        if: always()
+        run: |
+          if [ -f "${BENCH_OUT}/output.json" ]; then
+            python scripts/generate_benchmark_summary.py \
+              "${BENCH_OUT}/output.json" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> No benchmark output found — the benchmark run may have failed before producing results." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 6. Generate HTML report index for gh-pages
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Generate HTML report index
+        if: always()
+        run: |
+          python scripts/generate_benchmark_summary.py \
+            "${BENCH_OUT}/output.json" \
+            --html \
+            --run-id "${{ github.run_id }}" \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" \
+            --ref "${{ github.ref_name }}" \
+            > "${BENCH_OUT}/index.html" 2>/dev/null || \
+          cat > "${BENCH_OUT}/index.html" << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>
+          <body><p>No benchmark data was produced for this run. The benchmark job
+          may have failed before generating results.</p></body>
+          </html>
+          HTMLEOF
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 7. Upload artifact (JSON + SVG histograms + HTML index)
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Upload benchmark artifact
+        # if: always() ensures the artifact is uploaded even when benchmark
+        # tests fail, so partial results are always downloadable from the run page.
+        if: always()
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: benchmark-report
+          path: ${{ env.BENCH_OUT }}/
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 8. Publish HTML report to gh-pages
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Publish to gh-pages
+        # Only publish on pushes to main and successful scheduled/manual runs
+        # (not on pull_request — there isn't one for this workflow anyway, but
+        # keep the guard explicit so fork-based PRs never accidentally push
+        # to the upstream gh-pages branch).
+        # Uses peaceiris/actions-gh-pages to commit the HTML index and all
+        # SVG histograms to the gh-pages branch under a run-specific subfolder
+        # so every run's report is permanently accessible at:
+        #   https://<owner>.github.io/agent-memory-sdk/benchmarks/<run_number>/
+        # and the latest run is also symlinked/redirected from:
+        #   https://<owner>.github.io/agent-memory-sdk/benchmarks/latest/
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d231e62369c1bc297 # v4.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ env.BENCH_OUT }}
+          destination_dir: benchmarks/${{ github.run_number }}
+          keep_files: true
+          commit_message: "benchmarks: run ${{ github.run_number }} (${{ github.sha }})"
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 9. Debug: print Db2 container logs on failure
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Print Db2 container logs (last 100 lines) on failure
+        # Only runs when a previous step failed so the logs are not printed on
+        # every successful run (they are several thousand lines long).
+        if: failure()
+        run: |
+          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
+          if [ -n "${DB2_CONTAINER}" ]; then
+            echo "=== Last 100 lines of Db2 container logs ==="
+            docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
+          else
+            echo "Could not resolve Db2 container ID — container may not have started."
+          fi
