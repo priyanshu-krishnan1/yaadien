@@ -50,10 +50,6 @@ import pytest
 
 from agent_memory_sdk.models import SemanticFact
 from agent_memory_sdk.store import MemoryStore
-from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
-
-from benchmarks.retrieval_quality.reconciler import BenchmarkReconciler
-
 
 # ---------------------------------------------------------------------------
 # Content templates
@@ -82,11 +78,8 @@ def _seed_facts(store: MemoryStore, scope, n: int) -> int:
     """
     seeded = 0
     for i in range(n):
-        if i == n - 1 and n > 1:
-            # Last fact is a correction turn (the "winner").
-            content = _CORRECTION_TEMPLATE
-        else:
-            content = f"{_PLAIN_TEMPLATE} index={i}"
+        # Last fact is a correction turn (the "winner") when n > 1.
+        content = _CORRECTION_TEMPLATE if i == n - 1 and n > 1 else f"{_PLAIN_TEMPLATE} index={i}"
 
         store.remember(
             SemanticFact(

@@ -36,7 +36,6 @@ import pytest
 
 from agent_memory_sdk.models import MemoryScope
 from agent_memory_sdk.store import MemoryStore
-
 from benchmarks.common.embedding_providers import HashingEmbeddingProvider
 
 # ---------------------------------------------------------------------------

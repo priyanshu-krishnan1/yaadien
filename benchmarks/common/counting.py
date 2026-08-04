@@ -44,7 +44,6 @@ from dataclasses import dataclass
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # RoundTripCounter — shared mutable state
 # ---------------------------------------------------------------------------
@@ -120,7 +119,7 @@ class CountingCursor:
     def __getattr__(self, name: str) -> object:
         return getattr(self._cur, name)
 
-    def __enter__(self) -> "CountingCursor":
+    def __enter__(self) -> CountingCursor:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -188,7 +187,7 @@ class CountingPool:
     def close(self) -> None:
         self._pool.close()  # type: ignore[union-attr]
 
-    def __enter__(self) -> "CountingPool":
+    def __enter__(self) -> CountingPool:
         return self
 
     def __exit__(self, *_: object) -> None:

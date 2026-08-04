@@ -32,7 +32,6 @@ import pytest
 from agent_memory_sdk.models import MemoryScope, SemanticFact
 from agent_memory_sdk.store import MemoryStore
 from agent_memory_sdk.types import DistanceMetric, SearchMode
-
 from benchmarks.common.embedding_providers import HashingEmbeddingProvider
 
 # ---------------------------------------------------------------------------

@@ -37,10 +37,8 @@ from agent_memory_sdk.models import (
     EntityProfile,
     MemoryScope,
     SemanticFact,
-    WorkingMemory,
 )
 from agent_memory_sdk.store import MemoryStore
-
 from benchmarks.common.counting import CountingPool, round_trips  # noqa: F401 – fixtures
 from benchmarks.common.embedding_providers import HashingEmbeddingProvider
 

@@ -36,9 +36,6 @@ from agent_memory_sdk.models import (
 from agent_memory_sdk.store import MemoryStore
 from agent_memory_sdk.types import ErasureReport, NoOpConsolidator, NoOpReconciler
 
-from benchmarks.common.embedding_providers import HashingEmbeddingProvider
-
-
 # ---------------------------------------------------------------------------
 # Expected table keys in every ErasureReport
 # ---------------------------------------------------------------------------

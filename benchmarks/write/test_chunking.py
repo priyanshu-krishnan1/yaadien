@@ -36,7 +36,6 @@ from agent_memory_sdk.repositories.base import CHUNK_THRESHOLD
 from agent_memory_sdk.repositories.chunks import ChunkRepository
 from agent_memory_sdk.store import MemoryStore
 from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
-
 from benchmarks.common.counting import CountingPool, RoundTripsFixture
 from benchmarks.common.embedding_providers import HashingEmbeddingProvider
 

@@ -21,9 +21,7 @@ import time
 import pytest
 
 from agent_memory_sdk.models import WorkingMemory
-
 from benchmarks.common.counting import CountingPool, RoundTripCounter
-
 
 # ---------------------------------------------------------------------------
 # Helpers

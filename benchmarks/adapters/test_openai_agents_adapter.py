@@ -33,10 +33,10 @@ agents_mod = pytest.importorskip(
     reason="openai-agents not installed; skipping OpenAI Agents adapter benchmarks (G2)",
 )
 
-from agent_memory_sdk.adapters.openai_agents import Db2Session
-from agent_memory_sdk.models import WorkingMemory
-from agent_memory_sdk.store import MemoryStore
-from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
+from agent_memory_sdk.adapters.openai_agents import Db2Session  # noqa: E402
+from agent_memory_sdk.models import WorkingMemory  # noqa: E402
+from agent_memory_sdk.store import MemoryStore  # noqa: E402
+from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler  # noqa: E402
 
 pytestmark = pytest.mark.benchmark_pr
 

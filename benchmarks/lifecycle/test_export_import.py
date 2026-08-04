@@ -48,9 +48,7 @@ import time
 import pytest
 
 from agent_memory_sdk.models import WorkingMemory
-
 from benchmarks.common.resource_sampler import ResourceSampler, SamplerSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Module-level RSS ledger for streaming check

@@ -16,10 +16,9 @@ instance required.  Covers the accepted round-trip semantics:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from benchmarks.common.counting import (
     CountingConnection,
     CountingCursor,
@@ -27,7 +26,6 @@ from benchmarks.common.counting import (
     RoundTripCounter,
     RoundTripsFixture,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import sys
 import time
@@ -59,12 +58,11 @@ try:
 except ImportError:
     pass
 
-from agent_memory_sdk.db.connection import ConnectionPool
-from agent_memory_sdk.db.migrate import Migrator
-from agent_memory_sdk.models import SemanticFact
-from agent_memory_sdk.store import MemoryStore
-from benchmarks.common.embedding_providers import build_embedding_provider
-from benchmarks.common.scope_gen import make_scope
+from agent_memory_sdk.db.connection import ConnectionPool  # noqa: E402
+from agent_memory_sdk.db.migrate import Migrator  # noqa: E402
+from agent_memory_sdk.models import SemanticFact  # noqa: E402
+from agent_memory_sdk.store import MemoryStore  # noqa: E402
+from benchmarks.common.embedding_providers import build_embedding_provider  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -127,8 +125,7 @@ def _load_checkpoint(path: Path) -> _Checkpoint | None:
         return None
     with path.open() as f:
         data = json.load(f)
-    return _Checkpoint(**{k: v for k, v in data.items() if k != "schema_version"
-                          or True})  # keep all fields including schema_version
+    return _Checkpoint(**{k: v for k, v in data.items()})  # include all fields
 
 
 def _save_checkpoint(path: Path, cp: _Checkpoint) -> None:
@@ -178,7 +175,7 @@ def _generate_scope(
     agents_per_tenant: int,
     users_per_tenant: int,
     threads_per_agent: int,
-) -> "MemoryScope":  # type: ignore[name-defined]  # noqa: F821
+) -> MemoryScope:  # type: ignore[name-defined]  # noqa: F821
     from benchmarks.common.scope_gen import make_scope as _make_scope  # local import ok here
     return _make_scope(
         run_id,
@@ -257,8 +254,6 @@ def seed_corpus(args: argparse.Namespace) -> None:
             )
             content = _generate_content(rng)
             metadata = _generate_metadata(rng, cardinality)
-            memory_id = f"seed-{args.seed}-{args.size}-row-{row_index}"
-
             store.facts.create(
                 SemanticFact(
                     tenant_id=scope.tenant_id,

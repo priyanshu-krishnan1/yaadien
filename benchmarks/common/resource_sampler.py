@@ -121,7 +121,7 @@ class ResourceSampler:
     # Context manager interface
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "ResourceSampler":
+    def __enter__(self) -> ResourceSampler:
         self._stop.clear()
         self._peak_rss = 0
         self._cpu_samples = []

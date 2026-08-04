@@ -29,7 +29,6 @@ from agent_memory_sdk.models import (
 )
 from agent_memory_sdk.store import MemoryStore
 from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
-
 from benchmarks.common.counting import CountingPool, RoundTripsFixture
 
 pytestmark = pytest.mark.benchmark_pr

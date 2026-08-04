@@ -56,7 +56,6 @@ from agent_memory_sdk.db.connection import ConnectionPool
 from agent_memory_sdk.models import MemoryScope
 from agent_memory_sdk.store import MemoryStore
 from agent_memory_sdk.types import NoOpConsolidator, NoOpReconciler
-
 from benchmarks.common.embedding_providers import HashingEmbeddingProvider
 from benchmarks.retrieval_quality.consolidator import BenchmarkConsolidator
 from benchmarks.retrieval_quality.reconciler import BenchmarkReconciler

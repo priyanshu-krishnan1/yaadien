@@ -38,7 +38,6 @@ from agent_memory_sdk.types import (
     NoOpIngestResolver,
     NoOpReconciler,
 )
-
 from benchmarks.common.counting import CountingPool, RoundTripsFixture
 from benchmarks.common.embedding_providers import HashingEmbeddingProvider
 
