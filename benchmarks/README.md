@@ -1,93 +1,149 @@
 # Benchmarks
 
-On-demand measurement harness for agent-memory-sdk. **Not** shipped in the
-wheel (same treatment as `project-management/` — the hatchling wheel target
-only lists `src/agent_memory_sdk`) and **not** run by CI (PH-1/PH-2) — it
-requires a live Db2 instance and, for the retrieval-quality suite, an
-`EmbeddingProvider`/LLM judge.
+Not shipped in the wheel (`src/agent_memory_sdk` only) and not run by the
+required-status CI checks (PH-1/PH-2). Requires a live Db2 instance for
+Tiers 1–3; Tier 0 runs on any machine with no database.
 
-## Why not CI
+> **Migration in progress (EPIC-13).** This folder is being migrated from a
+> bespoke timing/report/runner framework to an assembly of four maintained OSS
+> tools. The architectural decision is recorded in
+> `project-management/DECISIONS.md` (entry dated 2026-08-05, "BM-1: benchmark
+> architecture decision"). BM-2 executes the file changes; BM-3 through BM-6
+> build the new infrastructure. Until BM-2 lands, the old harness is still
+> functional — see **"Running benchmarks (current state)"** below.
 
-PH-1/PH-2 are required-status checks that run on every PR. Wiring this
-harness into them would mean every PR either fails (no Db2 credentials in
-the CI environment) or burns real compute on every push. Run it yourself,
-on demand.
+---
 
-## Quick start (zero setup)
+## Architecture (target state — EPIC-13 through EPIC-19)
+
+### The four adopted tools
+
+| Tool | License | Role |
+|---|---|---|
+| **pytest-benchmark** | BSD-2-Clause | Micro-performance — warmup, calibration, outlier rejection, JSON export |
+| **github-action-benchmark** | MIT | Historical trend on `gh-pages`, PR alerts; consumes `pytest-benchmark --benchmark-json` |
+| **Locust** | MIT | Concurrency and scale — Python `User` classes drive the SDK directly |
+| **LongMemEval** | Apache-2.0 | Real retrieval-quality dataset (500 questions, 6 ability categories) |
+
+Supporting instrumentation: **pytest-memray** (Apache-2.0, peak-allocation
+limits), **psutil** (BSD-3-Clause, RSS/CPU sampling), **pytest-codspeed**
+(Apache-2.0, Valgrind instruction counting for Tier 0). All compatible with
+this Apache-2.0 repository.
+
+---
+
+## Four-tier structure
+
+```
+Tier 0 — Smoke (every push & PR, ~90 s, blocking)
+  pytest -m benchmark_micro, fake DBAPI connection, no database
+  Gate: >10% instruction-count regression (pytest-codspeed — noise-free)
+  Covers: _vec_to_str, metadata-filter SQL compilation, RRF fusion,
+          chunk splitting, Pydantic validation, scope predicates
+
+Tier 1 — Pull request (every PR, ~25 min, blocking)
+  pytest -m benchmark_pr, Db2 container (reuses ci.yml job), 1k rows/scope
+  Gate: round-trip-count regression (deterministic, runner-invariant)
+        correctness invariants (leak count == 0)
+  Alert (not fail): >50% wall-clock regression via github-action-benchmark
+
+Tier 2 — Nightly (schedule: 0 3 * * *, ~2 h, non-blocking)
+  pytest -m benchmark, Db2 container, 50k rows/scope
+  + Locust ramp 1→50 users, mixed 70/30 R/W, leak assertions
+  + LongMemEval_S IR metrics (Recall@k / MRR / nDCG@k, no LLM)
+  + pytest-memray peak-RSS checks
+
+Tier 3 — Weekly scale (schedule: 0 4 * * 0, ~4–6 h, non-blocking)
+  Live Db2, pre-seeded 500k–1M-row corpus
+  + Locust 200-user / 60-min soak, 1,000 agents
+  + LLM-judged LongMemEval_S (full 500 questions, local Ollama — never gated)
+  + Vector index build time, APPROX recall at 1M vectors
+```
+
+Wall-clock on shared runners is too noisy to gate — Tier 0 uses instruction
+counting (immune), Tiers 1–2 gate on round-trip counts and correctness
+invariants that are invariant to runner speed.
+
+---
+
+## Current file status (Phase 1b audit)
+
+| File | LOC | Status | Story |
+|---|---|---|---|
+| `common/embedding_providers.py` | 199 | **KEEP** | Retained by BM-2 |
+| `common/scope_gen.py` | 58 | **KEEP** | Retained by BM-2 |
+| `common/cost_tracking.py` | 109 | **KEEP** | Retained by BM-2 |
+| `isolation_load/run.py` | 148 | **KEEP (port to Locust)** | BM-13 (EPIC-15) |
+| `retrieval_quality/consolidator.py` + `reconciler.py` | 445 | **KEEP** | Retained by BM-2 |
+| `retrieval_quality/run.py` | 415 | **REWRITE** | BM-16 (EPIC-16) |
+| `common/timing.py` | 67 | **DISCARD** | Deleted by BM-2 |
+| `common/report.py` | 296 | **DISCARD** | Deleted by BM-2 |
+| `common/llm_judge.py` | 194 | **DISCARD** | Deleted by BM-2 |
+| `retrieval_quality/dataset.py` | 290 | **DISCARD** | Deleted by BM-2 |
+| `latency_cost/run.py` | 112 | **DISCARD** | Deleted by BM-2 |
+| `scripts/run_benchmarks.py` | ~200 | **DISCARD** | Deleted by BM-2 |
+
+---
+
+## Running benchmarks (current state — before BM-2 lands)
+
+The original bespoke harness is still present and functional.
 
 ```bash
-# Requires DB2_* env vars set (see .env.example / project-management/INTEGRATION_TESTING.md)
+# Requires DB2_* env vars (see .env.example)
 make benchmark
 ```
 
-This runs all three suites with the dependency-free defaults:
-`--embedding-provider hashing` (a feature-hashed bag-of-words vector, no
-ML dependency, no network) and `--judge keyword` (a keyword-overlap
-heuristic). **These defaults are explicitly NOT comparable to
-vendor-reported LongMemEval figures** — the generated report says so in
-bold. They exist so the harness is runnable with nothing beyond a Db2
-connection, to sanity-check the code path end-to-end.
+**Do not cite output of the old harness alongside vendor-reported LongMemEval
+figures.** The report itself says so — it uses a synthetic 50-question dataset
+and a keyword judge, not the real LongMemEval methodology.
 
-## Options for a real retrieval-quality number
+### Options for a real retrieval-quality number (old harness)
 
-All options below are fully local and offline — no API key, no external
-network, no rate limit. The tradeoff is model quality vs. your machine's
-compute.
+All options are fully local and offline — no API key, no external network.
 
 | Component | Option | Setup |
 |---|---|---|
-| Embeddings | `sentence-transformers` (local, no daemon needed) | `pip install sentence-transformers`, then `--embedding-provider sentence-transformers` |
-| Embeddings | `ollama` (`nomic-embed-text`, local Ollama daemon) | `pip install ollama`, start Ollama, `ollama pull nomic-embed-text`, then `--embedding-provider ollama` |
-| LLM judge | `ollama` (`llama3.1:8b`, local Ollama daemon) | `pip install ollama`, start Ollama, model already pulled, then `--judge ollama` |
-| LLM judge | `ollama:<model>` (any pulled Ollama model) | Same as above; e.g. `--judge ollama:deepseek-r1:8b` |
+| Embeddings | `sentence-transformers` | `pip install sentence-transformers`, then `--embedding-provider sentence-transformers` |
+| Embeddings | `ollama` (`nomic-embed-text`) | `pip install ollama`, start Ollama, `ollama pull nomic-embed-text`, then `--embedding-provider ollama` |
+| LLM judge | `ollama` (`llama3.1:8b`) | `pip install ollama`, model pulled, then `--judge ollama` |
 
-Recommended real-number run (fully offline, no API key):
+---
 
-```bash
-pip install ollama
-# Ollama daemon must be running (ollama serve or the desktop app)
-# Required models: nomic-embed-text (embeddings) + your chosen judge model
-ollama pull nomic-embed-text
-ollama pull llama3.1:8b   # or deepseek-r1:8b, qwen3:8b, etc.
-make benchmark ARGS="--embedding-provider ollama --judge ollama:llama3.1:8b --dataset-size 10"
-```
-
-To use a different judge model, substitute its tag after `ollama:`:
+## Running benchmarks (target state — after BM-3 lands)
 
 ```bash
-make benchmark ARGS="--embedding-provider ollama --judge ollama:deepseek-r1:8b --dataset-size 10"
-make benchmark ARGS="--embedding-provider ollama --judge ollama:qwen3:8b --dataset-size 10"
+# Tier 0 — no database required
+pytest benchmarks/ -m benchmark_micro
+
+# Tier 1 — requires DB2_* env vars (Db2 container or live instance)
+pytest benchmarks/ -m benchmark_pr --benchmark-json=results.json
+
+# Full nightly matrix
+pytest benchmarks/ -m benchmark
+
+# Locust concurrency suite
+locust -f benchmarks/locustfiles/memory_store.py --headless -u 50 -r 5 -t 15m
+
+# LongMemEval retrieval quality (offline, no LLM — IR metrics only)
+pytest benchmarks/ -m benchmark_retrieval --dataset longmemeval_s
 ```
 
-## Suites
+## Pytest markers (added by BM-3)
 
-Run one at a time with `--suite {retrieval,latency,isolation}` (default `all`):
+| Marker | Tier | When it runs |
+|---|---|---|
+| `benchmark_micro` | 0 | Every push & PR (~90 s) — no database |
+| `benchmark_pr` | 1 | Every PR (~25 min) — Db2 container |
+| `benchmark_nightly` | 2 | Nightly schedule |
+| `benchmark_scale` | 3 | Weekly / on-demand |
 
-1. **Retrieval quality** (`benchmarks/retrieval_quality/`) — a synthetic,
-   LongMemEval-shaped (arXiv 2410.10813) dataset covering the five ability
-   categories (extraction, multi-session reasoning, temporal reasoning,
-   knowledge updates, abstention), run through `remember()`/`search()` and
-   scored by the configured judge.
-2. **Latency/cost** (`benchmarks/latency_cost/`) — per-call latency
-   percentiles for `remember()`/`search()`, plus estimated LLM token cost
-   *only* when `--consolidator mock` wires in a cost-tracked hook (the
-   default `--consolidator none` reports the SDK's real $0.00 no-op
-   baseline).
-3. **Isolation under load** (`benchmarks/isolation_load/`) — many concurrent
-   threads across synthetic tenants/agents hammering `search()`/`list_all()`,
-   asserting zero cross-scope leakage under real concurrency (not just the
-   single-threaded, mocked-cursor conditions VER-5's audit checked).
+## What is not built from scratch
 
-## Output
+Per the DECISIONS.md BM-1 entry, these are explicitly out of scope:
 
-Writes `project-management/BENCHMARKS.md` (override with `--output`),
-stamped with the exact embedding provider, judge, dataset size, and
-configuration used — see `benchmarks/common/report.py`.
-
-## A note on the isolation suite and shared infrastructure
-
-If your `DB2_*` env vars point at a shared dev instance rather than a
-personal/local one, be mindful before cranking `--tenants`/`--workers` way
-up — it's real concurrent load against a real database. The defaults
-(10 tenants × 2 agents, 20 workers, 5 ops/worker = 100 write ops) are
-intentionally modest.
+- A timing/percentile harness → `pytest-benchmark`
+- A report renderer or results database → `github-action-benchmark` on `gh-pages`
+- A concurrency driver / worker pool → Locust
+- A memory-benchmark dataset → LongMemEval
+- An LLM-judge framework → LongMemEval's own scorer
