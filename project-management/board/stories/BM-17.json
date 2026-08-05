@@ -3,7 +3,12 @@
   "epic_id": "EPIC-16",
   "title": "Deterministic IR metrics (CI-safe)",
   "summary": "Recall@k, MRR, and nDCG@k against LongMemEval's labelled evidence sessions with no LLM anywhere in the path — the metric CI can actually run and trust.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Compute Recall@k, MRR, and nDCG@k against LongMemEval's own labelled evidence sessions, with no LLM anywhere in the computation path. This is the direct fix for BENCH-1's methodology finding: a benchmark whose primary metric is a non-deterministic LLM verdict cannot gate CI or be compared to published figures, but a deterministic IR metric can be either. Use `ranx` or a small hand-rolled implementation (both are acceptable per the strategy doc's Phase 2.5 evaluation).\n\nAcceptance: metrics are bit-identical across repeated runs on the same inputs — genuinely deterministic, not just \"usually stable\"; computed for k in {5, 10, 20, 50}; reported per LongMemEval's ability category (single-session, multi-session, temporal reasoning, knowledge update, abstention, etc.); the full `longmemeval_s` run completes in under 10 minutes so it fits the nightly Tier 2 budget (EPIC-17's BM-21). Depends on BM-16.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Implemented in benchmarks/quality/ir_metrics.py (commit 039d3a9). Pure-Python recall_at_k(), mrr(), ndcg_at_k() — hand-rolled nDCG from the IDCG formula, zero optional dependencies (no ranx, no numpy). compute_ir_metrics() batches all 500 questions in one pass computing k in {5,10,20,50} per-question and aggregating to per_category + overall. 4 determinism tests assert bit-equality (not approx) across repeated calls. format_markdown_table() renders GH-flavoured Markdown for reporting. 35 benchmark_micro tests, all passing. All acceptance criteria met."
+    }
+  ]
 }

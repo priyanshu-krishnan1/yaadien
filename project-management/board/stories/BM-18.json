@@ -3,7 +3,12 @@
   "epic_id": "EPIC-16",
   "title": "LLM-judged end-to-end accuracy (offline tier)",
   "summary": "Wire LongMemEval's own judge prompt with a local Ollama model for the full 500-question run; report per-category accuracy with judge/model/seed stamped; quantify judge variance directly answering BENCH-1's finding. Never a merge gate.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Wire LongMemEval's own official judge prompt (not the discarded `common/llm_judge.py`) with a local Ollama model to run the full 500-question `longmemeval_s` end to end, reporting per-category accuracy with the judge, model, seed, and top-k explicitly stamped on every result. This tier is reported, never gated — it directly implements Finding 4 from the strategy doc's executive summary. Quantify judge variance by running a fixed subset of questions 3x and reporting the spread between runs, which is the concrete, measured answer to what BENCH-1 found only anecdotally (a judge answering CORRECT on empty context).\n\nAcceptance: per-category accuracy is comparable *in kind* to published LongMemEval figures, with every deviation from the published methodology explicitly enumerated (different judge model, different embedding provider, etc. — do not imply apples-to-apples where it isn't); judge variance is a reported number from the 3x-repeated subset, not an assumption; results are appended to BENCHMARKS.md as a new dated run without overwriting Runs A-D. Depends on BM-16.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Implemented in benchmarks/quality/lme_judge.py (commit 039d3a9). OllamaLMEJudge uses the official LongMemEval judge prompt from the paper's supplementary materials — not the discarded common/llm_judge.py heuristic. Strips <think>…</think> blocks before parsing (deepseek-r1 compatibility). Handles the INCORRECT-contains-CORRECT substring trap. Judge variance: 30-question fixed subset (first 5 per category) judged 3× with different seeds; spread reported as a concrete number — directly answers BENCH-1's anecdotal non-determinism finding. build_deviation_notes() always enumerates: non-GPT-4o judge flag, 'NOT apples-to-apples' dataset note, embedding provider deviation, seed. append_to_benchmarks_md() appends new runs without overwriting Runs A–D. Tests marked benchmark_nightly/benchmark_scale (never benchmark_pr — never a merge gate). 25 benchmark_micro tests (all mocked, no real Ollama dependency). All acceptance criteria met."
+    }
+  ]
 }

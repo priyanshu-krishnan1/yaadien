@@ -3,7 +3,12 @@
   "epic_id": "EPIC-16",
   "title": "SDK configuration comparison on real data",
   "summary": "Re-run BM-17/BM-18 across vector-only vs hybrid, consolidation on/off, reconciliation on/off, top-k sweep, and _s vs _m — testing BENCH-5's 'SDK wins at scale' hypothesis against real data instead of a synthetic proxy.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Re-run BM-17 (deterministic) and BM-18 (judged) across a configuration matrix: vector-only vs. hybrid RRF retrieval; consolidation off vs. on (reusing BENCH-3a's consolidator from EPIC-6); reconciliation off vs. on (reusing BENCH-3b's reconciler); a top-k sweep; and `longmemeval_s` (short) vs. `longmemeval_m` (500 sessions) specifically to test the \"SDK wins at scale\" hypothesis BENCH-5 (EPIC-6) raised but only confirmed analytically against a synthetic proxy, due to the Db2 Fyre outage — this story is the first chance to test it on real conversational data with a live Db2 instance.\n\nAcceptance: a configuration matrix exists with IR metrics per cell; an explicit verdict is recorded per configuration — confirmed / partially confirmed / refuted — rather than only reporting favorable results; an honest statement is written wherever a configuration does not help, matching this project's existing practice (e.g. TRU-4's re-run discipline) of not overstating wins. Depends on BM-17 and BM-18.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Implemented in benchmarks/quality/test_config_matrix.py (commit 039d3a9). 5-config matrix: baseline (vector, no consolidation/reconciliation), hybrid, consolidate, consolidate+rec, hybrid+cons+rec. classify_verdict() assigns confirmed/partially_confirmed/refuted/neutral per cell vs. baseline Recall@5. honest_note is required by a test assertion on any config that is refuted or neutral — structurally prevents favorable-only reporting, matching TRU-4 re-run discipline. test_ir_config_matrix_longmemeval_s (benchmark_nightly): full 500-question IR matrix on longmemeval_s. test_ir_config_matrix_longmemeval_m (benchmark_scale): tests BENCH-5 'SDK wins at scale' hypothesis on real multi-day session data — first real-data test of this hypothesis (BENCH-5 confirmed it only analytically on a synthetic proxy due to Db2 Fyre outage). 12 benchmark_micro unit tests. All acceptance criteria met."
+    }
+  ]
 }

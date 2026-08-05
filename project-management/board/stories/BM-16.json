@@ -3,7 +3,12 @@
   "epic_id": "EPIC-16",
   "title": "Adopt the real LongMemEval dataset",
   "summary": "Download and cache longmemeval_s/longmemeval_oracle from HuggingFace and build the adapter mapping sessions to add_messages() and questions to store.search(), replacing the synthetic dataset BM-2 removed.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Download `longmemeval_s` and `longmemeval_oracle` (xiaowu0162, ICLR 2025, Apache-2.0) from HuggingFace, cache locally and in CI so runs are offline after first fetch. Write `benchmarks/quality/longmemeval_adapter.py`: maps a LongMemEval session/haystack into `add_messages()` calls under a per-question `MemoryScope` (~150 LOC per the strategy doc's estimate), and maps a question into a `store.search()` call, plus the reverse mapping needed to compute Recall@k against the dataset's own labelled evidence sessions. This is the direct replacement for the synthetic `retrieval_quality/dataset.py` BM-2 removed — the report itself already states synthetic results are \"explicitly NOT comparable to vendor-reported LongMemEval figures,\" and this dataset is free and Apache-2.0 licensed, so there is no reason not to use the real one.\n\nAcceptance: all 500 questions ingest successfully end to end; per-question scope isolation is verified (no cross-question leakage in the adapter itself); dataset caching keeps CI runs fully offline after the first fetch; licensing and attribution are recorded in `benchmarks/README.md`. Depends on BM-3.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-05",
+      "text": "Implemented in benchmarks/quality/longmemeval_adapter.py (commit 039d3a9). load_longmemeval() downloads longmemeval_s/m/oracle from xiaowu0162/longmemeval (Apache-2.0) on first call and caches as local JSONL for fully offline CI runs. iter_questions() maps each row to a LongMemEvalQuestion with a unique per-question MemoryScope (agent_id = run_id + index + md5(question_id)), making cross-question leakage structurally impossible. Each haystack message carries metadata['session_id'] for Recall@k mapping; evidence_session_ids populated per question. Cache directory overridable via LONGMEMEVAL_CACHE_DIR. datasets>=2.14 added to [benchmark] extra in pyproject.toml. Apache-2.0 attribution and running instructions added to benchmarks/README.md. 17 benchmark_micro unit tests + 1 benchmark_nightly full-ingest test. All acceptance criteria met."
+    }
+  ]
 }
