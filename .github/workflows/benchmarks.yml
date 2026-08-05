@@ -168,18 +168,19 @@ jobs:
           exit 0
 
       - name: Expand Db2 transaction log for benchmark workloads
-        # The default LOGSECOND=8 (8×4 MB = 32 MB secondary log) is
-        # insufficient for the 1000-message batch benchmark (SQL0964C log full).
-        # Increase both primary (LOGPRIMARY) and secondary (LOGSECOND) log files
-        # and deactivate+reactivate the database so the new config takes effect
-        # before any benchmark connection opens.
-        # LOGFILSIZ default 1024 × 4 KB = 4 MB per file.
-        # LOGPRIMARY 30 + LOGSECOND 64 = 94 × 4 MB = 376 MB total log space.
+        # SQL0964C (log full) occurs during the import_scope() benchmark
+        # (test_import_throughput_100[resolver_on]) because that variant fires
+        # the ingest resolver on every remember() — up to 6 rounds × 100 rows
+        # × resolver writes = ~600 high-log-generation transactions.
+        # Fix: increase LOGFILSIZ from the default 1024 (4 MB/file) to 4096
+        # (16 MB/file).  With LOGPRIMARY 30 + LOGSECOND 64, that gives
+        # (30 + 64) × 16 MB = 1504 MB total log space — 4× the previous 376 MB.
+        # LOGFILSIZ requires a restart (deactivate + activate) to take effect.
         # This step is wrapped in || true — any error here is non-fatal.
         run: |
           DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
           docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGPRIMARY 30 LOGSECOND 64' && \
+            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
              db2 deactivate db TESTDB && \
              db2 activate db TESTDB" >/dev/null 2>&1 || true
 
@@ -375,6 +376,473 @@ jobs:
         if: failure()
         run: |
           DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
+          if [ -n "${DB2_CONTAINER}" ]; then
+            echo "=== Last 100 lines of Db2 container logs ==="
+            docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
+          else
+            echo "Could not resolve Db2 container ID — container may not have started."
+          fi
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # EPIC-15 / BM-12 + BM-13 — Locust isolation gate
+  #
+  # Runs on every push to main, every weekly schedule run, and on
+  # workflow_dispatch — the same cadence as the existing pytest-benchmark job.
+  #
+  # Two Locust invocations, back-to-back against the same Db2 container:
+  #
+  #   1. locustfile.py → SDK5User (BM-12 smoke):
+  #      50 VUs, 5/s ramp, 3 min — verifies the gevent-threadpool harness works
+  #      and the five core operations return results without errors.
+  #      Exit non-zero if failure ratio exceeds 1 % (--fail-ratio 0.01).
+  #
+  #   2. isolation_user.py → IsolationUser + SharedStoreIsolationUser (BM-13):
+  #      200 VUs, 10/s ramp, 5 min — asserts zero cross-scope leakage at scale.
+  #      The locustfile itself calls runner.quit() + sets process_exit_code=1 on
+  #      any LeakageError, so a non-zero exit is the leakage gate (AC-3 / BM-13).
+  #
+  # Total wall-clock budget: ≈ 3 + 5 = 8 min + Db2 startup (≤ 15 min) = ≤ 23 min.
+  # timeout-minutes is set to 45 to allow for a slow Db2 startup on a loaded runner.
+  # ────────────────────────────────────────────────────────────────────────────
+  locust-isolation:
+    name: "Locust isolation gate (BM-12 + BM-13)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    env:
+      # ── Db2 connection — identical to the benchmark job above ────────────────
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
+      # ── Locust output directory ───────────────────────────────────────────────
+      LOCUST_OUT: locust_results
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ── 2. Python setup ───────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: pip-locust-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            pip-locust-3.11-
+
+      # locust>=2.26 is in the [benchmark] extra; the mcp/langchain/openai-agents
+      # extras are included so the full SDK surface is importable at runtime.
+      - name: Install package and Locust dependencies
+        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
+
+      # ── 3. Db2 service container ─────────────────────────────────────────────
+      - name: Write /var/custom TESTDB-creation script
+        run: |
+          mkdir -p /tmp/var-custom
+          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          if [ "$(id -un)" = "db2inst1" ]; then
+            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
+          else
+            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
+          fi
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
+          chmod +x /tmp/var-custom/01_create_testdb.sh
+
+      - name: Write docker-compose.db2.yml
+        run: |
+          cat > /tmp/docker-compose.db2-locust.yml << 'EOF'
+          services:
+            db2:
+              image: icr.io/db2_community/db2:12.1.5.0
+              platform: linux/amd64
+              privileged: true
+              environment:
+                LICENSE: accept
+                DB2INST1_PASSWORD: passw0rd
+                ARCHIVE_LOGS: "false"
+              ports:
+                - "50000:50000"
+              shm_size: "1g"
+              volumes:
+                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
+              healthcheck:
+                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
+                interval: 30s
+                timeout: 60s
+                retries: 30
+                start_period: 300s
+          EOF
+
+      - name: Start Db2 and wait for healthy
+        run: docker compose -f /tmp/docker-compose.db2-locust.yml up -d --wait
+        timeout-minutes: 15
+
+      - name: Wait for Db2 DDL readiness (catalog-agent drain)
+        run: |
+          echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
+          for i in $(seq 1 20); do
+            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-locust.yml ps -q db2 2>/dev/null || true)
+            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+              "db2 connect to TESTDB && \
+               db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
+               db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
+               db2 'DROP TABLE ddl_probe' && \
+               db2 terminate" 2>&1 || true)
+            if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
+              echo "Db2 DDL ready after attempt $i."
+              exit 0
+            fi
+            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
+            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+              "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
+              >/dev/null 2>&1 || true
+            sleep 15
+          done
+          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
+          exit 0
+
+      - name: Expand Db2 transaction log for Locust workloads
+        # LOGFILSIZ 4096 (16 MB/file) × (LOGPRIMARY 30 + LOGSECOND 64) = 1504 MB
+        # — matches the benchmark job; prevents SQL0964C under sustained load.
+        run: |
+          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-locust.yml ps -q db2 2>/dev/null || true)
+          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
+             db2 deactivate db TESTDB && \
+             db2 activate db TESTDB" >/dev/null 2>&1 || true
+
+      # ── 4. Run Locust tests ───────────────────────────────────────────────────
+      - name: Create Locust output directory
+        run: mkdir -p "$LOCUST_OUT"
+
+      - name: "BM-12 smoke — SDK5User (50 VUs, 3 min)"
+        # Verifies the gevent-threadpool harness starts cleanly and the five core
+        # SDK operations complete without errors at moderate concurrency.
+        # --fail-ratio 0.01 → exit non-zero if more than 1 % of requests fail.
+        # A non-zero exit here fails the job immediately.
+        run: |
+          locust \
+            -f benchmarks/load/locustfile.py \
+            --user-classes SDK5User \
+            --headless -u 50 -r 5 -t 3m \
+            --fail-ratio 0.01 \
+            --csv "${LOCUST_OUT}/bm12_smoke"
+
+      - name: "BM-13 isolation gate — IsolationUser + SharedStoreIsolationUser (200 VUs, 5 min)"
+        # This is the primary isolation correctness gate.
+        # isolation_user.py registers an @events.request listener that calls
+        # runner.quit() and sets process_exit_code=1 on any LeakageError, so
+        # a non-zero exit here means cross-scope data leakage was detected.
+        # No --fail-ratio flag needed — the module's own exit-code contract
+        # is the gate (AC-3).
+        run: |
+          locust \
+            -f benchmarks/load/isolation_user.py \
+            --user-classes IsolationUser SharedStoreIsolationUser \
+            --headless -u 200 -r 10 -t 5m \
+            --csv "${LOCUST_OUT}/bm13_isolation"
+
+      # ── 5. Upload Locust CSV results as an artifact ──────────────────────────
+      - name: Upload Locust isolation results
+        if: always()
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: locust-isolation-report
+          path: ${{ env.LOCUST_OUT }}/
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ── 6. Debug: print Db2 container logs on failure ────────────────────────
+      - name: Print Db2 container logs (last 100 lines) on failure
+        if: failure()
+        run: |
+          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-locust.yml ps -q db2 2>/dev/null || true)
+          if [ -n "${DB2_CONTAINER}" ]; then
+            echo "=== Last 100 lines of Db2 container logs ==="
+            docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
+          else
+            echo "Could not resolve Db2 container ID — container may not have started."
+          fi
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # EPIC-15 / BM-14 + BM-15 — Locust scalability sweeps + pool saturation
+  #
+  # Runs only on the weekly schedule and on workflow_dispatch — NOT on every
+  # push to main, because the sweep matrix (user ramp + agent sweep + mixed R/W
+  # + 4-point pool-size sweep) takes ≈ 25–30 min total.
+  #
+  # Job structure:
+  #   BM-14 scalability sweeps (scalability_tasks.py):
+  #     a) UserRampUser       — 200 VUs, 2/s ramp, 5 min
+  #     b) AgentSweepUser     — BENCH_N_AGENTS=100, 50 VUs, 5 min
+  #     c) MixedReadWriteUser — BENCH_RW_RATIO=70/30, 50 VUs, 3 min
+  #
+  #   BM-15 pool saturation (pool_saturation_user.py):
+  #     DB2_POOL_SIZE in {1, 5, 10, 20} — 50 VUs, 2 min each
+  #     OverSaturationUser  — DB2_POOL_SIZE=1, 10 VUs (demonstrates graceful exhaustion)
+  #
+  # Agent-count sweep targets are reduced from the full spec (10/100/1000) to
+  # 100 for CI to keep the job inside a 45-minute budget.  The full 1000-agent
+  # sweep is documented in BENCHMARKS.md as a manual run.
+  #
+  # timeout-minutes: 60 allows for Db2 startup + all sweep steps.
+  # ────────────────────────────────────────────────────────────────────────────
+  locust-scale:
+    name: "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Only on schedule/dispatch — not on every push to main (too slow).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+
+    env:
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
+      LOCUST_OUT: locust_scale_results
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ── 2. Python setup ───────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: pip-locust-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            pip-locust-3.11-
+
+      - name: Install package and Locust dependencies
+        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
+
+      # ── 3. Db2 service container ─────────────────────────────────────────────
+      - name: Write /var/custom TESTDB-creation script
+        run: |
+          mkdir -p /tmp/var-custom
+          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          if [ "$(id -un)" = "db2inst1" ]; then
+            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
+          else
+            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
+          fi
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
+          chmod +x /tmp/var-custom/01_create_testdb.sh
+
+      - name: Write docker-compose.db2-scale.yml
+        run: |
+          cat > /tmp/docker-compose.db2-scale.yml << 'EOF'
+          services:
+            db2:
+              image: icr.io/db2_community/db2:12.1.5.0
+              platform: linux/amd64
+              privileged: true
+              environment:
+                LICENSE: accept
+                DB2INST1_PASSWORD: passw0rd
+                ARCHIVE_LOGS: "false"
+              ports:
+                - "50000:50000"
+              shm_size: "1g"
+              volumes:
+                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
+              healthcheck:
+                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
+                interval: 30s
+                timeout: 60s
+                retries: 30
+                start_period: 300s
+          EOF
+
+      - name: Start Db2 and wait for healthy
+        run: docker compose -f /tmp/docker-compose.db2-scale.yml up -d --wait
+        timeout-minutes: 15
+
+      - name: Wait for Db2 DDL readiness (catalog-agent drain)
+        run: |
+          echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
+          for i in $(seq 1 20); do
+            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-scale.yml ps -q db2 2>/dev/null || true)
+            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+              "db2 connect to TESTDB && \
+               db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
+               db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
+               db2 'DROP TABLE ddl_probe' && \
+               db2 terminate" 2>&1 || true)
+            if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
+              echo "Db2 DDL ready after attempt $i."
+              exit 0
+            fi
+            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
+            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+              "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
+              >/dev/null 2>&1 || true
+            sleep 15
+          done
+          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
+          exit 0
+
+      - name: Expand Db2 transaction log for scale workloads
+        # LOGFILSIZ 4096 (16 MB/file) × (LOGPRIMARY 30 + LOGSECOND 64) = 1504 MB
+        # — matches the benchmark job; prevents SQL0964C under sustained Locust load.
+        run: |
+          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-scale.yml ps -q db2 2>/dev/null || true)
+          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
+             db2 deactivate db TESTDB && \
+             db2 activate db TESTDB" >/dev/null 2>&1 || true
+
+      # ── 4. BM-14 scalability sweeps ──────────────────────────────────────────
+      - name: Create Locust output directory
+        run: mkdir -p "$LOCUST_OUT"
+
+      - name: "BM-14a — UserRampUser (200 VUs, 2/s ramp, 5 min)"
+        # Exercises the 1→200 VU ramp.  P95 inflection is visible in the CSV.
+        run: |
+          locust \
+            -f benchmarks/load/scalability_tasks.py \
+            --user-classes UserRampUser \
+            --headless -u 200 -r 2 -t 5m \
+            --csv "${LOCUST_OUT}/bm14a_user_ramp"
+
+      - name: "BM-14b — AgentSweepUser (BENCH_N_AGENTS=100, 50 VUs, 5 min)"
+        # CI-scoped to 100 agents (from 1000) to keep the job within budget.
+        # The full 1000-agent run is documented in BENCHMARKS.md as a manual run.
+        env:
+          BENCH_N_AGENTS: "100"
+        run: |
+          locust \
+            -f benchmarks/load/scalability_tasks.py \
+            --user-classes AgentSweepUser \
+            --headless -u 50 -r 5 -t 5m \
+            --csv "${LOCUST_OUT}/bm14b_agent_sweep"
+
+      - name: "BM-14c — MixedReadWriteUser (70/30 read-heavy, 50 VUs, 3 min)"
+        # Read-heavy mix; the WriterStarvationWarning shows up in the Locust CSV
+        # as a named failure category if writer starvation occurs.
+        env:
+          BENCH_RW_RATIO: "70/30"
+        run: |
+          locust \
+            -f benchmarks/load/scalability_tasks.py \
+            --user-classes MixedReadWriteUser \
+            --headless -u 50 -r 5 -t 3m \
+            --csv "${LOCUST_OUT}/bm14c_mixed_rw"
+
+      # ── 5. BM-15 pool-saturation sweep ───────────────────────────────────────
+      - name: "BM-15 pool=1 (PoolSaturationUser, 50 VUs, 2 min)"
+        env:
+          DB2_POOL_SIZE: "1"
+        run: |
+          locust \
+            -f benchmarks/load/pool_saturation_user.py \
+            --user-classes PoolSaturationUser \
+            --headless -u 50 -r 5 -t 2m \
+            --csv "${LOCUST_OUT}/bm15_pool1"
+
+      - name: "BM-15 pool=5 (PoolSaturationUser, 50 VUs, 2 min)"
+        env:
+          DB2_POOL_SIZE: "5"
+        run: |
+          locust \
+            -f benchmarks/load/pool_saturation_user.py \
+            --user-classes PoolSaturationUser \
+            --headless -u 50 -r 5 -t 2m \
+            --csv "${LOCUST_OUT}/bm15_pool5"
+
+      - name: "BM-15 pool=10 (PoolSaturationUser, 50 VUs, 2 min)"
+        env:
+          DB2_POOL_SIZE: "10"
+        run: |
+          locust \
+            -f benchmarks/load/pool_saturation_user.py \
+            --user-classes PoolSaturationUser \
+            --headless -u 50 -r 5 -t 2m \
+            --csv "${LOCUST_OUT}/bm15_pool10"
+
+      - name: "BM-15 pool=20 (PoolSaturationUser, 50 VUs, 2 min)"
+        env:
+          DB2_POOL_SIZE: "20"
+        run: |
+          locust \
+            -f benchmarks/load/pool_saturation_user.py \
+            --user-classes PoolSaturationUser \
+            --headless -u 50 -r 5 -t 2m \
+            --csv "${LOCUST_OUT}/bm15_pool20"
+
+      - name: "BM-15 graceful-exhaustion check — OverSaturationUser (pool=1, 10 VUs, 1 min)"
+        # Demonstrates that ConnectionPoolExhausted is raised (not a hang) when
+        # more VUs than pool connections hit the pool simultaneously.
+        # Exit code is deliberately ignored (|| true) because OverSaturationUser
+        # WILL produce failures — that is the expected, correct behaviour.
+        env:
+          DB2_POOL_SIZE: "1"
+        run: |
+          locust \
+            -f benchmarks/load/pool_saturation_user.py \
+            --user-classes OverSaturationUser \
+            --headless -u 10 -r 10 -t 1m \
+            --csv "${LOCUST_OUT}/bm15_oversaturate" || true
+
+      # ── 6. Upload Locust scale results as an artifact ─────────────────────────
+      - name: Upload Locust scale results
+        if: always()
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: locust-scale-report
+          path: ${{ env.LOCUST_OUT }}/
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ── 7. Generate Job Summary for scale results ─────────────────────────────
+      - name: Generate scale benchmark Job Summary
+        # Writes a lightweight Markdown summary of the CSV stats files to the
+        # GitHub Step Summary so results are visible directly on the run page
+        # without downloading the artifact.
+        if: always()
+        run: |
+          echo "## Locust Scale Results (BM-14 + BM-15)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for csv in "${LOCUST_OUT}"/*_stats.csv; do
+            [ -f "$csv" ] || continue
+            label=$(basename "$csv" _stats.csv)
+            echo "### ${label}" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            head -3 "$csv" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      # ── 8. Debug: print Db2 container logs on failure ─────────────────────────
+      - name: Print Db2 container logs (last 100 lines) on failure
+        if: failure()
+        run: |
+          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-scale.yml ps -q db2 2>/dev/null || true)
           if [ -n "${DB2_CONTAINER}" ]; then
             echo "=== Last 100 lines of Db2 container logs ==="
             docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
