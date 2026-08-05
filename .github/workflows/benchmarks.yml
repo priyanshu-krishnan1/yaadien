@@ -531,8 +531,12 @@ jobs:
       - name: "BM-12 smoke — SDK5User (50 VUs, 3 min)"
         # Verifies the gevent-threadpool harness starts cleanly and the five core
         # SDK operations complete without errors at moderate concurrency.
+        # DB2_POOL_SIZE=20 (SDK max) prevents ConnectionPoolExhausted at 50 VUs;
+        # the default pool of 5 would exhaust immediately and blow the 1% gate.
         # --fail-ratio 0.01 → exit non-zero if more than 1 % of requests fail.
         # A non-zero exit here fails the job immediately.
+        env:
+          DB2_POOL_SIZE: "20"
         run: |
           locust \
             -f benchmarks/load/locustfile.py \
@@ -548,6 +552,9 @@ jobs:
         # a non-zero exit here means cross-scope data leakage was detected.
         # No --fail-ratio flag needed — the module's own exit-code contract
         # is the gate (AC-3).
+        # DB2_POOL_SIZE=20 prevents ConnectionPoolExhausted at 200 VUs.
+        env:
+          DB2_POOL_SIZE: "20"
         run: |
           locust \
             -f benchmarks/load/isolation_user.py \

@@ -222,15 +222,37 @@ class MemoryStoreUser(User):
     # ── gevent threadpool dispatch ───────────────────────────────────────────
 
     def _run(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
-        """Dispatch *fn* through gevent's threadpool.
+        """Dispatch *fn* through gevent's threadpool without letting exceptions
+        cross the thread→greenlet boundary via gevent's internal SimpleQueue.
 
-        This is the single "minimal extension" the strategy doc calls for:
-        ~5 lines that prevent ibm_db from stalling the greenlet hub.
+        ``threadpool.apply(fn)`` delivers the result (or exception) back to the
+        waiting greenlet by calling ``SimpleQueue._unlock → Waiter.switch`` from
+        the OS thread.  In gevent ≥ 23 that path asserts it is called only from
+        the Hub greenlet, so any exception raised by *fn* (including
+        ``ConnectionPoolExhausted``) triggers:
 
-        Returns the function's return value.  Raises any exception the
-        function raised (gevent re-raises it in the calling greenlet).
+            AssertionError: Can only use Waiter.switch method from the Hub greenlet
+
+        Fix: run a thin wrapper that catches *all* exceptions inside the OS
+        thread and stores them in a list, so the wrapper always returns normally.
+        ``threadpool.apply`` then delivers a clean (no-exception) result back to
+        the hub, and we re-raise the stored exception ourselves — in the calling
+        greenlet, which is the correct gevent context.
         """
-        return gevent.get_hub().threadpool.apply(fn, args, kwargs)
+        _result: list[Any] = [None]
+        _exc: list[BaseException | None] = [None]
+
+        def _safe_call() -> None:
+            try:
+                _result[0] = fn(*args, **kwargs)
+            except BaseException as exc:  # noqa: BLE001
+                _exc[0] = exc
+
+        gevent.get_hub().threadpool.apply(_safe_call, (), {})
+
+        if _exc[0] is not None:
+            raise _exc[0]
+        return _result[0]
 
     # ── VU lifecycle ────────────────────────────────────────────────────────
 
