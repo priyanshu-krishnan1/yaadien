@@ -46,11 +46,9 @@ from __future__ import annotations
 
 import argparse
 import html as html_module
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -626,7 +624,6 @@ def _build_run_rows(runs: list[int]) -> tuple[str, str, str, str]:
     lines: list[str] = []
     latest = runs[0]
     for i, run in enumerate(runs):
-        label = f"Run {run}"
         if i == 0:
             label_html = (
                 f'<span class="run-badge">{_esc(f"Run {run}")}'
