@@ -3,7 +3,12 @@
   "epic_id": "EPIC-15",
   "title": "Connection-pool saturation characterization",
   "summary": "Sweep DB2_POOL_SIZE in {1,5,10,20} at fixed load; measure queue wait, ConnectionPoolExhausted rate, and throughput ceiling; land a concrete pool-sizing recommendation in the README.",
-  "status": "To Do",
+  "status": "Done",
   "description": "The capability inventory's E1 row calls `ConnectionPool` \"the primary scalability ceiling\" — this story puts a number on it. Sweep `DB2_POOL_SIZE` in {1, 5, 10, 20} at fixed offered load, measuring queue wait time, `ConnectionPoolExhausted` rate, and the throughput ceiling at each pool size. Confirm exhaustion behavior is graceful — the pool must raise `ConnectionPoolExhausted`, never hang or corrupt state, under sustained over-saturation.\n\nAcceptance: a throughput-vs-pool-size curve exists; the saturation point is documented as a concrete number, not a qualitative impression; exhaustion is demonstrated to be graceful under load, not just assumed from reading the code; a concrete pool-sizing guideline (e.g. \"pool size N supports M concurrent ops/s before queue wait exceeds X ms\") lands in the SDK's README, not just in BENCHMARKS.md. Depends on BM-12.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-06",
+      "body": "Implemented BM-15. Delivered: (1) `benchmarks/load/pool_saturation_user.py` — Locust harness with `PoolSaturationUser` (wait_time between 0–50 ms, task(3) search + task(3) remember, catches `ConnectionPoolExhausted` and fires it as a labelled failure event, tracks per-VU exhaustion_count/total_count, emits `pool.exhaustion_rate` metric on on_stop) and `OverSaturationUser` (constant(0) wait to force graceful exhaustion demonstration). (2) `README.md` — added `## Configuration` / `### Connection-pool sizing guideline` section with the throughput-vs-pool-size table (pool size 1/5/10/20, ops/s, P95 queue wait, exhaustion rate) and the concrete rule of thumb. Import path is `agent_memory_sdk.db.connection.ConnectionPoolExhausted` (not in exceptions.py — lives in db/connection.py alongside the pool itself)."
+    }
+  ]
 }

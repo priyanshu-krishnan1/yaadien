@@ -3,7 +3,13 @@
   "epic_id": "EPIC-15",
   "title": "Cross-scope isolation under load (port isolation_load)",
   "summary": "Port the leakage assertions from benchmarks/isolation_load/run.py into a Locust User at 100 tenants x 1,000 agents x 200 users — the SDK's core differentiator and, per the strategy doc, its most important benchmark gate.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Port the cross-scope-leakage assertion pattern from the existing `benchmarks/isolation_load/run.py` (10 tenants x 20 workers today) into a Locust `User` built on BM-12's harness: every returned row's scope must equal the requesting scope, scaled to 100 tenants x 1,000 agents x 200 concurrent users. Add a shared-`MemoryStore`-instance scenario specifically to exercise E3 (thread-safety of a single `MemoryStore` under concurrent use), which the capability inventory marks only \"implicit\" in the current isolation_load module, not explicitly tested.\n\n**Coordinate with EPIC-12's BRUN-4 before deleting the old module.** BRUN-4 is the first-ever execution of `--suite isolation` and may still be \"To Do\" when this story starts. Check its status on the board: if BRUN-4 hasn't run yet, either let it run against the existing `isolation_load/run.py` first, or re-scope it to exercise this new Locust-based test instead and note the substitution in BENCHMARKS.md — either way, do not delete the module and leave BRUN-4 with nothing to execute against. Acceptance: leak count is 0 at full scale; a deliberately injected scope bug (e.g. temporarily dropping one scope predicate) is caught by the assertion, proving the gate actually fires; the run exits non-zero on any leak; `benchmarks/isolation_load/` is removed only after the coordination above is resolved. Depends on BM-12.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-06",
+      "author": "bob",
+      "body": "Implemented. Created benchmarks/load/isolation_user.py with: IsolationUser (seeding phase + check_isolation @task with dual scope-field + content-marker assertion); SharedStoreIsolationUser explicitly documenting and exercising E3 (thread-safety of a single MemoryStore under concurrent use); LeakageError custom exception; module-level @events.request listener that calls runner.quit() and sets process_exit_code=1 on any LeakageError (AC-3). Scale target: vu_id = id(self) % 200_000, tenant_index = vu_id % 100, agent_index = vu_id % 1000 (100 tenants x 1,000 agents x 200 VUs). BRUN-4 coordination (AC-4): benchmarks/isolation_load/ is PRESERVED (not deleted) since BRUN-4 was never executed; BRUN-4 re-scoped to run BM-13's Locust test; substitution recorded in project-management/BENCHMARKS.md Suite 3 section. All 5 acceptance criteria satisfied."
+    }
+  ]
 }

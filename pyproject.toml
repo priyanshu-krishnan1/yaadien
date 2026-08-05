@@ -95,6 +95,10 @@ benchmark = [
     "psutil>=6.0",
     "sentence-transformers>=5.6.1",
     "ollama>=0.6.2",
+    # EPIC-15 BM-12: Locust concurrency harness (MIT).
+    # gevent is bundled with locust; listed explicitly so the version
+    # constraint is visible and reproducible.
+    "locust>=2.26",
 ]
 
 [project.urls]

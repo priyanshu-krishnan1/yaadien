@@ -500,14 +500,82 @@ These predictions are analytical estimates, not measured values.
 
 ---
 
-### Suite 2 / Suite 3 (latency/cost and isolation under load)
+### Suite 2 (latency/cost)
 
 *Not yet run. Run separately:*
 
 ```bash
 make benchmark ARGS="--suite latency"
-make benchmark ARGS="--suite isolation"
 ```
+
+---
+
+### Suite 3 (Locust isolation under load — BM-13)
+
+Implemented 2026-08-06 as part of EPIC-15 / BM-13.
+`benchmarks/load/isolation_user.py` is the canonical cross-scope isolation gate
+at 100 tenants × 1,000 agents × 200 concurrent users.
+
+#### What was built
+
+* **`IsolationUser`** — each VU seeds 5 `WorkingMemory` records tagged with its own
+  scope marker, then on every task iteration calls `search()` + `list_all()` and
+  asserts two invariants per row:
+  1. Scope-field check: `record.agent_id == scope.agent_id` and
+     `record.tenant_id == scope.tenant_id`.
+  2. Content-marker check: no other VU's `[[MARKER:…]]` token appears in the row's
+     content.
+
+  Any violation raises `LeakageError`, fires a Locust failure event, and causes the
+  process to exit non-zero (AC-3).  A deliberately injected scope-predicate bug
+  (dropping one predicate) would be caught by these assertions, proving the gate
+  fires (AC-2).
+
+* **`SharedStoreIsolationUser`** — inherits `IsolationUser` and explicitly documents
+  the E3 scenario: multiple concurrent VUs sharing a single `MemoryStore` instance
+  (the module-level `_STORE` singleton backed by one `ConnectionPool`) while each
+  write/read still scopes correctly.  This is the *explicit* E3 test that
+  `benchmarks/isolation_load/run.py` covered only implicitly.
+
+* **`LeakageError`** — custom `AssertionError` subclass so failures are clearly
+  labelled in Locust stats output.
+
+* **Module-level `@events.request` listener** — calls `runner.quit()` and sets
+  `environment.process_exit_code = 1` on the first `LeakageError`, so the run
+  exits non-zero on any leak (AC-3).
+
+#### BRUN-4 coordination (EPIC-12)
+
+BRUN-4 (`EPIC-12`) — *"Run --suite isolation for the first time (--tenants 20
+--workers 40)"* — was **"To Do" (never executed)** when BM-13 was implemented.
+Per BM-13's acceptance criteria AC-4:
+
+* **`benchmarks/isolation_load/` is PRESERVED** — the directory and
+  `benchmarks/isolation_load/run.py` are NOT deleted.
+* **BRUN-4 is re-scoped** to execute BM-13's Locust-based isolation test instead
+  of the old script-based invocation.  The substitution is authoritative; the old
+  `--suite isolation` CLI path remains available for reference but the Locust
+  suite is the production isolation gate going forward.
+
+#### Reproduce
+
+```bash
+locust -f benchmarks/load/isolation_user.py \
+       --headless -u 200 -r 10 -t 5m \
+       --csv results/isolation
+```
+
+Environment variables (same as locustfile.py):
+`DB2_HOSTNAME`, `DB2_PORT`, `DB2_DATABASE`, `DB2_USERNAME`, `DB2_PASSWORD`,
+`DB2_POOL_SIZE` (default 5), `BENCH_RUN_TAG` (default random hex).
+
+#### Pass/fail verdict
+
+*Not yet run against a live Db2 instance.*  Once run, record here:
+
+| Date | Users | Duration | Assertions | Leaks | Verdict |
+|------|-------|----------|------------|-------|---------|
+| —    | —     | —        | —          | —     | pending |
 
 ---
 

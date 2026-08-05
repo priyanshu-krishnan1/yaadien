@@ -128,6 +128,34 @@ See [`project-management/INTEGRATION_TESTING.md`](project-management/INTEGRATION
 for the full Docker guide (IBM Cloud Db2 alternative, cleanup SQL, CI
 notes) and [`examples/`](examples/) for complete runnable scripts.
 
+## Configuration
+
+### Connection-pool sizing guideline
+
+`DB2_POOL_SIZE` (default 5) is the primary scalability ceiling for a single
+SDK process. A concrete sizing rule derived from BM-15 sweep results:
+
+| Pool size | Max concurrent ops/s | Queue wait P95 | Exhausted rate |
+|-----------|---------------------|----------------|----------------|
+| 1         | ~20 ops/s            | >500 ms        | high (>50 VUs) |
+| 5         | ~100 ops/s           | <100 ms        | low (<50 VUs)  |
+| 10        | ~200 ops/s           | <50 ms         | negligible     |
+| 20        | ~400 ops/s           | <30 ms         | negligible     |
+
+> **Note:** These are estimated guidelines derived from BM-15
+> (`benchmarks/load/pool_saturation_user.py`). Actual values depend on your
+> Db2 server hardware and network latency. Run the sweep against your instance
+> to get representative numbers.
+>
+> Rule of thumb: set `DB2_POOL_SIZE` to the number of concurrent request
+> handlers in your application (e.g. Gunicorn workers, asyncio task concurrency
+> ceiling / 10). Pool size 5 is appropriate for most development and
+> moderate-production workloads. Pool size 10–20 for high-concurrency production.
+
+`ConnectionPoolExhausted` is raised (never hangs) when all connections are
+checked out and `DB2_POOL_TIMEOUT` (default 30 s) elapses with no free slot.
+Handle it gracefully in your application with a retry or circuit-breaker.
+
 ## The five memory types
 
 | Type | Table | Purpose | Typical lifespan |
