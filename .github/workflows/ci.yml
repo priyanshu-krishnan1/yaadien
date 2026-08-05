@@ -71,18 +71,18 @@ jobs:
         if: matrix.python-version == '3.11'
         run: python project-management/board/build.py --check
 
-      - name: Upload coverage report to Codecov
+      - name: Upload coverage to Codecov
         # Upload once (on the 3.11 leg) to avoid triple-posting the same
-        # data.  Requires CODECOV_TOKEN repo secret for private repos —
-        # see https://docs.codecov.com/docs/adding-the-codecov-token.
-        # On public repos the token is optional; the upload will succeed
-        # without it but the report will be marked unverified.
+        # data.  Requires CODECOV_TOKEN repo secret — already added to
+        # GitHub Secrets under the name CODECOV_TOKEN.
+        # coverage.xml is produced by pytest --cov-report=xml (pyproject.toml addopts).
         if: matrix.python-version == '3.11'
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@v4
         with:
-          files: coverage.xml
-          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: true
+          verbose: true
 
   integration-test:
     name: "Integration tests (Db2 LUW)"
