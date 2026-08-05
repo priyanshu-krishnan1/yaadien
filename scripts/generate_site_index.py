@@ -1,0 +1,714 @@
+#!/usr/bin/env python3
+"""
+scripts/generate_site_index.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Generate (or regenerate) the root ``index.html`` for the GitHub Pages site at
+
+    https://<owner>.github.io/agent-memory-sdk/
+
+The script is called from the ``benchmarks.yml`` workflow every time new
+benchmark results are published to the ``gh-pages`` branch.  It scans the
+``benchmarks/`` subfolder (relative to ``--site-root``) for numbered run
+directories, picks the latest, and writes a fresh ``index.html`` that serves
+as the site's navigation hub.
+
+Design
+------
+* Three top-level sections, each in its own tab:
+  - ``Home``       — project overview and quick links
+  - ``Board``      — the project management board (``board.html``)
+  - ``Benchmarks`` — list of all published benchmark runs
+* IBM Carbon Design-inspired visual language: IBM Plex typography stack,
+  Carbon blue (#0f62fe / #0043ce), neutral grays, and clean tabular layout.
+* Pure HTML+CSS — no JavaScript frameworks, no external network requests at
+  render time (everything is inlined).  Tab switching uses a tiny embedded
+  <script> block (no external deps).
+* ``stdlib`` only — no third-party dependencies so the script runs in any
+  Python 3.8+ environment without extra installs.
+
+Usage
+-----
+::
+
+    python scripts/generate_site_index.py \\
+        --site-root  /path/to/gh-pages-checkout \\
+        --run-number 42 \\
+        --sha        abc1234 \\
+        --ref        main
+
+Exit codes
+----------
+0 — index.html written successfully.
+1 — fatal error (written to stderr).
+"""
+
+from __future__ import annotations
+
+import argparse
+import html as html_module
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _find_run_dirs(benchmarks_dir: Path) -> list[int]:
+    """Return sorted list of numeric run-directory numbers under *benchmarks_dir*."""
+    runs: list[int] = []
+    if not benchmarks_dir.is_dir():
+        return runs
+    for entry in benchmarks_dir.iterdir():
+        if entry.is_dir() and entry.name.isdigit():
+            runs.append(int(entry.name))
+    return sorted(runs, reverse=True)
+
+
+def _esc(text: str) -> str:
+    return html_module.escape(str(text))
+
+
+# ---------------------------------------------------------------------------
+# HTML template
+# ---------------------------------------------------------------------------
+
+_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agent-memory-sdk — Project Dashboard</title>
+  <style>
+    /* ── Reset ─────────────────────────────────────────────────────────── */
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+    /* ── IBM Carbon-inspired base ────────────────────────────────────── */
+    :root {{
+      --carbon-blue:        #0f62fe;
+      --carbon-blue-hover:  #0043ce;
+      --carbon-blue-light:  #edf5ff;
+      --carbon-gray-10:     #f4f4f4;
+      --carbon-gray-20:     #e0e0e0;
+      --carbon-gray-50:     #8d8d8d;
+      --carbon-gray-70:     #525252;
+      --carbon-gray-100:    #161616;
+      --carbon-white:       #ffffff;
+      --carbon-red:         #da1e28;
+      --carbon-green:       #24a148;
+      --carbon-yellow:      #f1c21b;
+      --border:             #e5e7eb;
+      --text-primary:       #1f2328;
+      --text-muted:         #57606a;
+      --surface:            #f7f8fa;
+      --accent:             #0f62fe;
+    }}
+
+    html, body {{
+      height: 100%;
+    }}
+    body {{
+      font-family: "IBM Plex Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-primary);
+      background: var(--carbon-white);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }}
+
+    /* ── Shell header ────────────────────────────────────────────────── */
+    .shell-header {{
+      background: var(--carbon-gray-100);
+      color: var(--carbon-white);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      height: 48px;
+      gap: 12px;
+      border-bottom: 1px solid #393939;
+      flex-shrink: 0;
+    }}
+    .shell-logo {{
+      width: 24px; height: 24px;
+      background: var(--carbon-blue);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #fff;
+      flex-shrink: 0;
+    }}
+    .shell-product-name {{
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--carbon-white);
+      text-decoration: none;
+      letter-spacing: .01em;
+    }}
+    .shell-product-name:hover {{ color: #c6c6c6; }}
+    .shell-divider {{
+      width: 1px; height: 20px; background: #525252; flex-shrink: 0;
+    }}
+    .shell-product-sub {{
+      font-size: 13px; color: #c6c6c6; font-weight: 300;
+    }}
+    .shell-spacer {{ flex: 1; }}
+    .shell-meta {{
+      font-size: 12px; color: #8d8d8d;
+    }}
+    .shell-meta a {{ color: #78a9ff; text-decoration: none; }}
+    .shell-meta a:hover {{ text-decoration: underline; }}
+
+    /* ── Tab bar ──────────────────────────────────────────────────────── */
+    .tab-bar {{
+      background: var(--carbon-white);
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: flex-end;
+      padding: 0 24px;
+      gap: 0;
+      flex-shrink: 0;
+    }}
+    .tab {{
+      padding: 12px 20px 10px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      border: none;
+      background: none;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      transition: color .15s, border-color .15s;
+      font-family: inherit;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      user-select: none;
+    }}
+    .tab:hover {{ color: var(--text-primary); }}
+    .tab.active {{
+      color: var(--carbon-blue);
+      border-bottom-color: var(--carbon-blue);
+      font-weight: 600;
+    }}
+    .tab-badge {{
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--carbon-blue);
+      color: #fff;
+      border-radius: 10px;
+      padding: 0 6px;
+      line-height: 1.6;
+    }}
+
+    /* ── Main content area ───────────────────────────────────────────── */
+    .content-area {{
+      flex: 1;
+      overflow: auto;
+    }}
+    .tab-panel {{
+      display: none;
+      height: 100%;
+    }}
+    .tab-panel.active {{
+      display: block;
+    }}
+
+    /* ── Home panel ──────────────────────────────────────────────────── */
+    .home-inner {{
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 36px 24px 48px;
+    }}
+    .home-hero-title {{
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--carbon-gray-100);
+      margin-bottom: 8px;
+      line-height: 1.2;
+    }}
+    .home-hero-sub {{
+      font-size: 15px;
+      color: var(--text-muted);
+      max-width: 640px;
+      margin-bottom: 32px;
+      line-height: 1.7;
+    }}
+    .home-cards {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+      margin-bottom: 36px;
+    }}
+    .home-card {{
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 20px 20px 16px;
+      cursor: pointer;
+      transition: box-shadow .15s, border-color .15s;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }}
+    .home-card:hover {{
+      box-shadow: 0 2px 12px rgba(0,0,0,.08);
+      border-color: var(--carbon-blue);
+    }}
+    .home-card-icon {{
+      font-size: 22px;
+      margin-bottom: 10px;
+    }}
+    .home-card-title {{
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--carbon-gray-100);
+      margin-bottom: 5px;
+    }}
+    .home-card-desc {{
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }}
+    .home-badges {{
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+    }}
+    .home-badge {{
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--text-muted);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 4px; padding: 4px 10px;
+    }}
+    .home-badge a {{ color: var(--carbon-blue); text-decoration: none; }}
+    .home-badge a:hover {{ text-decoration: underline; }}
+    .home-section-title {{
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      margin-top: 32px;
+    }}
+    .home-links {{ display: flex; flex-direction: column; gap: 6px; }}
+    .home-link {{
+      color: var(--carbon-blue); font-size: 14px;
+      text-decoration: none;
+    }}
+    .home-link:hover {{ text-decoration: underline; }}
+    .meta-line {{
+      font-size: 12px; color: var(--text-muted); margin-top: 28px;
+    }}
+    .meta-line code {{
+      font-family: "SFMono-Regular", Consolas, monospace;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 3px; padding: 1px 5px; font-size: 11px;
+    }}
+
+    /* ── Board panel ─────────────────────────────────────────────────── */
+    #panel-board {{
+      height: calc(100vh - 96px);
+      /* Shell header (48px) + tab bar (~48px) */
+    }}
+    #panel-board .board-frame {{
+      width: 100%; height: 100%;
+      border: none;
+    }}
+    .board-fallback {{
+      max-width: 640px; margin: 48px auto; padding: 0 24px;
+    }}
+    .board-fallback p {{ color: var(--text-muted); margin-bottom: 12px; }}
+
+    /* ── Benchmarks panel ────────────────────────────────────────────── */
+    .bench-inner {{
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 36px 24px 48px;
+    }}
+    .bench-title {{
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--carbon-gray-100);
+      margin-bottom: 6px;
+    }}
+    .bench-sub {{
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 28px;
+    }}
+    .bench-sub a {{ color: var(--carbon-blue); text-decoration: none; }}
+    .bench-sub a:hover {{ text-decoration: underline; }}
+    .bench-table-wrap {{
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }}
+    .bench-table {{
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+    }}
+    .bench-table thead tr {{ background: var(--surface); }}
+    .bench-table th {{
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      font-weight: 600;
+      white-space: nowrap;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--text-muted);
+    }}
+    .bench-table th.r {{ text-align: right; }}
+    .bench-table td {{
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }}
+    .bench-table tbody tr:last-child td {{ border-bottom: none; }}
+    .bench-table tr:hover td {{ background: var(--surface); }}
+    .run-badge {{
+      display: inline-flex; align-items: center; gap: 5px;
+      font-weight: 600; color: var(--text-primary);
+      font-size: 13px;
+    }}
+    .latest-badge {{
+      font-size: 10px; font-weight: 700;
+      background: var(--carbon-blue); color: #fff;
+      border-radius: 3px; padding: 1px 6px;
+      letter-spacing: .04em;
+    }}
+    .bench-link {{
+      color: var(--carbon-blue); text-decoration: none; font-weight: 500;
+    }}
+    .bench-link:hover {{ text-decoration: underline; }}
+    .bench-link-muted {{
+      color: var(--text-muted); font-size: 12px; text-decoration: none;
+    }}
+    .bench-link-muted:hover {{ text-decoration: underline; }}
+    .no-runs {{
+      padding: 32px; text-align: center; color: var(--text-muted);
+      font-style: italic;
+    }}
+
+    /* ── Footer ──────────────────────────────────────────────────────── */
+    .site-footer {{
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 12px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--carbon-white);
+      flex-shrink: 0;
+    }}
+    .site-footer a {{ color: var(--text-muted); text-decoration: none; }}
+    .site-footer a:hover {{ text-decoration: underline; }}
+  </style>
+</head>
+<body>
+
+  <!-- ── Shell header ──────────────────────────────────────────────── -->
+  <header class="shell-header">
+    <div class="shell-logo">A</div>
+    <a class="shell-product-name" href=".">agent-memory-sdk</a>
+    <div class="shell-divider"></div>
+    <span class="shell-product-sub">Project Dashboard</span>
+    <div class="shell-spacer"></div>
+    <span class="shell-meta">
+      <a href="https://github.com/priyanshu-krishnan1/yaadien">GitHub</a>
+      &nbsp;&bull;&nbsp;
+      <a href="https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/benchmarks.yml">CI</a>
+    </span>
+  </header>
+
+  <!-- ── Tab bar ───────────────────────────────────────────────────── -->
+  <nav class="tab-bar" role="tablist">
+    <button class="tab active" role="tab" aria-selected="true"
+            aria-controls="panel-home" id="tab-home"
+            onclick="switchTab('home')">
+      Home
+    </button>
+    <button class="tab" role="tab" aria-selected="false"
+            aria-controls="panel-board" id="tab-board"
+            onclick="switchTab('board')">
+      Board
+    </button>
+    <button class="tab" role="tab" aria-selected="false"
+            aria-controls="panel-bench" id="tab-bench"
+            onclick="switchTab('bench')">
+      Benchmarks
+      {run_count_badge}
+    </button>
+  </nav>
+
+  <!-- ── Content area ──────────────────────────────────────────────── -->
+  <main class="content-area">
+
+    <!-- Home panel -->
+    <div id="panel-home" class="tab-panel active" role="tabpanel" aria-labelledby="tab-home">
+      <div class="home-inner">
+        <h1 class="home-hero-title">agent-memory-sdk</h1>
+        <p class="home-hero-sub">
+          Governed multi-type memory system for AI agents, backed by
+          <strong>IBM Db2 LUW</strong> and its native <code>VECTOR</code> column type.
+          Framework-agnostic core with thin optional adapters for LangChain,
+          the OpenAI Agents SDK, and MCP.
+        </p>
+
+        <div class="home-badges">
+          <span class="home-badge">
+            <a href="https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/ci.yml">
+              CI status
+            </a>
+          </span>
+          <span class="home-badge">
+            <a href="https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/benchmarks.yml">
+              Benchmark workflow
+            </a>
+          </span>
+          <span class="home-badge">
+            <a href="https://codecov.io/gh/priyanshu-krishnan1/yaadien">
+              Code coverage
+            </a>
+          </span>
+        </div>
+
+        <div class="home-cards">
+          <a class="home-card" onclick="switchTab('board')">
+            <div class="home-card-icon">📋</div>
+            <div class="home-card-title">Project Board</div>
+            <div class="home-card-desc">
+              Epics, stories, and sprint progress — the living project
+              management board generated from structured JSON sources.
+            </div>
+          </a>
+          <a class="home-card" onclick="switchTab('bench')">
+            <div class="home-card-icon">📊</div>
+            <div class="home-card-title">Benchmark Reports</div>
+            <div class="home-card-desc">
+              {run_count_text} published. Tier-0 micro-benchmarks (no database)
+              and Tier-1 suite (requires Db2) — run on every push to
+              <code>main</code>.
+            </div>
+          </a>
+          <a class="home-card" href="https://github.com/priyanshu-krishnan1/yaadien">
+            <div class="home-card-icon">⚙️</div>
+            <div class="home-card-title">Source Code</div>
+            <div class="home-card-desc">
+              Browse the repository, open issues, and contribute on GitHub.
+            </div>
+          </a>
+        </div>
+
+        <div class="home-section-title">Documentation</div>
+        <div class="home-links">
+          <a class="home-link" href="https://github.com/priyanshu-krishnan1/yaadien/blob/main/README.md">README</a>
+          <a class="home-link" href="https://github.com/priyanshu-krishnan1/yaadien/blob/main/project-management/ARCHITECTURE.md">Architecture</a>
+          <a class="home-link" href="https://github.com/priyanshu-krishnan1/yaadien/blob/main/project-management/BENCHMARKS.md">Benchmark Strategy</a>
+          <a class="home-link" href="https://github.com/priyanshu-krishnan1/yaadien/blob/main/project-management/DECISIONS.md">Decision Log</a>
+        </div>
+
+        <p class="meta-line">
+          {last_run_meta}
+        </p>
+      </div>
+    </div>
+
+    <!-- Board panel -->
+    <div id="panel-board" class="tab-panel" role="tabpanel" aria-labelledby="tab-board">
+      <iframe
+        class="board-frame"
+        src="board.html"
+        title="Project Management Board"
+        loading="lazy">
+        <div class="board-fallback">
+          <p>Your browser does not support iframes.</p>
+          <p><a href="board.html">Open the board directly →</a></p>
+        </div>
+      </iframe>
+    </div>
+
+    <!-- Benchmarks panel -->
+    <div id="panel-bench" class="tab-panel" role="tabpanel" aria-labelledby="tab-bench">
+      <div class="bench-inner">
+        <h2 class="bench-title">Benchmark Reports</h2>
+        <p class="bench-sub">
+          Automated results published by the
+          <a href="https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/benchmarks.yml">benchmarks CI workflow</a>
+          on every push to <code>main</code> and weekly on Sunday at 04:00 UTC.
+        </p>
+
+        <div class="bench-table-wrap">
+          <table class="bench-table">
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>Report</th>
+                <th>Histogram</th>
+              </tr>
+            </thead>
+            <tbody>
+{run_rows}
+            </tbody>
+          </table>
+        </div>
+
+        <p style="font-size:12px; color:var(--text-muted);">
+          Each run folder contains a self-contained <code>index.html</code> report plus
+          SVG histogram files generated by pytest-benchmark.
+          Full raw JSON and SVG files are also downloadable as a
+          <a class="bench-link" href="https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/benchmarks.yml">
+            workflow artifact</a> (retained for 90 days).
+        </p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Footer ────────────────────────────────────────────────────── -->
+  <footer class="site-footer">
+    agent-memory-sdk &bull;
+    <a href="https://github.com/priyanshu-krishnan1/yaadien">priyanshu-krishnan1/yaadien</a>
+    &bull; Made with IBM Bob
+  </footer>
+
+  <script>
+    function switchTab(id) {{
+      document.querySelectorAll('.tab').forEach(function(t) {{
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      }});
+      document.querySelectorAll('.tab-panel').forEach(function(p) {{
+        p.classList.remove('active');
+      }});
+      var tab = document.getElementById('tab-' + id);
+      var panel = document.getElementById('panel-' + id);
+      if (tab) {{ tab.classList.add('active'); tab.setAttribute('aria-selected', 'true'); }}
+      if (panel) {{ panel.classList.add('active'); }}
+      // Deep-link support: update URL hash without reload
+      if (history.replaceState) {{
+        history.replaceState(null, '', '#' + id);
+      }}
+    }}
+
+    // On load, honour the URL hash so deep links work
+    (function() {{
+      var hash = (location.hash || '').replace('#', '');
+      if (['home', 'board', 'bench'].indexOf(hash) !== -1) {{
+        switchTab(hash);
+      }}
+    }})();
+  </script>
+</body>
+</html>
+"""
+
+
+def _build_run_rows(runs: list[int]) -> tuple[str, str, str, str]:
+    """Return (run_rows_html, run_count_badge, run_count_text, last_run_meta)."""
+    if not runs:
+        run_rows = '              <tr><td colspan="3" class="no-runs">No benchmark runs published yet.</td></tr>'
+        badge = ""
+        count_text = "No benchmark runs"
+        meta = "No benchmark runs published yet."
+        return run_rows, badge, count_text, meta
+
+    lines: list[str] = []
+    latest = runs[0]
+    for i, run in enumerate(runs):
+        label = f"Run {run}"
+        if i == 0:
+            label_html = (
+                f'<span class="run-badge">{_esc(f"Run {run}")}'
+                f'&nbsp;<span class="latest-badge">latest</span></span>'
+            )
+        else:
+            label_html = f'<span class="run-badge">{_esc(f"Run {run}")}</span>'
+
+        report_href = f"benchmarks/{run}/index.html"
+        hist_href = f"benchmarks/{run}/histogram.svg"
+
+        lines.append(
+            f'              <tr>'
+            f'<td>{label_html}</td>'
+            f'<td><a class="bench-link" href="{_esc(report_href)}">{_esc(report_href)}</a></td>'
+            f'<td><a class="bench-link-muted" href="{_esc(hist_href)}">histogram.svg</a></td>'
+            f'</tr>'
+        )
+
+    run_rows = "\n".join(lines)
+    n = len(runs)
+    badge = f'<span class="tab-badge">{n}</span>'
+    count_text = f"{n} benchmark run{'s' if n != 1 else ''}"
+    meta = f'Last updated from run <code>{latest}</code> &bull; {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}'
+    return run_rows, badge, count_text, meta
+
+
+def generate(
+    site_root: Path,
+    run_number: str = "",
+    sha: str = "",
+    ref: str = "",
+) -> str:
+    """Generate and return the index.html content."""
+    benchmarks_dir = site_root / "benchmarks"
+    runs = _find_run_dirs(benchmarks_dir)
+
+    run_rows, badge, count_text, meta = _build_run_rows(runs)
+
+    return _HTML.format(
+        run_count_badge=badge,
+        run_count_text=count_text,
+        last_run_meta=meta,
+        run_rows=run_rows,
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Generate the root index.html for the GitHub Pages site.",
+    )
+    parser.add_argument(
+        "--site-root",
+        default=".",
+        help="Path to the root of the gh-pages checkout (default: current directory).",
+    )
+    parser.add_argument(
+        "--run-number",
+        default="",
+        help="GitHub Actions run number (informational).",
+    )
+    parser.add_argument("--sha", default="", help="Git commit SHA (informational).")
+    parser.add_argument("--ref", default="", help="Git ref name (informational).")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output path (default: <site-root>/index.html).",
+    )
+    args = parser.parse_args()
+
+    site_root = Path(args.site_root).resolve()
+    content = generate(site_root, args.run_number, args.sha, args.ref)
+
+    out_path = Path(args.out) if args.out else site_root / "index.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(content, encoding="utf-8")
+    print(f"[generate_site_index] Wrote {out_path}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

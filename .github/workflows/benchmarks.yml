@@ -286,9 +286,9 @@ jobs:
           if-no-files-found: warn
 
       # ────────────────────────────────────────────────────────────────────────
-      # 8. Publish HTML report to gh-pages
+      # 8. Publish HTML report to gh-pages (benchmark run subfolder)
       # ────────────────────────────────────────────────────────────────────────
-      - name: Publish to gh-pages
+      - name: Publish benchmark report to gh-pages
         # Only publish on pushes to main and successful scheduled/manual runs
         # (not on pull_request — there isn't one for this workflow anyway, but
         # keep the guard explicit so fork-based PRs never accidentally push
@@ -296,9 +296,7 @@ jobs:
         # Uses peaceiris/actions-gh-pages to commit the HTML index and all
         # SVG histograms to the gh-pages branch under a run-specific subfolder
         # so every run's report is permanently accessible at:
-        #   https://<owner>.github.io/agent-memory-sdk/benchmarks/<run_number>/
-        # and the latest run is also symlinked/redirected from:
-        #   https://<owner>.github.io/agent-memory-sdk/benchmarks/latest/
+        #   https://<owner>.github.io/yaadien/benchmarks/<run_number>/
         if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
@@ -309,7 +307,67 @@ jobs:
           commit_message: "benchmarks: run ${{ github.run_number }} (${{ github.sha }})"
 
       # ────────────────────────────────────────────────────────────────────────
-      # 9. Debug: print Db2 container logs on failure
+      # 9. Publish board.html + regenerate root index.html on gh-pages
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Prepare site root (board.html + index.html)
+        # Runs after the benchmark subfolder has been published (step 8) so the
+        # new run directory already exists in the gh-pages checkout that
+        # peaceiris/actions-gh-pages will use.
+        # Strategy:
+        #   a) Copy project-management/BOARD.html → site_root/board.html
+        #      (makes the board accessible at /yaadien/board.html).
+        #   b) Checkout the current gh-pages branch into a temp dir so
+        #      generate_site_index.py can scan the existing benchmarks/
+        #      subdirectory list (including the run just published) and build
+        #      an accurate navigation table.
+        #   c) Write the new index.html into a small staging dir and publish it
+        #      to the root of gh-pages (keep_files: true so benchmark subdirs
+        #      and board.html are preserved).
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: |
+          # ── a) Copy board.html into a staging directory ─────────────────────
+          mkdir -p site_root_stage
+          cp project-management/BOARD.html site_root_stage/board.html
+
+          # ── b) Checkout gh-pages so we can scan the existing run dirs ────────
+          # Use a sparse checkout into /tmp/gh-pages-scan; we only need the
+          # directory listing of benchmarks/, not the full content.
+          git fetch origin gh-pages --depth=1 2>/dev/null || true
+          GH_PAGES_SCAN_DIR=$(mktemp -d)
+          git worktree add --detach "$GH_PAGES_SCAN_DIR" origin/gh-pages 2>/dev/null \
+            || git clone --depth=1 --branch gh-pages \
+               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+               "$GH_PAGES_SCAN_DIR" 2>/dev/null \
+            || { echo "Warning: could not clone gh-pages for scan — using empty benchmarks list"; mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks"; }
+
+          # Make sure the just-published run dir appears in the scan root
+          # (the peaceiris publish may not be visible yet if git worktree raced
+          # ahead; synthesize it so the table is always accurate).
+          mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks/${{ github.run_number }}"
+
+          # ── c) Generate index.html pointing at all known runs ────────────────
+          python scripts/generate_site_index.py \
+            --site-root  "$GH_PAGES_SCAN_DIR" \
+            --run-number "${{ github.run_number }}" \
+            --sha        "${{ github.sha }}" \
+            --ref        "${{ github.ref_name }}" \
+            --out        site_root_stage/index.html
+
+          # Clean up worktree (best-effort; errors here are non-fatal)
+          git worktree remove --force "$GH_PAGES_SCAN_DIR" 2>/dev/null || true
+
+      - name: Publish site root (board.html + index.html) to gh-pages
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site_root_stage
+          destination_dir: .
+          keep_files: true
+          commit_message: "docs(gh-pages): update site root for run ${{ github.run_number }} (${{ github.sha }})"
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 10. Debug: print Db2 container logs on failure
       # ────────────────────────────────────────────────────────────────────────
       - name: Print Db2 container logs (last 100 lines) on failure
         # Only runs when a previous step failed so the logs are not printed on

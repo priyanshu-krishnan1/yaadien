@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/priyanshu-krishnan1/yaadien/graph/badge.svg)](https://codecov.io/gh/priyanshu-krishnan1/yaadien)
+[![Project Dashboard](https://img.shields.io/badge/dashboard-GitHub%20Pages-0f62fe)](https://priyanshu-krishnan1.github.io/yaadien/)
 
 Governed multi-type memory system for AI agents, backed by **IBM Db2 LUW**
 and its native `VECTOR` column type. Framework-agnostic core (zero required
@@ -288,21 +289,57 @@ Every run uploads a `benchmark-report` artifact that includes:
 To download: open the run page → scroll to **"Artifacts"** at the bottom →
 click **"benchmark-report"**. Artifacts are retained for **90 days**.
 
-### GitHub Pages (HTML report)
+### GitHub Pages (project dashboard)
 
-On pushes to `main`, scheduled runs, and manual runs, the HTML report is also
-published to the **gh-pages** branch and is accessible at:
+On every push to `main`, scheduled run, or manual run, the benchmark workflow
+also rebuilds and publishes the **project dashboard** to GitHub Pages:
 
 ```
-https://<owner>.github.io/agent-memory-sdk/benchmarks/<run_number>/
+https://priyanshu-krishnan1.github.io/yaadien/
 ```
 
-Each run gets its own permanent subfolder so historical reports are never
-overwritten. The `peaceiris/actions-gh-pages` action appends to the branch
-rather than replacing it (`keep_files: true`).
+The dashboard is an IBM Carbon-inspired single-page site with three tabs:
 
-> **First-time GitHub Pages setup:** if the `gh-pages` branch does not exist
-> yet, the first workflow run creates it automatically. You then need to enable
-> GitHub Pages in **Settings → Pages → Source → Deploy from branch → gh-pages
-> → / (root)** to make the URL live.
+| Tab | URL fragment | Content |
+|-----|-------------|---------|
+| **Home** | `#home` | Project overview, quick links, badge strip |
+| **Board** | `#board` | Project management board (`project-management/BOARD.html`) embedded in an iframe |
+| **Benchmarks** | `#bench` | Table of all published benchmark runs; each row links to its permanent `benchmarks/<run_number>/index.html` report |
+
+#### How pages are published
+
+1. **Benchmark report** — `scripts/generate_benchmark_summary.py --html` writes
+   `benchmark_results/index.html` and SVG histograms; the workflow publishes
+   them to `benchmarks/<run_number>/` on the `gh-pages` branch
+   (`keep_files: true` so previous runs are never overwritten).
+
+2. **Project board** — `project-management/BOARD.html` is copied as-is to the
+   `gh-pages` root as `board.html`.  It is regenerated from its JSON sources
+   via `make board` (or `python project-management/board/build.py`) whenever
+   epics or stories change, and published on the next benchmark run.
+
+3. **Root `index.html`** — `scripts/generate_site_index.py` scans the
+   `benchmarks/` folder of the current `gh-pages` checkout, discovers all
+   numbered run directories, and writes a fresh `index.html` that links to all
+   of them in the Benchmarks tab.
+
+#### First-time GitHub Pages setup
+
+If the `gh-pages` branch does not exist yet, the first workflow run creates it
+automatically. You then need to enable GitHub Pages once:
+
+**Settings → Pages → Source → Deploy from branch → `gh-pages` → `/` (root)**
+
+#### Adding a new tab or section
+
+1. **Add the page content** to `gh-pages` root (e.g. `coverage.html`).
+2. **Update `scripts/generate_site_index.py`**:
+   - Add a new `<button class="tab">` entry in `_HTML` (copy an existing one).
+   - Add the corresponding `<div id="panel-…" class="tab-panel">` section.
+   - Register the new panel ID in the `switchTab` JS array.
+3. **Update the workflow** in `.github/workflows/benchmarks.yml` step 9 to
+   copy the new source file into `site_root_stage/` before publishing.
+
+The generator is pure stdlib Python — no build tool required; it runs in the
+same environment as every other CI step.
 
