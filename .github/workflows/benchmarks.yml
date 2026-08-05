@@ -536,10 +536,10 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/locustfile.py \
-            --user-classes SDK5User \
             --headless -u 50 -r 5 -t 3m \
             --fail-ratio 0.01 \
-            --csv "${LOCUST_OUT}/bm12_smoke"
+            --csv "${LOCUST_OUT}/bm12_smoke" \
+            SDK5User
 
       - name: "BM-13 isolation gate — IsolationUser + SharedStoreIsolationUser (200 VUs, 5 min)"
         # This is the primary isolation correctness gate.
@@ -551,9 +551,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/isolation_user.py \
-            --user-classes IsolationUser SharedStoreIsolationUser \
             --headless -u 200 -r 10 -t 5m \
-            --csv "${LOCUST_OUT}/bm13_isolation"
+            --csv "${LOCUST_OUT}/bm13_isolation" \
+            IsolationUser SharedStoreIsolationUser
 
       # ── 5. Upload Locust CSV results as an artifact ──────────────────────────
       - name: Upload Locust isolation results
@@ -727,9 +727,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/scalability_tasks.py \
-            --user-classes UserRampUser \
             --headless -u 200 -r 2 -t 5m \
-            --csv "${LOCUST_OUT}/bm14a_user_ramp"
+            --csv "${LOCUST_OUT}/bm14a_user_ramp" \
+            UserRampUser
 
       - name: "BM-14b — AgentSweepUser (BENCH_N_AGENTS=100, 50 VUs, 5 min)"
         # CI-scoped to 100 agents (from 1000) to keep the job within budget.
@@ -739,9 +739,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/scalability_tasks.py \
-            --user-classes AgentSweepUser \
             --headless -u 50 -r 5 -t 5m \
-            --csv "${LOCUST_OUT}/bm14b_agent_sweep"
+            --csv "${LOCUST_OUT}/bm14b_agent_sweep" \
+            AgentSweepUser
 
       - name: "BM-14c — MixedReadWriteUser (70/30 read-heavy, 50 VUs, 3 min)"
         # Read-heavy mix; the WriterStarvationWarning shows up in the Locust CSV
@@ -751,9 +751,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/scalability_tasks.py \
-            --user-classes MixedReadWriteUser \
             --headless -u 50 -r 5 -t 3m \
-            --csv "${LOCUST_OUT}/bm14c_mixed_rw"
+            --csv "${LOCUST_OUT}/bm14c_mixed_rw" \
+            MixedReadWriteUser
 
       # ── 5. BM-15 pool-saturation sweep ───────────────────────────────────────
       - name: "BM-15 pool=1 (PoolSaturationUser, 50 VUs, 2 min)"
@@ -762,9 +762,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
-            --user-classes PoolSaturationUser \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool1"
+            --csv "${LOCUST_OUT}/bm15_pool1" \
+            PoolSaturationUser
 
       - name: "BM-15 pool=5 (PoolSaturationUser, 50 VUs, 2 min)"
         env:
@@ -772,9 +772,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
-            --user-classes PoolSaturationUser \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool5"
+            --csv "${LOCUST_OUT}/bm15_pool5" \
+            PoolSaturationUser
 
       - name: "BM-15 pool=10 (PoolSaturationUser, 50 VUs, 2 min)"
         env:
@@ -782,9 +782,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
-            --user-classes PoolSaturationUser \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool10"
+            --csv "${LOCUST_OUT}/bm15_pool10" \
+            PoolSaturationUser
 
       - name: "BM-15 pool=20 (PoolSaturationUser, 50 VUs, 2 min)"
         env:
@@ -792,9 +792,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
-            --user-classes PoolSaturationUser \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool20"
+            --csv "${LOCUST_OUT}/bm15_pool20" \
+            PoolSaturationUser
 
       - name: "BM-15 graceful-exhaustion check — OverSaturationUser (pool=1, 10 VUs, 1 min)"
         # Demonstrates that ConnectionPoolExhausted is raised (not a hang) when
@@ -806,9 +806,9 @@ jobs:
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
-            --user-classes OverSaturationUser \
             --headless -u 10 -r 10 -t 1m \
-            --csv "${LOCUST_OUT}/bm15_oversaturate" || true
+            --csv "${LOCUST_OUT}/bm15_oversaturate" \
+            OverSaturationUser || true
 
       # ── 6. Upload Locust scale results as an artifact ─────────────────────────
       - name: Upload Locust scale results
