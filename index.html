@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agent-memory-sdk — benchmark reports</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; color: #1f2328; background: #ffffff; margin: 0; padding: 32px 24px; }
+    .container { max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 4px; }
+    .subtitle { color: #57606a; font-size: 13px; margin-bottom: 32px; }
+    .subtitle a { color: #3b82d4; text-decoration: none; }
+    .subtitle a:hover { text-decoration: underline; }
+    h2 { font-size: 1rem; font-weight: 600; margin: 0 0 12px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 32px; }
+    thead tr { background: #f7f8fa; }
+    th { padding: 8px 10px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; white-space: nowrap; }
+    th.num { text-align: right; }
+    td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+    td.num { text-align: right; font-family: "SFMono-Regular", Consolas, monospace; }
+    tr:hover { background: #f7f8fa; }
+    .badge { display: inline-block; font-size: 11px; font-weight: 600; background: #3b82d4; color: #fff; border-radius: 3px; padding: 1px 6px; margin-left: 8px; vertical-align: middle; }
+    .run-link { color: #3b82d4; text-decoration: none; font-weight: 500; }
+    .run-link:hover { text-decoration: underline; }
+    .muted { color: #57606a; font-size: 12px; text-decoration: none; }
+    .muted:hover { text-decoration: underline; }
+    footer { margin-top: 48px; padding-top: 12px; border-top: 1px solid #e5e7eb; color: #57606a; font-size: 12px; text-align: center; }
+    footer a { color: #57606a; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>agent-memory-sdk benchmark reports</h1>
+  <p class="subtitle">
+    Automated benchmark results published by the
+    <a href="https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/benchmarks.yml">benchmarks CI workflow</a>
+    on every push to <code>main</code>.
+    Source: <a href="https://github.com/priyanshu-krishnan1/yaadien">priyanshu-krishnan1/yaadien</a>.
+  </p>
+
+  <h2>Benchmark runs</h2>
+  <table>
+    <thead>
+      <tr><th>Run</th><th>Report</th><th class="num">Histograms</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Run 9 <span class="badge">latest</span></td>
+        <td><a class="run-link" href="benchmarks/9/index.html">benchmarks/9/index.html</a></td>
+        <td class="num"><a class="muted" href="benchmarks/9/histogram.svg">histogram.svg</a></td>
+      </tr>
+      <tr>
+        <td>Run 8</td>
+        <td><a class="run-link" href="benchmarks/8/index.html">benchmarks/8/index.html</a></td>
+        <td class="num"><a class="muted" href="benchmarks/8/histogram.svg">histogram.svg</a></td>
+      </tr>
+      <tr>
+        <td>Run 7</td>
+        <td><a class="run-link" href="benchmarks/7/index.html">benchmarks/7/index.html</a></td>
+        <td class="num"><a class="muted" href="benchmarks/7/histogram.svg">histogram.svg</a></td>
+      </tr>
+      <tr>
+        <td>Run 6</td>
+        <td><a class="run-link" href="benchmarks/6/index.html">benchmarks/6/index.html</a></td>
+        <td class="num"><a class="muted" href="benchmarks/6/histogram.svg">histogram.svg</a></td>
+      </tr>
+      <tr>
+        <td>Run 3</td>
+        <td><a class="run-link" href="benchmarks/3/index.html">benchmarks/3/index.html</a></td>
+        <td class="num"><a class="muted" href="benchmarks/3/histogram.svg">histogram.svg</a></td>
+      </tr>
+      <tr>
+        <td>Run 2</td>
+        <td><a class="run-link" href="benchmarks/2/index.html">benchmarks/2/index.html</a></td>
+        <td class="num">—</td>
+      </tr>
+    </tbody>
+  </table>
+  <footer>Made with <a href="https://github.com/priyanshu-krishnan1/yaadien">IBM Bob</a></footer>
+</div>
+</body>
+</html>
