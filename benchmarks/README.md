@@ -147,3 +147,91 @@ Per the DECISIONS.md BM-1 entry, these are explicitly out of scope:
 - A concurrency driver / worker pool → Locust
 - A memory-benchmark dataset → LongMemEval
 - An LLM-judge framework → LongMemEval's own scorer
+
+---
+
+## EPIC-16: Real LongMemEval dataset (BM-16 through BM-19)
+
+### LongMemEval dataset (BM-16)
+
+| Field | Value |
+|---|---|
+| **Name** | LongMemEval |
+| **Authors** | Wu et al. (xiaowu0162), ICLR 2025 |
+| **License** | Apache-2.0 |
+| **HuggingFace repo** | `xiaowu0162/longmemeval` |
+| **Paper** | arXiv 2410.10813 — *LongMemEval: Benchmarking Long-Context Language Models on Long-term Interactive Memory* |
+| **Questions** | 500 (longmemeval_s / longmemeval_m / longmemeval_oracle splits) |
+| **Categories** | single-session-user, single-session-assistant, multi-session, temporal-reasoning, knowledge-update, abstention |
+
+**Attribution:** This benchmark suite uses the LongMemEval dataset distributed
+under Apache-2.0. The evaluation methodology (judge prompt, scoring, category
+structure) is based on the original paper. This repository's results are **not**
+directly comparable to vendor-reported LongMemEval figures unless:
+1. The same embedding provider is used.
+2. The same judge model (GPT-4o) is used.
+3. All methodology deviations are explicitly enumerated.
+
+Every result produced by `benchmarks/quality/lme_judge.py` (BM-18) lists its
+deviations from the published methodology in `deviation_notes`.
+
+### Running the EPIC-16 suite
+
+**Prerequisites:**
+
+```bash
+# Install dataset loader (one-time)
+pip install datasets
+
+# Warm the local cache (one-time, ~200 MB)
+python -c "from benchmarks.quality.longmemeval_adapter import load_longmemeval; load_longmemeval('longmemeval_s')"
+
+# Pull embedding and judge models (Ollama, one-time)
+ollama pull nomic-embed-text
+ollama pull llama3.1:8b
+```
+
+**Run the deterministic IR metrics (Tier 2 — nightly, no LLM):**
+
+```bash
+# All 500 questions, Recall@k / MRR / nDCG@k, no LLM
+pytest benchmarks/quality/ -m benchmark_nightly -k "ir_config_matrix_longmemeval_s" -v
+```
+
+**Run the LLM-judged accuracy (Tier 3 — weekly, requires Ollama):**
+
+```bash
+# Full 500-question judged run + judge variance measurement
+pytest benchmarks/quality/ -m benchmark_scale -k "lme_judge" -v
+```
+
+**Run the configuration matrix (Tier 2/3 — BM-19):**
+
+```bash
+# IR matrix: vector vs hybrid, consolidation on/off, reconciliation on/off
+pytest benchmarks/quality/ -m benchmark_nightly -k "config_matrix_longmemeval_s" -v
+
+# Scale hypothesis: longmemeval_m (multi-day sessions)
+pytest benchmarks/quality/ -m benchmark_scale -k "config_matrix_longmemeval_m" -v
+```
+
+**Smoke test (unit tests only, no Db2, no Ollama):**
+
+```bash
+pytest benchmarks/quality/ -m benchmark_micro -v
+```
+
+### Key files
+
+| File | Story | What it does |
+|---|---|---|
+| `benchmarks/quality/longmemeval_adapter.py` | BM-16 | Download/cache dataset; map sessions → `add_messages()`; evidence → Recall@k |
+| `benchmarks/quality/ir_metrics.py` | BM-17 | Recall@k, MRR, nDCG@k — deterministic, no LLM, CI-safe |
+| `benchmarks/quality/lme_judge.py` | BM-18 | Official LongMemEval judge prompt via Ollama; judge variance; BENCHMARKS.md append |
+| `benchmarks/quality/test_config_matrix.py` | BM-19 | Configuration matrix: vector/hybrid, consolidation on/off, reconciliation on/off, top-k sweep, _s vs _m |
+
+### Cache directory
+
+The default cache location is `~/.cache/longmemeval/`. Override with the
+`LONGMEMEVAL_CACHE_DIR` environment variable. In CI, set this to a mounted
+volume or pre-warmed artifact so runs are fully offline.

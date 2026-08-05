@@ -216,6 +216,37 @@ jobs:
             -v
 
       # ────────────────────────────────────────────────────────────────────────
+      # Tier-2 nightly quality suite (EPIC-16 BM-16/17/18/19)
+      #
+      # Runs only on manual workflow_dispatch — NOT on every push to main or
+      # weekly schedule, because this suite downloads the real LongMemEval
+      # dataset (~200 MB) on first run and exercises all 500 questions against
+      # a live Db2 instance.  The nightly tier uses deterministic IR metrics
+      # (no LLM, no Ollama dependency) and completes within the Tier-2 budget
+      # of ~10 minutes per the benchmark strategy doc.
+      #
+      # Skipped on push and schedule because:
+      #   push to main — results would not be meaningfully actionable per-commit;
+      #                  the nightly schedule (or manual runs) are the right cadence.
+      #   schedule     — reserved for a dedicated nightly workflow (EPIC-17 BM-21);
+      #                  included here as well so a manual dispatch exercises it.
+      #
+      # The LongMemEval cache is expected to be warm via LONGMEMEVAL_CACHE_DIR
+      # or the HuggingFace datasets package (installed in the benchmark extra).
+      # The first run downloads once and caches; subsequent runs are offline.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Run Tier-2 quality suite (benchmark_nightly — EPIC-16, workflow_dispatch only)
+        # Guard: only run on manual dispatch so push-to-main stays fast.
+        # On schedule this is also skipped here — a dedicated nightly workflow
+        # (EPIC-17 BM-21) owns the scheduled Tier-2 run.
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          pytest benchmarks/quality/ -m benchmark_nightly \
+            --no-cov \
+            -v \
+            --tb=short
+
+      # ────────────────────────────────────────────────────────────────────────
       # 5. Generate Job Summary (Markdown table → $GITHUB_STEP_SUMMARY)
       # ────────────────────────────────────────────────────────────────────────
       - name: Generate benchmark Job Summary

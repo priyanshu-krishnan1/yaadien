@@ -99,6 +99,10 @@ benchmark = [
     # gevent is bundled with locust; listed explicitly so the version
     # constraint is visible and reproducible.
     "locust>=2.26",
+    # EPIC-16 BM-16: HuggingFace datasets package for downloading and caching
+    # the real LongMemEval dataset (Apache-2.0).  Only needed on first fetch;
+    # subsequent runs load from the local JSONL cache (fully offline).
+    "datasets>=2.14",
 ]
 
 [project.urls]
