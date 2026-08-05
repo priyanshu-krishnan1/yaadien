@@ -579,6 +579,68 @@ Environment variables (same as locustfile.py):
 
 ---
 
+### Suite 4 (EPIC-15 — Locust scalability sweeps — BM-14)
+
+Implemented 2026-08-06. `benchmarks/load/scalability_tasks.py`.
+
+#### CI coverage (`.github/workflows/benchmarks.yml` — `locust-scale` job)
+
+| Step | Class | VUs | Duration | Trigger |
+|------|-------|-----|----------|---------|
+| BM-14a | `UserRampUser` | 200 | 5 min | schedule + dispatch |
+| BM-14b | `AgentSweepUser` | 50 | 5 min | schedule + dispatch |
+| BM-14c | `MixedReadWriteUser` (70/30) | 50 | 3 min | schedule + dispatch |
+
+**CI scope reduction — agent sweep:** The CI agent-count sweep runs with
+`BENCH_N_AGENTS=100` (not 1 000) to keep the `locust-scale` job within a
+60-minute timeout.  The full 1 000-agent sweep must be run manually:
+
+```bash
+BENCH_N_AGENTS=1000 locust -f benchmarks/load/scalability_tasks.py \
+    --user-classes AgentSweepUser \
+    --headless -u 50 -r 5 -t 5m \
+    --csv results/agent_sweep_1000
+```
+
+The 60-minute soak (`SoakUser`) and the 10 000-turn long-session sweep
+(`LongSessionUser` with `BENCH_SESSION_LENGTH=10000`) are **not in CI**
+(too long for a runner job).  Run them manually when investigating memory
+growth or long-session latency regression.
+
+#### Pass/fail verdict
+
+| Date | Class | VUs | Duration | Outcome |
+|------|-------|-----|----------|---------|
+| — | — | — | — | pending |
+
+---
+
+### Suite 5 (EPIC-15 — connection-pool saturation — BM-15)
+
+Implemented 2026-08-06. `benchmarks/load/pool_saturation_user.py`.
+
+#### CI coverage (`.github/workflows/benchmarks.yml` — `locust-scale` job)
+
+| Step | Class | Pool size | VUs | Duration | Trigger |
+|------|-------|-----------|-----|----------|---------|
+| pool=1  | `PoolSaturationUser`  | 1  | 50 | 2 min | schedule + dispatch |
+| pool=5  | `PoolSaturationUser`  | 5  | 50 | 2 min | schedule + dispatch |
+| pool=10 | `PoolSaturationUser`  | 10 | 50 | 2 min | schedule + dispatch |
+| pool=20 | `PoolSaturationUser`  | 20 | 50 | 2 min | schedule + dispatch |
+| oversaturate | `OverSaturationUser` | 1 | 10 | 1 min | schedule + dispatch |
+
+The `OverSaturationUser` step uses `|| true` — failures are **expected and
+correct**; the step exists to confirm `ConnectionPoolExhausted` is raised rather
+than hanging.
+
+#### Pass/fail verdict
+
+| Date | Pool size | VUs | RPS | P95 queue wait | Exhaustion rate | Outcome |
+|------|-----------|-----|-----|----------------|-----------------|---------|
+| — | — | — | — | — | — | pending |
+
+---
+
 *Caveat, matching the discipline of `ai-agent-platform-competitive-analysis.md`:
 numbers in this report come from a synthetic dataset and a specific local
 configuration. They are reproducible (rerun `scripts/run_benchmarks.py` with the
