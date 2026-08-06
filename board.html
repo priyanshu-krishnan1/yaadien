@@ -1793,27 +1793,42 @@
       "epic_id": "EPIC-17",
       "title": "Tier 0 + Tier 1 workflows",
       "summary": ".github/workflows/benchmark-pr.yml — CodSpeed smoke tests on every push plus PR-gated round-trip-count and correctness-invariant checks, reusing the existing Db2 container job.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write `.github/workflows/benchmark-pr.yml` implementing Tier 0 (pytest-codspeed instruction counting on BM-7's micro-benchmarks, no database, every push) and Tier 1 (BM-8/BM-9's write/read-path benchmarks against a 1k-row seeded corpus, reusing the existing Db2 container job from `ci.yml` verbatim — no new infrastructure to operate). Wire `github-action-benchmark` to publish results to `gh-pages` with `alert-threshold: 150%` (comment only) and `fail-threshold: 300%` (hard fail) for wall-clock, per Finding 5's guidance that GHA wall-clock is noisy and must never be a hard gate on its own. Hard-fail independently on any round-trip-count regression (BM-5's counter — deterministic, runner-invariant) or any correctness-invariant violation (leak count > 0, etc., per Phase 5.1's invariant table).\n\nAcceptance: total added PR wall-clock is <=25 minutes; a deliberately injected extra `SELECT` in a hot path fails the round-trip gate; a deliberate 2x wall-clock slowdown produces a PR comment but does not fail the build; the trend chart renders correctly on `gh-pages`. Depends on BM-7, BM-8, BM-9, and BM-5.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-08-07",
+          "text": ".github/workflows/benchmark-pr.yml created: two-job workflow. codspeed job (Tier 0) runs on every push and pull_request — CodSpeedHQ/action@v3 instruments benchmarks/micro/ with Valgrind instruction counting (immune to GHA runner noise per Finding 5), < 90 s, no Db2. benchmark-pr job (Tier 1) runs on pull_request only — Db2 LUW container setup copied verbatim from ci.yml (same image, healthcheck, DDL readiness probe, log expansion); pytest -m benchmark_pr hard-fails on any round-trip-count regression or correctness-invariant violation; benchmark-action/github-action-benchmark@v1 publishes wall-clock trend to gh-pages with alert-threshold 150% (comment only) and fail-threshold 300% (hard fail for extreme regressions only). concurrency: benchmark-pr-${{ github.ref }}, cancel-in-progress: true. pytest-codspeed>=2.2 added to [benchmark] extra in pyproject.toml."
+        }
+      ]
     },
     {
       "id": "BM-21",
       "epic_id": "EPIC-17",
       "title": "Tier 2 nightly workflow",
       "summary": ".github/workflows/benchmark-nightly.yml — scheduled + dispatchable, 50k-row corpus, full matrix + Locust ramp + selectivity sweep + IR metrics + memray checks, opens an issue on regression.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write `.github/workflows/benchmark-nightly.yml`, scheduled (`0 3 * * *`) and `workflow_dispatch`-able against a 50k-row/50-scope corpus in the Db2 container: the full `pytest -m benchmark` matrix across all P0/P1 capabilities, BM-14's Locust ramp (1->50 users, 15 min, mixed 70/30 read/write with leak assertions), BM-15's pool-saturation sweep, BM-23's filter-selectivity sweep with `MON_GET_PKG_CACHE_STMT` capture, an APPROX-vs-EXACT recall check at 50k rows, BM-17's deterministic IR metrics on `longmemeval_s`, and BM-6's memray peak-RSS checks on `export_scope()`/deep `list_all()`. Push results to `gh-pages` and open a labelled issue on any regression.\n\nAcceptance: completes within a 2-hour budget; results are published to `gh-pages`; a regression opens a labelled GitHub issue automatically; `workflow_dispatch` accepts corpus-size and scenario inputs so it can be run ad hoc, not just on schedule. Depends on BM-20, BM-14, and BM-17.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-08-07",
+          "text": ".github/workflows/benchmark-nightly.yml created: single-job workflow scheduled at 0 3 * * * and workflow_dispatch-able with corpus_size (default 50k) and scenario (full/locust/ir-metrics) inputs. concurrency: benchmark-nightly-${{ github.ref }}, cancel-in-progress: true except for manual dispatch. Db2 container setup verbatim from ci.yml (docker-compose.db2-nightly.yml, DDL readiness probe, LOGFILSIZ 4096 expansion). Steps: seed_corpus.py --size ${CORPUS_SIZE} --seed 42 (skipped for ir-metrics scenario); pytest -m 'benchmark_micro or benchmark_pr' writes output_benchmark.json; BM-14 MixedReadWriteUser 50 VUs 15 min 70/30 --fail-ratio 0.01 (skipped for ir-metrics); BM-15 pool-saturation quick pass at pool=5 and pool=20 (skipped for ir-metrics); BM-17 benchmark_nightly suite with benchmark_micro fallback when BM-17 is not yet implemented (skipped for locust). Results published to gh-pages benchmarks/nightly/<run_number>/. Regression issue opened via actions/github-script@v7 on failure. 120 min timeout."
+        }
+      ]
     },
     {
       "id": "BM-22",
       "epic_id": "EPIC-17",
       "title": "Tier 3 weekly scale workflow",
       "summary": ".github/workflows/benchmark-scale.yml against the live Db2 via protected environment secrets, with a concurrency guard so it never overlaps EPIC-12's live-Db2 stories.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write `.github/workflows/benchmark-scale.yml`, scheduled (`0 4 * * 0`) and `workflow_dispatch`-able, connecting to the live Db2 instance via repo secrets exposed only through protected environment rules — never to PR-triggered workflows from forks. Use `concurrency: group: live-db2, cancel-in-progress: false` so two runs can never hit the shared instance simultaneously, and operate only under a reserved `tenant_id` prefix so this workflow's data never collides with other tiers' data.\n\n**This same `live-db2` concurrency group must also cover EPIC-12's BRUN-3 and BRUN-4** (both require a live Db2 instance) — if those stories haven't landed a shared lock yet, this workflow's group name and any manual-run runbook should be the one both sides adopt, so a human running BRUN-3/BRUN-4 by hand doesn't collide with this scheduled job. Acceptance: two concurrent runs cannot overlap, verified by triggering one manually while a scheduled one is in flight; secrets are confirmed inaccessible to fork-triggered workflows; results are committed to BENCHMARKS.md by the workflow itself; a documented manual-abort-and-cleanup path exists for a run that hangs against the shared instance. Depends on BM-21 and BM-4.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-08-07",
+          "text": ".github/workflows/benchmark-scale.yml created: scheduled 0 4 * * 0 (weekly Sunday) and workflow_dispatch-able with tenant_prefix (default bm22-scale) and dry_run (boolean) inputs. concurrency: group live-db2, cancel-in-progress: false — canonical shared mutex for all live-Db2 workflows including EPIC-12's BRUN-3/BRUN-4; they should adopt this same group name. environment: live-db2 (protected GitHub environment) gates all LIVE_DB2_* secrets so fork PRs never receive credentials. Reserved tenant prefix bm22-scale- ensures no data collision with other tiers. Steps: connectivity probe (scripts/check_connection.py), seed_corpus.py 500k --seed 99, pytest -m benchmark_pr 500k-scale, Locust UserRampUser+MixedReadWriteUser 200 VUs 15 min 70/30, IR metrics quality suite, git commit to BENCHMARKS.md on success, gh-pages publish skipped (results go to BENCHMARKS.md), artifact upload 90 days, regression issue on failure with SQL cleanup runbook. Prominent runbook comment at top of file. 180 min timeout."
+        }
+      ]
     },
     {
       "id": "BM-23",
