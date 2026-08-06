@@ -5522,3 +5522,97 @@ contributor" in the capability inventory.
 
 ---
 
+
+## 2026-08-08 — UNI-1: Standards-alignment matrix — Oracle, Mem0, Microsoft (EPIC-20)
+
+### Alignment matrix
+
+| Vendor axis | This repo's epics/stories | Status |
+|---|---|---|
+| **Oracle** — TPC-style latency/throughput/workload profiling; database-native memory substrate; arXiv 2607.13157 (93.8% LongMemEval, ~10.7× token reduction vs flat-history) | EPIC-13 (BM-1..6 — pytest-benchmark foundation + harness), EPIC-14 (BM-7..11 — single-op latency/round-trip coverage), EPIC-15 (BM-12..15 — Locust concurrency/scale), EPIC-17 (BM-20..22 — CI tiering on runner-invariant signals), EPIC-18 (BM-23..25 — Db2-specific depth: filter selectivity, APPROX/EXACT recall, vector-literal cost) | **Satisfied** |
+| **Mem0** — retrieval accuracy / context retention / relevance scoring / long-vs-short-term memory evaluation; token-efficient pipeline (April 2026: 91.6% LoCoMo, 93.4% LongMemEval, ~7K tokens/query; May 2026 update with Temporal Reasoning + Memory Decay: 92.5% LoCoMo, 94.4% LongMemEval, ~6,800–7,000 tokens/query) | EPIC-16 (BM-16..19 — real LongMemEval dataset + Recall@k/MRR/nDCG@k deterministic IR metrics), EPIC-6 (BENCH-1..5 — root-caused accuracy gap), TRU-4 (EPIC-11 — embedding-provider re-run, reproducibility discipline), TRU-5 (EPIC-11 — token-efficiency run vs. ~7K tokens/query comparison point) | **Satisfied** (TRU-4 and TRU-5 remain To Do; EPIC-16 pending) |
+| **Microsoft** — AutoGen/Semantic Kernel/Azure AI Foundry agent-quality evaluation axis: task-completion rate, faithfulness, groundedness, coherence; Memora (ICML 2026, arXiv/Microsoft Research, 86.3% LoCoMo / 87.4% LongMemEval, up to 98% fewer tokens; beats RAG, Mem0, Zep, LangMem, full-context baselines); AgentEval (arXiv 2402.09015) multi-criteria utility scoring | EPIC-21 (AGQ-1..5) | **Gap — closed by EPIC-21** |
+
+---
+
+### Vendor axis detail
+
+#### Oracle AI Agent Memory (arXiv 2607.13157)
+
+Oracle's methodology centres on a **database-native memory substrate** (Oracle Database), with TPC-style latency/throughput/workload profiling as the benchmarking discipline. Published numbers (arXiv 2607.13157, citation verified 2026-08-08):
+
+- **93.8% accuracy** on LongMemEval (same benchmark this repo targets via EPIC-16).
+- **~10.7× token reduction** vs flat-history baselines.
+- Profiling methodology: TPC-style latency + throughput benchmarks using the database engine's own monitoring infrastructure.
+
+**Repo coverage:** EPIC-13 (pytest-benchmark foundation, BM-1..6) establishes the four-tier benchmarking architecture. EPIC-14 (BM-7..11) covers single-operation latency on every P0 SDK capability. EPIC-15 (BM-12..15) provides Locust-based concurrency and scale — the direct analogue of Oracle's workload-profiling tier. EPIC-17 (BM-20..22) wires CI tiering on runner-invariant signals (round-trip counts, instruction counts via CodSpeed) rather than noisy wall-clock. EPIC-18 (BM-23..25) quantifies three Db2-specific depth constraints (metadata-filter selectivity/index effectiveness, APPROX vs EXACT vector recall at scale, ~20 KB vector-literal cost per statement). Together these epics provide the same TPC-style workload characterisation Oracle uses, adapted to this SDK's Db2 + Python API surface.
+
+#### Mem0 token-efficient algorithm (verified from mem0.ai, 2026-08-08)
+
+Mem0's pipeline is: extract atomic facts from the turn → compare each candidate fact to its top-k most-similar existing memories via cosine similarity → LLM policy routes each candidate to `ADD`/`UPDATE(merge)`/`DELETE`/`NOOP`. Published numbers:
+
+- **April 2026 release:** 91.6% LoCoMo, 93.4% LongMemEval, avg ~7K tokens/query (vs 25K+ for full-context).
+- **May 2026 update** (Temporal Reasoning + Memory Decay): 92.5% LoCoMo, 94.4% LongMemEval, ~6,800–7,000 tokens/query.
+
+**Repo coverage:** EPIC-16 (BM-16..19) replaces the synthetic retrieval-quality dataset with the real Apache-2.0 LongMemEval dataset and adds deterministic IR metrics (Recall@k, MRR, nDCG@k) alongside LLM-judged accuracy — directly comparable to Mem0's published methodology. EPIC-6 (BENCH-1..5) root-caused the accuracy gap (ORC-2 zero-recall bug, now fixed; Run D: 98.0% SDK vs 98.0% flat-context baseline). TRU-4 (EPIC-11) applies the LightMem reproducibility discipline (arXiv 2607.29104: embedding/retriever choice alone swings accuracy 58→75%) to this SDK's own claimed Run D win by re-running with the embedding provider swapped. TRU-5 (EPIC-11) runs the latency/cost suite for the first time and reports a real token-cost figure as a measured comparison point against Mem0's ~7K tokens/query. Note: TRU-5 was marked superseded by EPIC-14's statistically sound pytest-benchmark runs (BM-1 entry, 2026-08-05); the token-efficiency comparison against Mem0's published figure is now EPIC-14/TRU-4's responsibility.
+
+#### Microsoft — Memora, Azure AI Foundry evaluators, AgentEval (verified 2026-08-08)
+
+**Microsoft Memora** (ICML 2026, Microsoft Research, released 2026-06-29):
+- 86.3% LLM-judge accuracy on LoCoMo, 87.4% on LongMemEval.
+- Up to 98% fewer tokens than full-context (STATE-Bench Pass¹/Pass⁵ methodology).
+- Beats RAG, Mem0, Zep, LangMem, and full-context baselines.
+
+**Microsoft Azure AI Foundry built-in evaluators** (verified live from learn.microsoft.com/en-us/azure/foundry/concepts/evaluation-evaluators, 2026-08-08):
+- *General-purpose (1–5 Likert scale, pass threshold = 3):* Coherence, Fluency.
+- *RAG-specific (1–5 Likert scale):* Groundedness, Relevance.
+- *Agent-specific system evaluators:* Task Completion (preview) — Binary Pass/Fail; Customer Satisfaction (preview) — 1–5 Likert; Task Adherence — Binary Pass/Fail based on threshold; Task Navigation Efficiency — Binary Pass/Fail; Intent Resolution (preview) — Binary Pass/Fail based on 1–5 scale threshold.
+- *Agent-specific process evaluators:* Tool Call Accuracy — Binary Pass/Fail based on 1–5 scale threshold; Tool Selection; Tool Output Utilization.
+- **Note:** The evaluator set has changed multiple times in 2026; this set is verified as of 2026-08-08.
+
+**AgentEval** (arXiv 2402.09015, Arabzadeh et al., "Towards better Human-Agent Alignment"):
+- Multi-criteria task-utility scoring via CriticAgent + QuantifierAgent.
+- Criteria are task-specific (not fixed): e.g., Accuracy, Clarity, Efficiency, Completeness, Task Understanding, Plan Making, Response to Feedback.
+- Scores per criterion via LLM judge; aggregate utility score goes beyond binary pass/fail.
+- Pass¹/Pass⁵ terminology from STATE-Bench (Microsoft, 2026).
+
+**Repo coverage:** This entire axis — task-completion rate, faithfulness, groundedness, coherence, AutoGen/Semantic Kernel/Azure AI Foundry evaluation — is **currently unimplemented** (see gap confirmation below). It is closed by **EPIC-21 (AGQ-1..5)**, which will deliver: AGQ-1 (a pure-Python agent-quality evaluator with no `azure-ai-evaluation` PyPI dependency), AGQ-2 (task-completion harness), AGQ-3 (faithfulness/groundedness scoring), AGQ-4 (coherence/fluency), AGQ-5 (composite agent-quality score feeding UNI-3's scorecard generator).
+
+---
+
+### Gap confirmation
+
+A grep of `project-management/` benchmark `.md` files was performed as of 2026-08-08 for the following terms:
+
+- `faithfulness`, `groundedness`, `coherence`, `task completion`, `AutoGen`, `Azure AI Foundry`
+
+**Result: zero hits in any benchmark file.** The terms appear only in `ai-agent-platform-competitive-analysis.md` and `PROMPTS.md`, neither of which is a benchmark implementation or benchmark result file. This confirms the Microsoft agent-quality evaluation axis is entirely unimplemented as of UNI-1.
+
+---
+
+### Explicitly out of scope
+
+1. **No `azure-ai-evaluation` PyPI package dependency.** EPIC-21/AGQ-1's rationale: this SDK's positioning is "developer-controlled writes, not mandatory passive extraction" with zero mandatory external services (Step 0 foundational decision). A hard dependency on Microsoft's proprietary evaluation SDK would introduce a cloud-service coupling, a paid-tier API requirement, and a Windows/Azure identity management concern incompatible with the SDK's stated zero-external-services principle. AGQ-1 therefore implements the evaluation criteria as pure Python, mirroring the methodology without coupling to the vendor toolchain.
+
+2. **No TPC-C/TPC-H-style database-level benchmarking.** Already rejected in `BENCHMARK_STRATEGY.md`'s HammerDB/VectorDBBench section (2026-08-04 EPIC-13..19 entry): HammerDB (GPL-3.0) and VectorDBBench measure Db2 as a database engine — transaction throughput, ANN recall/QPS — not this SDK's Python API surface. These are legitimate external tools for Db2 capacity planning, but they bypass the SDK entirely. The correct benchmark layer for this SDK is the pytest-benchmark + Locust stack built by EPIC-13..15, which drives the Python API directly.
+
+---
+
+### Sequencing note
+
+This matrix establishes the two remaining EPIC-20 deliverables:
+
+- **UNI-2** — composite benchmark score formula: defines how Oracle (latency/throughput), Mem0 (retrieval accuracy/token-efficiency), and Microsoft (agent-quality) sub-scores combine into a single published composite figure.
+- **UNI-3** — scorecard generator: produces the BENCHMARKS.md scorecard section from live benchmark outputs.
+
+**EPIC-21 must deliver AGQ-5's output to UNI-3 before the agent-quality sub-score can be populated.** UNI-2 can draft the formula before AGQ-5 exists, but UNI-3's scorecard will carry a placeholder for the Microsoft axis until AGQ-5 has produced a measured number.
+
+---
+
+### Citation verification
+
+All Microsoft Azure AI Foundry evaluator names, scale types (1–5 Likert / Binary Pass/Fail), and preview/GA status were verified live from learn.microsoft.com/en-us/azure/foundry/concepts/evaluation-evaluators on **2026-08-08**. Oracle arXiv 2607.13157 abstract (93.8% LongMemEval, ~10.7× token reduction) verified 2026-08-08. Mem0 token-efficient algorithm numbers (April 2026: 93.4% LongMemEval, ~7K tokens/query; May 2026 update: 94.4% LongMemEval) verified from mem0.ai 2026-08-08. Microsoft Memora ICML 2026 numbers (86.3% LoCoMo, 87.4% LongMemEval, up to 98% fewer tokens) verified 2026-08-08. AgentEval arXiv 2402.09015 criteria and methodology verified 2026-08-08.
+
+- **Made during:** UNI-1 implementation (EPIC-20).
+
+---

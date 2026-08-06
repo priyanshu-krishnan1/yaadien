@@ -1,0 +1,11 @@
+# Memory Benchmark Score — composite weight configuration
+# See project-management/BENCHMARK_SCORING.md for the full scoring model.
+#
+# Rules:
+#   - weights must sum to 1.0 (±0.001 tolerance)
+#   - changing this file changes the composite without a code change (UNI-2 requirement)
+#   - any deviation from equal thirds must be justified in DECISIONS.md
+weights:
+  performance: 0.333
+  retrieval_accuracy: 0.333
+  agent_quality: 0.334

@@ -7,6 +7,11 @@ demand via `make benchmark`.
 
 ---
 
+> **Composite scoring:** This report's per-suite sections are the primary record. A
+> unified 0-100 Memory Benchmark Score combining all three axes is defined in
+> [BENCHMARK_SCORING.md](./BENCHMARK_SCORING.md) and rendered by
+> `benchmarks/common/scorecard.py`.
+
 ## Methodology summary
 
 ### Suite 1: Retrieval quality (LongMemEval-shaped)
@@ -646,3 +651,25 @@ numbers in this report come from a synthetic dataset and a specific local
 configuration. They are reproducible (rerun `scripts/run_benchmarks.py` with the
 same flags) but are not independently audited and should not be treated as a
 substitute for evaluating this SDK against your own workload.*
+
+
+---
+
+## Composite Scorecard (Memory Benchmark Score)
+
+> **Run date:** 2026-08-06  **Mode:** incomplete
+
+| **MBS** | **INCOMPLETE** | ⚠️ One or more sub-scores missing — see details below |
+|---|---|---|
+
+### Sub-scores
+
+| Sub-score | Axis | Score | Notes |
+|---|---|---|---|
+| Performance | Oracle | MISSING | BM-27 baselines not committed or baselines.json not found |
+| Retrieval-accuracy (deterministic) | Mem0 | MISSING | BM-17 output not found |
+| Retrieval-accuracy (judged) | Mem0 | MISSING | BM-18 output not found — nightly only |
+| Agent-quality | Microsoft | MISSING | EPIC-21 AGQ suite not yet run |
+
+> **Weights:** performance=0.333  retrieval_accuracy=0.333  agent_quality=0.334  (from `benchmarks/scoring_weights.yaml`)
+> See [`project-management/BENCHMARK_SCORING.md`](./BENCHMARK_SCORING.md) for the full scoring model.
