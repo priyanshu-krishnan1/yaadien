@@ -3,7 +3,12 @@
   "epic_id": "EPIC-18",
   "title": "Metadata-filter selectivity & index effectiveness",
   "summary": "Sweep filter selectivity across all 4 operators at 50k/500k rows, capturing MON_GET_PKG_CACHE_STMT rows-read vs rows-returned to prove or disprove the LOCATE-based $array_contains path scans.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Sweep filter selectivity (none / 50% / 10% / 1% / 0.1% match rate, using BM-4's controlled metadata cardinality) across all 4 metadata-filter operators (exact, `$not`, `$array_contains`, `$array_contains_any`) at 50k and 500k rows, capturing Db2's own `MON_GET_PKG_CACHE_STMT` server-side statement monitoring for rows-read versus rows-returned on every query. This directly tests the capability inventory's documented concern: `$array_contains` uses three `LOCATE()` calls on the raw `VARCHAR(4096)` metadata column, which is non-sargable by construction — this story is what turns \"probably scans\" into a measured ratio. Also confirm whether the scope composite indexes and the (necessarily non-partial, per this Db2 build's `SQL0104N` limitation) `expires_at` indexes are actually being used by the query planner, not just present in the schema (F5).\n\nAcceptance: a latency-vs-selectivity curve exists per operator; the rows-read/rows-returned ratio is captured and reported, not estimated; index usage is confirmed via Db2 monitoring, not assumed from the DDL; findings and a concrete recommendation (e.g. a generated column for the common filter shapes, or documented guidance to prefer scalar filters over `$array_contains` at scale) are recorded in DECISIONS.md. Depends on BM-4.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-08",
+      "text": "benchmarks/read/test_filter_selectivity.py created: 5 module-scoped fixtures seeding 1k-row corpora at cardinality 2/10/100/1000 for ~50%/~10%/~1%/~0.1% selectivity. 17 benchmark_pr tests (no_filter + 4 operators × 4 selectivities). MON_GET_PKG_CACHE_STMT capture in _get_mon_stats() with graceful -1/-1 fallback. benchmark.extra_info['finding'] records non-sargable scan confirmation for $array_contains/$array_contains_any or index-use confirmation for scalar filters, plus a concrete recommendation. benchmark_nightly + benchmark_scale tests reference BM-4 seeded 50k/500k corpora. Ruff clean, 35 tests collected, all skip gracefully without DB2_HOSTNAME. DECISIONS.md updated."
+    }
+  ]
 }

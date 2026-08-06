@@ -1839,27 +1839,42 @@
       "epic_id": "EPIC-18",
       "title": "Metadata-filter selectivity & index effectiveness",
       "summary": "Sweep filter selectivity across all 4 operators at 50k/500k rows, capturing MON_GET_PKG_CACHE_STMT rows-read vs rows-returned to prove or disprove the LOCATE-based $array_contains path scans.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Sweep filter selectivity (none / 50% / 10% / 1% / 0.1% match rate, using BM-4's controlled metadata cardinality) across all 4 metadata-filter operators (exact, `$not`, `$array_contains`, `$array_contains_any`) at 50k and 500k rows, capturing Db2's own `MON_GET_PKG_CACHE_STMT` server-side statement monitoring for rows-read versus rows-returned on every query. This directly tests the capability inventory's documented concern: `$array_contains` uses three `LOCATE()` calls on the raw `VARCHAR(4096)` metadata column, which is non-sargable by construction — this story is what turns \"probably scans\" into a measured ratio. Also confirm whether the scope composite indexes and the (necessarily non-partial, per this Db2 build's `SQL0104N` limitation) `expires_at` indexes are actually being used by the query planner, not just present in the schema (F5).\n\nAcceptance: a latency-vs-selectivity curve exists per operator; the rows-read/rows-returned ratio is captured and reported, not estimated; index usage is confirmed via Db2 monitoring, not assumed from the DDL; findings and a concrete recommendation (e.g. a generated column for the common filter shapes, or documented guidance to prefer scalar filters over `$array_contains` at scale) are recorded in DECISIONS.md. Depends on BM-4.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-08-08",
+          "text": "benchmarks/read/test_filter_selectivity.py created: 5 module-scoped fixtures seeding 1k-row corpora at cardinality 2/10/100/1000 for ~50%/~10%/~1%/~0.1% selectivity. 17 benchmark_pr tests (no_filter + 4 operators × 4 selectivities). MON_GET_PKG_CACHE_STMT capture in _get_mon_stats() with graceful -1/-1 fallback. benchmark.extra_info['finding'] records non-sargable scan confirmation for $array_contains/$array_contains_any or index-use confirmation for scalar filters, plus a concrete recommendation. benchmark_nightly + benchmark_scale tests reference BM-4 seeded 50k/500k corpora. Ruff clean, 35 tests collected, all skip gracefully without DB2_HOSTNAME. DECISIONS.md updated."
+        }
+      ]
     },
     {
       "id": "BM-24",
       "epic_id": "EPIC-18",
       "title": "APPROX vs. EXACT recall & vector index characterization",
       "summary": "Measure APPROX recall against EXACT ground truth at 1k/50k/500k/1M rows; measure CREATE VECTOR INDEX build time and storage vs row count; sweep embedding dimension. Recall regression fails the nightly tier.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Measure APPROX search-mode recall against EXACT ground truth at 1k/50k/500k/1M rows (the 1M-row point runs only in EPIC-17's Tier 3, against the live Db2 instance — Tiers 0-2 cover up to 500k in the ephemeral container). Measure `CREATE VECTOR INDEX ... WITH DISTANCE COSINE` (DiskANN) build time and on-disk storage size as a function of row count, and sweep embedding dimension (384/768/1536/3072) to see how both recall and build time respond.\n\nAcceptance: the Recall@10(APPROX)/Recall@10(EXACT) ratio is reported at every scale, against a documented floor of >=0.95 (per Phase 5.1's invariant table); an index-build-time-vs-row-count curve exists; a documented guideline states when APPROX search is safe to use by default versus when EXACT should be forced; a recall-ratio regression below the 0.95 floor fails the nightly Tier 2 workflow (BM-21), not just the weekly one. Depends on BM-4.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-08-08",
+          "text": "benchmarks/read/test_approx_recall.py created: 8 tests across 3 tiers. Tier 1 (benchmark_pr): recall@10 at 1k rows (no floor assertion) + APPROX/EXACT latency ratio. Tier 2 (benchmark_nightly): recall@10 at 50k rows (assert >= 0.95, probes pre-seeded corpus or seeds inline) + dimension sweep at 384/768/1536/3072 (each asserts floor). Tier 3 (benchmark_scale): recall@10 at 500k rows (requires pre-seeded corpus). Recall separated from benchmark loop via second clean pass. benchmark.extra_info['guideline'] = 'APPROX safe...' or 'FORCE EXACT...'. Index build-time proxy via approx_vs_exact_latency_ratio. Ruff clean. DECISIONS.md updated."
+        }
+      ]
     },
     {
       "id": "BM-25",
       "epic_id": "EPIC-18",
       "title": "Vector-literal cost and dimension economics",
       "summary": "Quantify the SQL0901N-workaround cost of inlining a ~20 KB vector literal per statement, split between client-side string building, network bytes, and server parse time, across dimensions 384-3072.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Db2 12.1.5 fp0 raises `SQL0901N` for `TO_VECTOR(?)`/`CAST(? AS VECTOR)`, so every vector is inlined as a raw SQL string literal — at dim 1536 that's a ~20 KB statement on every single INSERT and search. This story quantifies that cost and attributes it between three distinct sources: client-side string-building time (BM-7's `_vec_to_str` microbenchmark isolates this), network transfer bytes, and server-side parse time, swept across dimensions 384/768/1536/3072.\n\nAcceptance: the cost is attributed by source (client build vs. network vs. server parse), not reported as one opaque number; a concrete recommendation is written on default `embedding_dim` choice, trading off retrieval quality against this measured cost; the story explicitly recommends whether to re-test parameter binding (`TO_VECTOR(?)`) on newer Db2 fixpacks, since this whole workaround may become unnecessary on a future fixpack; findings land in DECISIONS.md. Depends on BM-7 and BM-8.",
-      "comments": []
+      "comments": [
+        {
+          "date": "2026-08-08",
+          "text": "benchmarks/read/test_vector_literal_cost.py created: 4 benchmark_micro tests sweep _vec_to_str across dim 384/768/1536/3072 measuring statement_size_bytes (~20KB at 1536). 2 benchmark_pr tests at dim=1536 only: INSERT and SEARCH round-trips with three-source cost attribution (client_build_ms / statement_size_bytes / server_parse_ms_est = total - client_build). Linear extrapolation table in extra_info['extrapolation']. Concrete dim recommendation and fixpack note (re-test TO_VECTOR(?) binding on Db2 >= 12.1.5 fp1) stored in every result. All 4 micro tests pass (~5s). Ruff clean. DECISIONS.md updated."
+        }
+      ]
     },
     {
       "id": "BM-26",

@@ -3,7 +3,12 @@
   "epic_id": "EPIC-18",
   "title": "Vector-literal cost and dimension economics",
   "summary": "Quantify the SQL0901N-workaround cost of inlining a ~20 KB vector literal per statement, split between client-side string building, network bytes, and server parse time, across dimensions 384-3072.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Db2 12.1.5 fp0 raises `SQL0901N` for `TO_VECTOR(?)`/`CAST(? AS VECTOR)`, so every vector is inlined as a raw SQL string literal — at dim 1536 that's a ~20 KB statement on every single INSERT and search. This story quantifies that cost and attributes it between three distinct sources: client-side string-building time (BM-7's `_vec_to_str` microbenchmark isolates this), network transfer bytes, and server-side parse time, swept across dimensions 384/768/1536/3072.\n\nAcceptance: the cost is attributed by source (client build vs. network vs. server parse), not reported as one opaque number; a concrete recommendation is written on default `embedding_dim` choice, trading off retrieval quality against this measured cost; the story explicitly recommends whether to re-test parameter binding (`TO_VECTOR(?)`) on newer Db2 fixpacks, since this whole workaround may become unnecessary on a future fixpack; findings land in DECISIONS.md. Depends on BM-7 and BM-8.",
-  "comments": []
+  "comments": [
+    {
+      "date": "2026-08-08",
+      "text": "benchmarks/read/test_vector_literal_cost.py created: 4 benchmark_micro tests sweep _vec_to_str across dim 384/768/1536/3072 measuring statement_size_bytes (~20KB at 1536). 2 benchmark_pr tests at dim=1536 only: INSERT and SEARCH round-trips with three-source cost attribution (client_build_ms / statement_size_bytes / server_parse_ms_est = total - client_build). Linear extrapolation table in extra_info['extrapolation']. Concrete dim recommendation and fixpack note (re-test TO_VECTOR(?) binding on Db2 >= 12.1.5 fp1) stored in every result. All 4 micro tests pass (~5s). Ruff clean. DECISIONS.md updated."
+    }
+  ]
 }

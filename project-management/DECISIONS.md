@@ -5393,3 +5393,132 @@ architectural decision); this entry records the implementation.
 
 ---
 
+
+## 2026-08-08 — EPIC-18: Db2-specific depth benchmarks (BM-23, BM-24, BM-25)
+
+Three benchmark files added under `benchmarks/read/` to measure the three
+implementation constraints flagged as "almost certainly a top-3 latency
+contributor" in the capability inventory.
+
+---
+
+### BM-23 — Metadata-filter selectivity & index effectiveness
+(`benchmarks/read/test_filter_selectivity.py`)
+
+- **Decision (selectivity sweep design):** Five module-scoped fixtures seed
+  isolated 1k-row corpora with controlled metadata cardinality (2 / 10 / 100 /
+  1000 distinct values), achieving ~50% / ~10% / ~1% / ~0.1% per-value
+  selectivity. Each fixture seeds both a scalar `category` field and a JSON
+  array `tags` field, so all four filter operators (exact, `$not`,
+  `$array_contains`, `$array_contains_any`) can be swept at every
+  selectivity level.
+
+- **Decision (MON_GET_PKG_CACHE_STMT capture):** After each benchmark call,
+  `_get_mon_stats()` queries
+  `TABLE(MON_GET_PKG_CACHE_STMT(NULL, NULL, NULL, -2))` ordered by
+  `LAST_METRICS_UPDATE DESC FETCH FIRST 1 ROWS ONLY`. Returns
+  `(rows_read, rows_returned)` or `(-1, -1)` on any exception so monitoring
+  inaccessibility never fails a benchmark run.
+
+- **Decision (finding/recommendation in extra_info):** `_bench_with_mon()`
+  writes a `"finding"` key to `benchmark.extra_info` that:
+  - Confirms non-sargable scan for `$array_contains`/`$array_contains_any`
+    when `rows_read/rows_returned > 10` (expected to approach `n_rows`).
+  - Confirms index likely used for scalar filters when ratio ≤ 10 (F5).
+  - Explicitly recommends adding a generated/computed column for common array
+    filter shapes, or documenting that callers should prefer scalar filters
+    over `$array_contains` at scale (>50k rows).
+
+- **Decision (tier structure):** `@pytest.mark.benchmark_pr` at 1k rows
+  (17 tests); `@pytest.mark.benchmark_nightly` and
+  `@pytest.mark.benchmark_scale` reference the BM-4 seeded 50k/500k corpora
+  via deterministic scope IDs (`bench-seed-42-50k-tenant-0`).
+
+---
+
+### BM-24 — APPROX vs EXACT recall & vector index characterization
+(`benchmarks/read/test_approx_recall.py`)
+
+- **Decision (recall floor and assertion gate):** `Recall@10(APPROX)` vs
+  `Recall@10(EXACT)` = `|APPROX ∩ EXACT| / K`, with `K = 10`. The floor is
+  `>= 0.95` (Phase 5.1 invariant). The floor assertion is **not** enforced at
+  1k rows (`assert_floor=False`) because DiskANN on tiny corpora has variable
+  recall before the graph is sufficiently populated. The assertion IS enforced
+  at `n_rows >= 50k` (Tier 2 `benchmark_nightly` and Tier 3
+  `benchmark_scale`) so a recall regression at scale fails the nightly gate
+  (BM-21) as BM-24's acceptance criterion requires.
+
+- **Decision (recall measurement separated from benchmark loop):** EXACT
+  ground truth is computed once per query vector OUTSIDE the benchmark timer.
+  The benchmark times only the APPROX DB round-trip (cycling through 20
+  distinct query vectors to average latency). After benchmarking, a second
+  clean pass over all 20 query vectors computes the average recall independently
+  of the benchmark repetition count — follows the embed-vs-DB split pattern
+  established in BM-9 (`test_search_modes.py`).
+
+- **Decision (index build-time proxy):** `CREATE VECTOR INDEX` timing is
+  intentionally avoided in pytest because it requires dropping the production
+  index. Instead, the `approx_vs_exact_latency_ratio` is recorded as a proxy:
+  if APPROX is significantly faster than EXACT, the DiskANN index is engaged;
+  if APPROX ≈ EXACT, the search fell back to a full scan (DiskANN not active).
+
+- **Decision (dimension sweep at nightly tier):** The dimension sweep
+  (`test_approx_recall_dim_sweep`) runs at `@pytest.mark.benchmark_nightly`
+  and asserts the floor at every dim (384/768/1536/3072). A dimension mismatch
+  that breaks the index would produce recall = 0.0, which would immediately
+  fail here.
+
+- **Decision (guideline stored in extra_info):** `benchmark.extra_info["guideline"]`
+  is set to `"APPROX safe: recall >= 0.95"` or
+  `"FORCE EXACT: recall below 0.95 floor"` on every test run so CI artifacts
+  carry the human-readable recommendation without post-processing.
+
+---
+
+### BM-25 — Vector-literal cost and dimension economics
+(`benchmarks/read/test_vector_literal_cost.py`)
+
+- **Decision (three-source cost attribution):** The SQL0901N workaround
+  inlines vectors as raw string literals. Cost is split into three sources:
+  1. **`client_build_ms`** — wall-clock time of `_vec_to_str(embedding)`,
+     measured with `time.perf_counter()` OUTSIDE the benchmark loop.
+  2. **`statement_size_bytes`** — `len(_vec_to_str(embedding).encode("utf-8"))`,
+     proxy for network transfer cost. At dim=1536 this is ~20 KB per INSERT
+     and per VECTOR_DISTANCE search.
+  3. **`server_parse_ms_est`** — `total_round_trip_ms - client_build_ms`,
+     an estimate of server-side parse time. Scales roughly linearly with
+     statement size.
+
+- **Decision (only dim=1536 for DB round-trip tests):** The Db2 schema has a
+  fixed-width `VECTOR(1536, FLOAT32)` column. Inserting or searching with a
+  mismatched-dimension vector raises a Db2 error. DB round-trip tests therefore
+  only run at `dim=1536`; other dimensions are covered by the CPU-only
+  `benchmark_micro` tests which measure `_vec_to_str` time and `statement_size_bytes`.
+
+- **Decision (linear extrapolation table):** `benchmark.extra_info["extrapolation"]`
+  stores projected `server_parse_ms_est` for all four dims (384/768/1536/3072)
+  using `server_parse(dim) ≈ server_parse(1536) × (dim / 1536)`. This is a
+  stated approximation, not a measurement.
+
+- **Decision (default dim recommendation):**
+  - dim ≤ 768: Low literal overhead. Preferred if retrieval quality is
+    acceptable (`text-embedding-3-small` at 768 is a strong quality/cost
+    tradeoff).
+  - dim = 1536: Default (`text-embedding-ada-002` / `text-embedding-3-small`
+    full dimension). ~20 KB literal per operation. Acceptable for production;
+    consider dim=768 if write latency is a bottleneck.
+  - dim = 3072: High literal overhead. Only justified for highest-quality
+    embeddings (`text-embedding-3-large`). Prefer dim=1536 or lower unless
+    retrieval quality delta is proven critical.
+
+- **Decision (fixpack recommendation):** All tests record
+  `benchmark.extra_info["fixpack_note"]`:
+  > "Re-test TO_VECTOR(?) parameter binding on Db2 >= 12.1.5 fp1. SQL0901N
+  > is a known Db2 12.1.5 fp0 regression; if resolved on a newer fixpack,
+  > vector-literal inlining is no longer necessary and this entire workaround
+  > (and its ~20 KB per-statement overhead) can be removed."
+
+- **Made during:** EPIC-18 implementation (this session).
+
+---
+
