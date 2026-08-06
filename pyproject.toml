@@ -85,6 +85,11 @@ dev = [
 benchmark = [
     # EPIC-13 BM-3: pytest-benchmark for the new four-tier benchmark suite.
     "pytest-benchmark>=5.0",
+    # EPIC-17 BM-20: CodSpeed Valgrind instruction-count instrumentation for
+    # the Tier-0 smoke gate (benchmark-pr.yml).  The plugin wraps pytest-benchmark
+    # so the same benchmark functions work under both pytest-benchmark (local /
+    # weekly runs) and CodSpeed (every-push instruction-count gate).
+    "pytest-codspeed>=2.2",
     # pytest-benchmark's --benchmark-histogram flag requires pygal + pygaljs.
     # Without them the step crashes with ImportError even when all tests pass.
     "pygal>=3.0",

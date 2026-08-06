@@ -1,0 +1,348 @@
+name: Benchmark — Tier 3 Scale (live Db2)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BM-22  Tier 3 weekly scale benchmark — LIVE Db2 instance
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# ⚠️  THIS WORKFLOW TARGETS THE LIVE Db2 INSTANCE — NOT AN EPHEMERAL CONTAINER
+#
+#  Everything else in benchmarks.yml spins up icr.io/db2_community/db2 in a
+#  throwaway container for the duration of the job.  THIS file connects to the
+#  persistent, shared Db2 instance whose credentials are stored in the
+#  `live-db2` protected GitHub environment.  Any data written here persists
+#  between runs and is visible to other teams sharing the same instance.
+#
+# CONCURRENCY LOCK — `live-db2` group name
+#
+#  The `concurrency.group: live-db2` key below is a **shared mutex** used by
+#  this workflow AND by EPIC-12's BRUN-3 and BRUN-4 manual workflows.  Because
+#  all three workflows declare the same group name and set cancel-in-progress to
+#  false, GitHub's concurrency system guarantees that only one of them can run
+#  at any given time.  An in-flight run will NEVER be cancelled to make room for
+#  a newer one — the newer run is queued and waits.
+#
+#  If BRUN-3 / BRUN-4 have not yet adopted this group name, this workflow's
+#  declaration is the canonical one they should copy verbatim.
+#
+# SECRET ACCESS — `live-db2` protected environment
+#
+#  The job declares `environment: live-db2` which gates secret access through
+#  GitHub's protected environment rules.  Fork-based PRs and untrusted actors
+#  cannot trigger this workflow and receive the secrets; only runs on the
+#  upstream repo's own branches satisfy the environment's protection rules.
+#
+# TENANT PREFIX — `bm22-scale-`
+#
+#  All rows written to the live Db2 instance during this workflow use tenant_ids
+#  prefixed with `bm22-scale-` (overridable via workflow_dispatch input).  This
+#  reserved namespace guarantees that Tier 3 scale test data never collides with
+#  rows written by other benchmark tiers or application workloads.
+#
+# MANUAL ABORT AND CLEANUP RUNBOOK
+#
+#  If a run appears hung (> 3 hours), cancel it via the GitHub Actions UI:
+#    Repository → Actions → "Benchmark — Tier 3 Scale (live Db2)" → Cancel run
+#
+#  To clean up orphaned scale data on the live Db2 instance after an aborted run:
+#    -- Connect to the live Db2 instance, then:
+#    DELETE FROM working_memory   WHERE tenant_id LIKE 'bm22-scale-%';
+#    DELETE FROM semantic_facts   WHERE tenant_id LIKE 'bm22-scale-%';
+#    DELETE FROM episodic_events  WHERE tenant_id LIKE 'bm22-scale-%';
+#    -- Repeat for any other memory tables introduced after this comment was written.
+#    -- Replace 'bm22-scale' with the tenant_prefix used in the hung run if it
+#    -- was overridden via workflow_dispatch inputs.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"   # weekly — every Sunday at 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      tenant_prefix:
+        description: "Reserved tenant_id prefix for this run (default: bm22-scale)"
+        default: "bm22-scale"
+        required: false
+      dry_run:
+        description: "If true, skip actual benchmark steps (connectivity check only)"
+        type: boolean
+        default: false
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CONCURRENCY — THE MOST IMPORTANT BLOCK IN THIS FILE
+#
+# group: live-db2
+#   Shared lock name used by this workflow and EPIC-12's BRUN-3 / BRUN-4.
+#   Any workflow that declares this same group name will queue behind a
+#   currently-running live-Db2 job rather than running concurrently.
+#
+# cancel-in-progress: false
+#   An in-flight live-Db2 run is NEVER cancelled.  Cancelling mid-run would
+#   leave the 500k-row scale corpus partially seeded, corrupt ongoing Locust
+#   statistics, and leave orphaned tenant rows on the shared instance.
+#   A pending run waits in the queue until the running job finishes naturally.
+# ──────────────────────────────────────────────────────────────────────────────
+concurrency:
+  group: live-db2
+  cancel-in-progress: false   # NEVER cancel an in-flight live-Db2 run
+
+# Top-level default — jobs override these individually.
+permissions:
+  contents: write   # to commit BENCHMARKS.md results back to the repo
+  issues: write     # to open regression issues on failure
+
+jobs:
+  benchmark-scale:
+    name: "Tier 3 weekly scale benchmark (live Db2)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # 3-hour budget for million-row-scale operations
+
+    # Gates all secret access through the `live-db2` protected environment.
+    # Fork PRs and untrusted actors will not satisfy this environment's rules
+    # and will not receive the DB2_* credentials.
+    environment: live-db2
+
+    permissions:
+      contents: write   # git push of BENCHMARKS.md
+      issues: write     # open regression issue on failure
+
+    env:
+      # ── Live Db2 credentials — sourced from the `live-db2` protected env ────
+      # DB2_DATABASE falls back to the repository variable LIVE_DB2_DATABASE
+      # and then to the literal string 'BENCHDB' so the step scripts always
+      # see a non-empty value even before the environment variable is configured.
+      DB2_DATABASE: ${{ secrets.LIVE_DB2_DATABASE }}
+      DB2_HOSTNAME: ${{ secrets.LIVE_DB2_HOSTNAME }}
+      DB2_PORT:     ${{ secrets.LIVE_DB2_PORT }}
+      DB2_UID:      ${{ secrets.LIVE_DB2_UID }}
+      DB2_PWD:      ${{ secrets.LIVE_DB2_PWD }}
+      # ── Output and tenant namespace ─────────────────────────────────────────
+      BENCH_OUT: benchmark_scale_results
+      # Falls back to 'bm22-scale' on scheduled runs (inputs are empty for
+      # schedule triggers); the default string is also the reserved prefix
+      # documented in the runbook above.
+      BENCH_TENANT_PREFIX: ${{ inputs.tenant_prefix || 'bm22-scale' }}
+
+    steps:
+      # ────────────────────────────────────────────────────────────────────────
+      # 1. Checkout, Python 3.11, pip cache, install
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: pip-benchmark-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            pip-benchmark-3.11-
+
+      # Install the full SDK surface — all adapter extras are required so
+      # BM-11 adapter-overhead benchmarks and the quality suite do not skip.
+      - name: Install package and benchmark dependencies
+        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 2. Verify live Db2 connectivity
+      #
+      # Fails fast before spending runner time seeding 500k rows against a
+      # database that cannot be reached.  The script reads DB2_* env vars;
+      # no arguments needed.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Verify live Db2 connectivity
+        run: |
+          python scripts/check_connection.py || {
+            echo "::error::Cannot reach live Db2 instance. Aborting scale benchmark to avoid wasted runner time."
+            exit 1
+          }
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 3. Seed 500k corpus under the reserved tenant prefix
+      #
+      # --seed 99 pins the random generator so successive weekly runs produce
+      # the same row distribution and comparisons are meaningful.
+      # --cardinality-category 10 / --cardinality-topic 50 mirrors the
+      # production workload shape documented in BENCHMARKS.md.
+      #
+      # Skipped on dry_run — connectivity check above is sufficient.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Seed 500k corpus (tenant prefix ${{ env.BENCH_TENANT_PREFIX }})
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          python benchmarks/seed_corpus.py \
+            --size 500k \
+            --seed 99 \
+            --cardinality-category 10 \
+            --cardinality-topic 50
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 4. Full benchmark matrix at 500k rows
+      #
+      # Runs the benchmark_pr marker suite against the now-populated live Db2
+      # instance.  Output written to ${BENCH_OUT}/output_scale.json for later
+      # ingestion by generate_benchmark_summary.py.
+      #
+      # Skipped on dry_run.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Create benchmark output directory
+        run: mkdir -p "$BENCH_OUT"
+
+      - name: Run full benchmark matrix at 500k rows (benchmark_pr)
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          pytest benchmarks/ -m "benchmark_pr" \
+            --no-cov \
+            --benchmark-json="${BENCH_OUT}/output_scale.json" \
+            -v
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 5. Locust scale ramp — 200 VUs, 15 min, 70/30 read-write mix (BM-14)
+      #
+      # -u 200 -r 5 → ramp from 0 to 200 VUs at 5 VUs/s (40 s ramp-up).
+      # -t 15m      → steady-state window after ramp.
+      # --fail-ratio 0.01 → exit non-zero if > 1 % of requests fail.
+      # DB2_POOL_SIZE=20  → SDK connection pool size (prevents exhaustion at 200 VUs).
+      # BENCH_RW_RATIO=70/30 → 70 % reads, 30 % writes (MixedReadWriteUser contract).
+      #
+      # Skipped on dry_run.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: "Locust scale ramp (BM-14) — 200 VUs, 15 min, 70/30 mix"
+        if: ${{ inputs.dry_run != true }}
+        env:
+          BENCH_RW_RATIO: "70/30"
+          DB2_POOL_SIZE: "20"
+        run: |
+          locust \
+            -f benchmarks/load/scalability_tasks.py \
+            --headless -u 200 -r 5 -t 15m \
+            --fail-ratio 0.01 \
+            --csv "${BENCH_OUT}/scale_locust" \
+            UserRampUser MixedReadWriteUser
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 6. Deterministic IR metrics at scale
+      #
+      # benchmark_nightly and benchmark_micro markers exercise the quality suite
+      # (EPIC-16) at 500k-row scale.  Uses no LLM / Ollama dependency — all
+      # assertions are deterministic IR-metric comparisons.
+      #
+      # Skipped on dry_run.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: "Deterministic IR metrics at scale (benchmark_nightly + benchmark_micro)"
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          pytest benchmarks/quality/ -m "benchmark_nightly or benchmark_micro" \
+            --no-cov \
+            -v
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 7. Commit results to BENCHMARKS.md
+      #
+      # generate_benchmark_summary.py produces a Markdown table from the pytest-
+      # benchmark JSON.  The table is appended (not replaced) so the file builds
+      # a longitudinal history of Tier 3 runs.
+      #
+      # git diff --cached --quiet exits 0 if nothing staged → skip commit (e.g.
+      # when dry_run produced no JSON).  This prevents an empty commit error.
+      #
+      # Runs only on success so a failed benchmark does not pollute BENCHMARKS.md
+      # with incomplete data.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Commit results to BENCHMARKS.md
+        if: success()
+        run: |
+          # Generate summary from scale JSON output
+          python scripts/generate_benchmark_summary.py \
+            "${BENCH_OUT}/output_scale.json" \
+            --run-id "${{ github.run_id }}" \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" \
+            > /tmp/scale_summary.md
+
+          # Append section to BENCHMARKS.md (creates the file if absent)
+          {
+            echo ""
+            echo "## Tier 3 Scale Run — $(date -u +%Y-%m-%d) (run ${{ github.run_number }})"
+            cat /tmp/scale_summary.md
+          } >> BENCHMARKS.md
+
+          # Commit and push (no-op if nothing changed, e.g. on dry_run)
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git add BENCHMARKS.md
+          git diff --cached --quiet || git commit -m "benchmarks: tier-3 scale results run ${{ github.run_number }} (${{ github.sha }})"
+          git push
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 8. Generate Job Summary
+      #
+      # Writes the benchmark Markdown table directly to the GitHub Step Summary
+      # so results are visible on the run page without downloading any artifact.
+      # Runs unconditionally (if: always()) so partial results surface even when
+      # an earlier step failed.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Generate Job Summary
+        if: always()
+        run: |
+          python scripts/generate_benchmark_summary.py "${BENCH_OUT}/output_scale.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 9. Upload artifact (JSON + Locust CSV)
+      #
+      # Retained for 90 days — matches the Tier 1/2 benchmark artifact policy.
+      # if: always() ensures the artifact is uploaded even on step failures so
+      # partial results are always downloadable from the run page.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Upload benchmark scale report artifact
+        if: always()
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: benchmark-scale-report
+          path: ${{ env.BENCH_OUT }}/
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ────────────────────────────────────────────────────────────────────────
+      # 10. Open regression issue on failure
+      #
+      # Creates a labelled GitHub issue with the run URL, commit SHA, and a
+      # copy of the manual cleanup runbook so the on-call engineer can quickly
+      # purge orphaned bm22-scale- rows from the live Db2 instance.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Open regression issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `Tier 3 scale benchmark regression — run ${{ github.run_number }}`,
+              body: [
+                '## Tier 3 (live Db2) scale benchmark regression',
+                '',
+                `**Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+                `**Commit:** ${{ github.sha }}`,
+                `**Triggered by:** ${{ github.event_name }}`,
+                '',
+                'One or more Tier 3 scale benchmark steps failed against the live Db2 instance.',
+                '',
+                '### Manual abort and cleanup',
+                'If this run appears hung (> 3 hours), use the GitHub Actions UI to cancel it.',
+                'To clean up test data on the live Db2 instance after an aborted run:',
+                '```sql',
+                "-- Replace 'bm22-scale' with the tenant_prefix used in the hung run",
+                "DELETE FROM working_memory WHERE tenant_id LIKE 'bm22-scale-%';",
+                "-- Repeat for all memory tables (semantic_facts, episodic_events, etc.)",
+                '```',
+                '',
+                '**Labels:** benchmark, regression, scale',
+              ].join('\n'),
+              labels: ['benchmark', 'regression'],
+            });
