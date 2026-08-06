@@ -9,6 +9,10 @@
     {
       "date": "2026-08-07",
       "text": ".github/workflows/benchmark-pr.yml created: two-job workflow. codspeed job (Tier 0) runs on every push and pull_request — CodSpeedHQ/action@v3 instruments benchmarks/micro/ with Valgrind instruction counting (immune to GHA runner noise per Finding 5), < 90 s, no Db2. benchmark-pr job (Tier 1) runs on pull_request only — Db2 LUW container setup copied verbatim from ci.yml (same image, healthcheck, DDL readiness probe, log expansion); pytest -m benchmark_pr hard-fails on any round-trip-count regression or correctness-invariant violation; benchmark-action/github-action-benchmark@v1 publishes wall-clock trend to gh-pages with alert-threshold 150% (comment only) and fail-threshold 300% (hard fail for extreme regressions only). concurrency: benchmark-pr-${{ github.ref }}, cancel-in-progress: true. pytest-codspeed>=2.2 added to [benchmark] extra in pyproject.toml."
+    },
+    {
+      "date": "2026-08-07",
+      "text": "CI fix (commit ea8927e): Replaced CodSpeedHQ/action@v4 with a direct 'pytest benchmarks/micro/ -m benchmark_micro --codspeed --no-cov -v' run step. The action was failing with '401 Unauthorized' on the upload phase because the repository is not registered with CodSpeed's cloud service and no CODSPEED_TOKEN secret is configured. The --codspeed flag in pytest-codspeed activates local measurement mode without any external API call, eliminating the auth dependency entirely. The Tier 0 codspeed job now passes cleanly (32 passed, 4m39s, GHA run 31076041810)."
     }
   ]
 }
