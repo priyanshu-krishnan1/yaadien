@@ -652,6 +652,107 @@ configuration. They are reproducible (rerun `scripts/run_benchmarks.py` with the
 same flags) but are not independently audited and should not be treated as a
 substitute for evaluating this SDK against your own workload.*
 
+---
+
+## Suite 6: Agent quality (Microsoft Foundry-shaped) — EPIC-21
+
+> **Tier: nightly only — reported, never gated. Never a merge gate.**
+> These are LLM-judged, non-deterministic metrics — they inform and are stamped
+> with judge/model/seed, but they cannot block a PR. Same rule as BM-18 and TRU-3.
+
+### Methodology
+
+This suite answers the questions Suite 1 (retrieval quality) cannot: Suite 1
+answers **"was the right fact retrieved?"**; Suite 6 answers **"was the generated
+response task-complete, grounded, and coherent given whatever was retrieved?"**
+These are two different questions that can and should diverge. A system that
+scores well on Suite 1 (high retrieval accuracy) can still score poorly on Suite 6
+(hallucinated or incoherent answers), and that divergence is itself a finding worth
+surfacing — not an inconsistency to reconcile away.
+
+Three sub-scores are produced:
+
+| Sub-score | Story | Metric | Scale | Description |
+|---|---|---|---|---|
+| **Task-completion (Pass¹/Pass⁵)** | AGQ-2 | Binary success rate | 0–100% | 12 multi-turn tasks × 5 attempts × 3 conditions. Pass¹ = mean success rate; Pass⁵ = % of tasks succeeding on ALL 5 attempts. |
+| **Groundedness** | AGQ-3 | 1-5 Likert mean | 1–5 | Whether the generated answer's claims are supported by what `search()` actually retrieved. NOT the same as correctness (Suite 1). |
+| **Coherence / Fluency** | AGQ-4 | 1-5 Likert means + delta | 1–5 | Whether injecting retrieved memory degrades response coherence/fluency vs. a no-memory control. Delta = with-memory − no-memory. |
+
+**Task suite**: 12 deterministic tasks spanning `knowledge-update`, `multi-session`,
+`temporal-reasoning`, and `abstention`. See `benchmarks/agent_quality/tasks.py`.
+
+**Three conditions (AGQ-2 only)**: `with_sdk` (store.remember() / search()),
+`flat_context` (all turns concatenated — the LongMemEval flat-context baseline),
+and `no_memory` (empty context — the random-chance floor). The three-condition
+design isolates the SDK's contribution from both "any context helps" and "memory
+system specifically helped."
+
+**Methodology deviations from Microsoft Foundry published methodology**:
+1. Judge is local Ollama (default `llama3.1:8b`), not Azure AI Foundry's service.
+2. Tasks are purpose-built for this SDK (multi-turn, cross-session recall), not
+   Foundry's built-in benchmark dataset.
+3. "Generated answer" for AGQ-3/AGQ-4 is the dataset's `gold_answer` (no live
+   LLM responder in the harness) — measures retrieval-context support, not
+   end-to-end agent quality.
+
+**Judge versions**: `GROUNDEDNESS_JUDGE_VERSION=1.0.0`,
+`COHERENCE_JUDGE_VERSION=1.0.0`, `FLUENCY_JUDGE_VERSION=1.0.0`.
+Bump constants when prompts change so runs remain comparable.
+
+**Cross-reference to Suite 1**: A reader should understand Suite 1 (retrieval
+quality) and Suite 6 (agent quality) as complementary, not redundant. Both are
+needed: Suite 1 tells you whether the memory store found the right facts; Suite 6
+tells you whether those facts were used correctly in the response.
+
+---
+
+### Suite 6 runs
+
+#### Run 1 — placeholder (first live run to be appended by AGQ-5 nightly job)
+
+*Not yet run. Once the nightly Tier 2 job produces output, results will be
+appended here following BM-26's structure: methodology summary, per-category
+results table, and an "Analysis — what the delta tells us" section.*
+
+Reproduce with:
+```bash
+# Task-completion (flat_context condition — no live Db2 required):
+python -m benchmarks.agent_quality.tasks \
+    --condition flat_context \
+    --judge-model llama3.1:8b \
+    --seed 42 \
+    --output benchmark_results/agq2_flat_context.json
+
+# Groundedness (requires live Db2 + LongMemEval cache):
+# python -m benchmarks.agent_quality.groundedness  (see module for full CLI)
+
+# Coherence/fluency (requires live Db2 + LongMemEval cache):
+# python -m benchmarks.agent_quality.coherence  (see module for full CLI)
+
+# Combined AGQ output (for UNI-3 scorecard):
+# python benchmarks/agent_quality/run_agq.py \
+#     --agq2-json benchmark_results/agq2_flat_context.json \
+#     --agq3-json benchmark_results/agq3_groundedness.json \
+#     --agq4-json benchmark_results/agq4_coherence.json \
+#     --output benchmark_results/agq_results.json
+```
+
+Expected output JSON shape (consumed by UNI-3 / `benchmarks/common/scorecard.py`):
+```json
+{
+  "pass1_rate": 0.75,
+  "pass5_rate": 0.60,
+  "groundedness_mean": 3.8,
+  "coherence_mean": 4.0,
+  "fluency_mean": 4.1,
+  "judge_model": "llama3.1:8b",
+  "seed": 42
+}
+```
+
+| Date | Condition | Pass¹ | Pass⁵ | Groundedness | Coherence | Fluency | Judge | Verdict |
+|------|-----------|-------|-------|--------------|-----------|---------|-------|---------|
+| —    | —         | —     | —     | —            | —         | —       | —     | pending |
 
 ---
 

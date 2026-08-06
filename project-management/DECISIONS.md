@@ -5616,3 +5616,114 @@ All Microsoft Azure AI Foundry evaluator names, scale types (1–5 Likert / Bina
 - **Made during:** UNI-1 implementation (EPIC-20).
 
 ---
+
+## 2026-08-09 — EPIC-21 AGQ-1: Agent-quality metric spec and build approach
+
+- **Decision (metric definitions and scales, verified 2026-08-09):**
+  The following Microsoft Foundry / AutoGen-shaped evaluators are implemented
+  as the EPIC-21 Suite 4 agent-quality metrics.  All definitions verified live
+  from the sources listed.
+
+  **Microsoft Foundry built-in evaluators** (learn.microsoft.com/azure/foundry/concepts/built-in-evaluators,
+  re-verified 2026-08-09):
+  - **Groundedness** — 1-5 LLM-judged score.  Measures how grounded the
+    response is in the retrieved context.  "Score: 5" = all claims fully
+    supported by retrieved content; "Score: 1" = completely ungrounded.
+    Implemented in `benchmarks/agent_quality/groundedness.py` (AGQ-3).
+    Judge prompt version-pinned at `GROUNDEDNESS_JUDGE_VERSION = "1.0.0"`.
+  - **Coherence** — 1-5 LLM-judged score.  Measures logical consistency and
+    flow of responses.  Implemented in `benchmarks/agent_quality/coherence.py`
+    (AGQ-4).  Judge prompt version-pinned at `COHERENCE_JUDGE_VERSION = "1.0.0"`.
+  - **Fluency** — 1-5 LLM-judged score.  Measures natural language quality
+    and readability.  Implemented alongside Coherence in `coherence.py`.
+    Judge prompt version-pinned at `FLUENCY_JUDGE_VERSION = "1.0.0"`.
+  - **Relevance** — 1-5 LLM-judged score.  Measures how relevant the response
+    is with respect to the query.  Per Foundry docs: currently a general-purpose
+    evaluator, separate from Groundedness which focuses on retrieved-context
+    support.  **Not implemented in EPIC-21** — Relevance overlaps with the
+    existing correctness-based judge in Suite 1 and adds limited new signal
+    given Groundedness also measures answer quality relative to retrieval.
+    Flagged as a potential AGQ-6 candidate for a future epic.
+  - **Intent Resolution** and **Task Adherence** — agent-specific evaluators
+    in the Foundry docs (preview/GA status subject to Foundry churn).  Their
+    semantic intent is partially captured by the AGQ-2 task-completion
+    Pass¹/Pass⁵ suite, which measures whether the agent completes multi-turn
+    tasks correctly.  A separate Intent Resolution judge was not added to
+    avoid duplicating the correctness signal already measured by Pass¹/Pass⁵.
+
+  **AutoGen AgentEval paper** (Arabzadeh et al., arXiv 2402.09015):
+  Multi-criteria task-utility scoring with CriticAgent/QuantifierAgent/
+  VerifierAgent methodology.  Accuracy, clarity, efficiency, completeness
+  evaluated beyond binary pass/fail.  The Pass¹/Pass⁵ terminology (also
+  confirmed from Microsoft STATE-Bench) captures the *stability* dimension:
+  Pass¹ = mean success rate over 5 attempts (best-effort capability); Pass⁵ =
+  fraction of tasks where ALL 5 attempts succeed (reliability/stability).
+  Implemented in `benchmarks/agent_quality/tasks.py` (AGQ-2).
+
+  **STATE-Bench Pass¹/Pass⁵ confirmation** (opensource.microsoft.com/blog/2026/05/19,
+  re-verified 2026-08-09): Pass¹ and Pass⁵ terminology confirmed.
+
+  **[Update, 2026-08-09]**: The exact evaluator names and scales were verified
+  live at the time of this epic's implementation.  Microsoft's Foundry evaluator
+  set has changed twice in 2026 (per EPIC-21's own description).  Before any
+  external-facing publication, re-verify the current definitions at
+  learn.microsoft.com/azure/foundry/concepts/built-in-evaluators since new
+  evaluators have been added (e.g. Groundedness Pro, Response Completeness,
+  Quality Grader — all in preview) and scales may have evolved.
+
+- **Decision (build approach — native judge prompts, no azure-ai-evaluation dependency):**
+  These evaluators are implemented as native LLM-judged prompts against the
+  existing OllamaJudge pattern (`benchmarks/quality/lme_judge.py`'s
+  `OllamaLMEJudge`, proven at BENCH-1/BM-18) rather than adding
+  `azure-ai-evaluation` as a hard dependency.
+
+  Rationale (per the story's explicit requirement):
+  1. This SDK's benchmark philosophy (per `BENCHMARK_STRATEGY.md`) is to
+     assemble maintained benchmark infrastructure (pytest-benchmark, Locust,
+     LongMemEval) but hand-roll the LLM-judge logic itself — `OllamaJudge` is
+     the established pattern, not a new category of dependency.
+  2. The `agent-framework` optional extra's own `pyproject.toml` comment
+     records that a Microsoft package was not reliably installable in this
+     environment as recently as 2026-08-02.  A second Microsoft SDK dependency
+     carries the same risk.
+  3. `azure-ai-evaluation`'s evaluators require Azure credentials, an Azure
+     AI project endpoint, and an internet connection, making them incompatible
+     with fully-offline/local evaluation — a design principle this repo has
+     held since BENCH-1 (local Ollama judge, zero API cost).
+
+  This mirrors the `agent-framework` optional extra decision and the BENCH-1
+  local-judge precedent exactly.
+
+- **Decision (three conditions for AGQ-2 task-completion):**
+  Tasks are run under three conditions: `with_sdk` (store.remember() / search()),
+  `flat_context` (all turns concatenated), and `no_memory` (empty context).
+  `no_memory` is the third condition this repo has never run before — it
+  establishes the random-chance floor, distinct from `flat_context` (which
+  still provides all historical turns, just without vector retrieval).  The
+  gap between `flat_context` and `no_memory` measures how much "any context"
+  helps, while the gap between `with_sdk` and `flat_context` measures the
+  SDK's retrieval value specifically.
+
+- **Decision (judge prompt version-pinning discipline):**
+  All three judge prompts (`GROUNDEDNESS_JUDGE_PROMPT`,
+  `COHERENCE_JUDGE_PROMPT`, `FLUENCY_JUDGE_PROMPT`) are version-pinned via
+  module-level constants (`GROUNDEDNESS_JUDGE_VERSION = "1.0.0"`, etc.).
+  This is the same discipline as BM-18/BENCH-1: local-Ollama judge behavior
+  can drift across model versions, so runs must be stamped with the judge
+  model AND prompt version so old and new runs are distinguishable in
+  BENCHMARKS.md Suite 4 comparisons.  Bump the version constant whenever the
+  prompt text changes.
+
+- **Decision (gold_answer as "generated answer" for AGQ-3/AGQ-4):**
+  Since this benchmark harness does not have a live LLM responder, the
+  dataset's `gold_answer` is used as the "generated answer" for the
+  groundedness and coherence judges.  This measures: "given the retrieved
+  context, is the correct answer well-grounded in it / does injecting context
+  degrade its coherence?"  This is the design per the story specification and
+  is honest about what is being measured — it is NOT simulating a real
+  agent's response, but it does measure the retrieval quality axis that the
+  story requires.
+
+- **Made during:** EPIC-21 (AGQ-1/AGQ-2/AGQ-3/AGQ-4 implementation)
+
+---

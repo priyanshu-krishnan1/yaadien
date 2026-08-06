@@ -378,6 +378,99 @@ jobs:
             --tb=short
 
       # ──────────────────────────────────────────────────────────────────────────
+      # 7.5  Agent-quality suite — AGQ-2/3/4 (EPIC-21, AGQ-5)
+      #
+      #  Runs the three agent-quality sub-suites and merges their output into a
+      #  single agq_results.json consumed by the scorecard step.
+      #
+      #  • AGQ-2 — task-completion Pass¹/Pass⁵ (flat_context condition, no Db2)
+      #  • AGQ-3 — groundedness judge (requires Db2 + LongMemEval cache)
+      #  • AGQ-4 — coherence/fluency judge (requires Db2 + LongMemEval cache)
+      #
+      #  AGQ-2 flat_context runs without a Db2 connection — it only uses the
+      #  local Ollama judge.  AGQ-3 and AGQ-4 require Db2 + LongMemEval, so they
+      #  are run only when scenario != 'ir-metrics' and Db2 is available.
+      #
+      #  NEVER a PR gate — all three are LLM-judged (non-deterministic).
+      #  Same tiering rule as BM-18 and TRU-3.
+      #
+      #  Infrastructure errors (missing Ollama, Db2 connection failure) fail
+      #  loudly (workflow-visible error); a low judge score NEVER fails the run.
+      #
+      #  Skipped when scenario == 'locust'.
+      # ──────────────────────────────────────────────────────────────────────────
+
+      - name: "AGQ-2 — task-completion Pass¹/Pass⁵ (flat_context, no Db2)"
+        id: agq2
+        if: inputs.scenario != 'locust'
+        # continue-on-error: this step is informational; a failing judge score
+        # must never block the workflow.  Infrastructure errors (ImportError,
+        # missing ollama) are real failures and SHOULD be surfaced.
+        # We do NOT use continue-on-error here so infra failures are loud.
+        run: |
+          python -m benchmarks.agent_quality.tasks \
+            --condition flat_context \
+            --judge-model llama3.1:8b \
+            --seed 42 \
+            --output "${BENCH_OUT}/agq2.json"
+          echo "agq2_ran=true" >> "$GITHUB_OUTPUT"
+
+      - name: "AGQ-3 — groundedness judge (LongMemEval-S, with Db2)"
+        id: agq3
+        if: inputs.scenario != 'locust' && inputs.scenario != 'ir-metrics'
+        continue-on-error: true
+        env:
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+        run: |
+          python -m benchmarks.agent_quality.groundedness \
+            --judge-model llama3.1:8b \
+            --seed 42 \
+            --n-per-category 4 \
+            --output "${BENCH_OUT}/agq3.json" || true
+          if [ -f "${BENCH_OUT}/agq3.json" ]; then
+            echo "agq3_ran=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "AGQ-4 — coherence/fluency judge (LongMemEval-S, with Db2)"
+        id: agq4
+        if: inputs.scenario != 'locust' && inputs.scenario != 'ir-metrics'
+        continue-on-error: true
+        env:
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+        run: |
+          python -m benchmarks.agent_quality.coherence \
+            --judge-model llama3.1:8b \
+            --seed 42 \
+            --n-per-category 4 \
+            --output "${BENCH_OUT}/agq4.json" || true
+          if [ -f "${BENCH_OUT}/agq4.json" ]; then
+            echo "agq4_ran=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "AGQ-5 — merge AGQ-2/3/4 into agq_results.json (scorecard input)"
+        if: inputs.scenario != 'locust'
+        run: |
+          # Merge whichever AGQ files were produced.  Missing files are treated
+          # as MISSING (not zero) per the project's missing-input policy.
+          # run_agq.py never exits non-zero for missing inputs.
+          python benchmarks/agent_quality/run_agq.py \
+            --agq2-json "${BENCH_OUT}/agq2.json" \
+            --agq3-json "${BENCH_OUT}/agq3.json" \
+            --agq4-json "${BENCH_OUT}/agq4.json" \
+            --output    "${BENCH_OUT}/agq_results.json"
+
+      - name: "Scorecard — generate MBS composite from all suite outputs"
+        if: inputs.scenario != 'locust'
+        continue-on-error: true
+        run: |
+          python -m benchmarks.common.scorecard \
+            --perf-json   "${BENCH_OUT}/output_benchmark.json" \
+            --baselines   benchmarks/baselines.json \
+            --agq-json    "${BENCH_OUT}/agq_results.json" \
+            --append-to   project-management/BENCHMARKS.md \
+            || true
+
+      # ──────────────────────────────────────────────────────────────────────────
       # 8. Generate GitHub Job Summary
       #    Appends a Markdown table of benchmark results to the run's step
       #    summary so results are visible on the Actions run page without
