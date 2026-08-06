@@ -3,7 +3,7 @@
   "epic_id": "EPIC-9",
   "title": "Security & Data Isolation Design Document",
   "summary": "project-management/design/05-security-design.md — multi-tenant isolation boundary as a formal security control, SQL-injection posture with every real # nosec enumerated, dependency/static-scan posture, credential handling, and an honest in-scope-vs-delegated threat model.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Write project-management/design/05-security-design.md. Ground it in the VER-5 DECISIONS.md audit, repositories/base.py's _scope_predicates/_require_agent_id, and the PH-4 entry.\n\nRequired: (1) multi-tenant isolation boundary restated as a formal control (what it prevents, where enforced); (2) SQL construction/injection posture — enumerate every real `# nosec` annotation (grep src/) with its justification, count must match reality; (3) dependency/static-analysis posture (pip-audit + bandit, ci.yml's security job); (4) credential/config handling (env-var only, DB2_SECURITY=SSL); (5) an honest STRIDE-lite threat model table explicitly separating in-scope threats (cross-tenant leakage, SQL injection) from delegated/out-of-scope ones (network transport encryption, physical DB access) — must not imply coverage the SDK doesn't provide.\n\nFully independent of every other SDD story — new file only.",
   "comments": []
 }

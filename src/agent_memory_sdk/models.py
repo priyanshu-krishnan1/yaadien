@@ -27,6 +27,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agent_memory_sdk.types import MemoryOrigin
+
 # ---------------------------------------------------------------------------
 # MemoryScope
 # ---------------------------------------------------------------------------
@@ -109,6 +111,21 @@ class _MemoryBase(BaseModel):
     # uniformly from _model_from_row; ignored/None for all other memory types.
     # Added by migration 0005. (ENH-4)
     consolidated_at: datetime | None = None
+
+    # origin: governed provenance field recording which write path created this
+    # row (TRU-1, migration 0008). Default DIRECT_WRITE preserves backward
+    # compatibility — existing rows and new direct writes are unaffected.
+    # Internal SDK write paths (Consolidator, IngestResolver, MemoryExtractor)
+    # set this to the appropriate MemoryOrigin value.
+    origin: MemoryOrigin = MemoryOrigin.DIRECT_WRITE
+
+    # quarantined: set to True by the IntegrityGuard (TRU-2) when a
+    # ProceduralMemory write is suspicious but not outright rejected.
+    # Python-only flag — not currently persisted to the database (no migration
+    # for this cycle; a future migration can add a BOOLEAN / SMALLINT column).
+    # At runtime it is available on any record returned from remember() when
+    # the guard returned QUARANTINE, so callers can inspect/log it.
+    quarantined: bool = False
 
     model_config = {"frozen": False}
 

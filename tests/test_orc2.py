@@ -119,8 +119,9 @@ def _working_row(
     version: int = 1,
     deleted_at: Any = None,
     consolidated_at: Any = None,
+    origin: str = "DIRECT_WRITE",
 ) -> tuple[Any, ...]:
-    """Fake 16-column DB row for working_memory."""
+    """Fake 17-column DB row for working_memory (TRU-1 adds origin)."""
     return (
         id_, "t1", "agent-001", None, None,
         content, json.dumps({}),
@@ -128,7 +129,8 @@ def _working_row(
         1.0,
         _content_hash(content),
         _NOW, _NOW, None, version, deleted_at,
-        consolidated_at,
+        origin,          # 15 origin (TRU-1)
+        consolidated_at, # 16 consolidated_at (ENH-4)
     )
 
 
@@ -137,7 +139,7 @@ def _facts_row(
     content: str = "hello fact",
     version: int = 1,
 ) -> tuple[Any, ...]:
-    """Fake 18-column DB row for semantic_facts (base 15 + 3 supersession)."""
+    """Fake 19-column DB row for semantic_facts (base 15 + origin + 3 supersession)."""
     return (
         id_, "t1", "agent-001", None, None,
         content, json.dumps({}),
@@ -145,7 +147,8 @@ def _facts_row(
         1.0,
         _content_hash(content),
         _NOW, _NOW, None, version, None,
-        None, None, None,   # superseded_by, superseded_at, supersede_reason
+        "DIRECT_WRITE",        # 15 origin (TRU-1)
+        None, None, None,      # superseded_by, superseded_at, supersede_reason
     )
 
 

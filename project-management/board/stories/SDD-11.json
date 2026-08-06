@@ -3,7 +3,7 @@
   "epic_id": "EPIC-9",
   "title": "Risk Register & Known Limitations Document",
   "summary": "project-management/design/11-risk-register.md — a structured internal risk table (impact/likelihood/mitigation/residual risk) mining DECISIONS.md's own already-acknowledged limitations, every row traceable to a real source, zero invented risks and zero competitor framing.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Write project-management/design/11-risk-register.md as a structured risk log, purely internal, no comparison to any other system. Table columns: risk description, affected component, impact, likelihood, current mitigation, residual risk/follow-up.\n\nPopulate by mining DECISIONS.md for already-acknowledged limitations (search for 'known limitation', 'deliberately', 'does not') rather than inventing new ones. Must include at minimum: ENH-4's in-memory/non-shared consolidation counter; fixed embedding_dim at construction time; ConnectionPool size as a hard concurrency ceiling; PIPE-1's Python-side keyword scoring as a scale ceiling vs. an unconfirmed DB-native alternative; PIPE-2's IngestResolver per-message search cost when combined with batched message ingestion; the ibm_db native driver/clidriver installation dependency. Every row must cite its DECISIONS.md source — no risk invented without a traceable origin, no blank cells (write 'none identified' explicitly where applicable).\n\nFully independent of every other SDD story — new file only.",
   "comments": []
 }

@@ -66,6 +66,7 @@ def _working_row(
         1.0,
         _content_hash(content),
         created_at, created_at, None, 1, deleted_at,
+        "DIRECT_WRITE",  # origin (TRU-1)
         None,  # consolidated_at (ENH-4)
     )
 

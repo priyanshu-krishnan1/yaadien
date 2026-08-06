@@ -3,7 +3,7 @@
   "epic_id": "EPIC-9",
   "title": "Design Documentation Package Index",
   "summary": "project-management/design/README.md — the front door linking all 11 documents in reading order, plus a section distinguishing this package from ARCHITECTURE.md/DECISIONS.md/BENCHMARKS.md without claiming to replace any of them.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Write project-management/design/README.md. One short paragraph per document (SDD-1..11), linking by relative path, in reading order (system architecture -> data architecture -> API/interface -> sequence flows -> security -> data governance -> extensibility -> performance/capacity -> deployment/operations -> testing strategy -> risk register). Add a 'relationship to other project docs' section distinguishing this package (point-in-time structured design-review artifact) from ARCHITECTURE.md (living current-state summary), DECISIONS.md (chronological decision log), and BENCHMARKS.md (living results data) — none of the three are superseded by this package.\n\nDepends on SDD-1 through SDD-11 all being merged — verify every linked path actually resolves to a real committed file before finishing, don't assume filenames match the story text exactly if an implementer deviated. Must run last, not in parallel with the other eleven.",
   "comments": []
 }

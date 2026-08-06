@@ -51,7 +51,7 @@ def _fact_row(
     content: str = "a fact",
     agent_id: str = "agent-thrd2",
 ) -> tuple[Any, ...]:
-    """Build a fake 18-column DB row for semantic_facts."""
+    """Build a fake 19-column DB row for semantic_facts (added origin TRU-1)."""
     return (
         id_, "t2", agent_id, None, None,
         content, json.dumps({}),
@@ -59,6 +59,7 @@ def _fact_row(
         1.0,
         _content_hash(content),
         _NOW, _NOW, None, 1, None,
+        "DIRECT_WRITE",     # 15 origin (TRU-1)
         None, None, None,   # superseded_by, superseded_at, supersede_reason
     )
 
@@ -69,7 +70,7 @@ def _profile_row(
     agent_id: str = "agent-thrd2",
     user_id: str | None = "user-thrd2",
 ) -> tuple[Any, ...]:
-    """Build a fake 15-column DB row for entity_profiles."""
+    """Build a fake 16-column DB row for entity_profiles (added origin TRU-1)."""
     return (
         id_, "t2", agent_id, user_id, None,
         content, json.dumps({}),
@@ -77,6 +78,7 @@ def _profile_row(
         1.0,
         _content_hash(content),
         _NOW, _NOW, None, 1, None,
+        "DIRECT_WRITE",  # 15 origin (TRU-1)
     )
 
 

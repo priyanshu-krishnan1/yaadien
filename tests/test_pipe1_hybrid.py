@@ -121,6 +121,7 @@ def _wm_row(
         None,            # 12 expires_at
         1,               # 13 version
         None,            # 14 deleted_at
+        "DIRECT_WRITE",    # 15 — origin (TRU-1)
         None,            # 15 consolidated_at
     )
 

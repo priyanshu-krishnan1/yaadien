@@ -106,37 +106,40 @@ class _FakePool:
 # ---------------------------------------------------------------------------
 
 def _wm_row(id_: str, content: str = "hello") -> tuple[Any, ...]:
-    """16-element WorkingMemory row (15 base cols + consolidated_at)."""
+    """17-element WorkingMemory row (15 base cols + origin + consolidated_at)."""
     return (
         id_, None, "agent-pipe4", "user-1", None,
         content, "{}",
         "[0.0]",
         1.0, None,
         _NOW, _NOW, None, 1, None,
-        None,
+        "DIRECT_WRITE",  # 15 origin (TRU-1)
+        None,            # 16 consolidated_at
     )
 
 
 def _fact_row(id_: str, content: str = "fact") -> tuple[Any, ...]:
-    """18-element SemanticFact row (15 base cols + 3 supersession cols)."""
+    """19-element SemanticFact row (15 base cols + origin + 3 supersession cols)."""
     return (
         id_, None, "agent-pipe4", "user-1", None,
         content, "{}",
         "[0.0]",
         1.0, None,
         _NOW, _NOW, None, 1, None,
-        None, None, None,
+        "DIRECT_WRITE",  # 15 origin (TRU-1)
+        None, None, None,  # 16 superseded_by, 17 superseded_at, 18 supersede_reason
     )
 
 
 def _profile_row(id_: str, content: str = "profile") -> tuple[Any, ...]:
-    """15-element EntityProfile row (base cols only)."""
+    """16-element EntityProfile row (15 base cols + origin)."""
     return (
         id_, None, "agent-pipe4", "user-1", None,
         content, "{}",
         "[0.0]",
         1.0, None,
         _NOW, _NOW, None, 1, None,
+        "DIRECT_WRITE",  # 15 origin (TRU-1)
     )
 
 

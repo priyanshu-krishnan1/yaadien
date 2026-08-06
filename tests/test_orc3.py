@@ -91,7 +91,7 @@ _NOW = datetime(2026, 8, 2, 10, 0, 0, tzinfo=timezone.utc)
 _VEC = [0.0] * 1536
 
 # ---------------------------------------------------------------------------
-# Helper: build a minimal valid SemanticFact row tuple (15 base columns)
+# Helper: build a minimal valid SemanticFact row tuple (16 base + 3 supersession)
 # ---------------------------------------------------------------------------
 
 def _fact_row(metadata: str = "{}") -> tuple[Any, ...]:
@@ -111,9 +111,10 @@ def _fact_row(metadata: str = "{}") -> tuple[Any, ...]:
         None,             # 12 expires_at
         1,                # 13 version
         None,             # 14 deleted_at
-        None,             # 15 superseded_by
-        None,             # 16 superseded_at
-        None,             # 17 supersede_reason
+        "DIRECT_WRITE",   # 15 origin (TRU-1)
+        None,             # 16 superseded_by
+        None,             # 17 superseded_at
+        None,             # 18 supersede_reason
     )
 
 

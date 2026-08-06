@@ -157,6 +157,7 @@ def _row(
         None,                 # 12 expires_at
         1,                    # 13 version
         None,                 # 14 deleted_at
+        "DIRECT_WRITE",    # 15 — origin (TRU-1)
         None,                 # 15 consolidated_at (ENH-4)
     )
 
@@ -172,14 +173,15 @@ def _fact_row(
     superseded_at: Any = None,
     supersede_reason: Any = None,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row for SemanticFactRepository._model_from_row (18 cols).
+    """Build a fake DB row for SemanticFactRepository._model_from_row (19 cols).
 
     Index map (0-based):
       0  id            1  tenant_id   2  agent_id    3  user_id     4  thread_id
       5  content       6  metadata    7  embedding
       8  confidence    9  content_hash
       10 created_at   11 updated_at  12 expires_at  13 version     14 deleted_at
-      15 superseded_by  16 superseded_at  17 supersede_reason
+      15 origin        (TRU-1)
+      16 superseded_by  17 superseded_at  18 supersede_reason
     """
     meta = metadata or {}
     vec = embedding or _VEC
@@ -192,9 +194,10 @@ def _fact_row(
         confidence,
         h,
         _NOW, _NOW, None, 1, None,
-        superseded_by,    # 15
-        superseded_at,    # 16
-        supersede_reason, # 17
+        "DIRECT_WRITE",   # 15 origin (TRU-1)
+        superseded_by,    # 16
+        superseded_at,    # 17
+        supersede_reason, # 18
     )
 
 

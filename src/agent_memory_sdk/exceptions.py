@@ -107,3 +107,25 @@ class SchemaPolicyError(RuntimeError):
             # exc.args[0] contains the full list of missing objects
             sys.exit(str(exc))
     """
+
+
+class IntegrityRejectionError(RuntimeError):
+    """Raised when an :class:`~agent_memory_sdk.types.IntegrityGuard` returns
+    ``REJECT`` for a :class:`~agent_memory_sdk.models.ProceduralMemory` write.
+
+    The error message contains the guard's reason string, which should explain
+    why the write was rejected (e.g. "Content contradicts high-confidence
+    existing skill; possible poisoning attempt").
+
+    The caller should inspect the reason, log it, and decide whether to retry
+    the write with a different record, alert a human operator, or silently
+    discard the candidate.
+
+    Example::
+
+        try:
+            store.remember(procedural_record, scope)
+        except IntegrityRejectionError as exc:
+            logger.warning("ProceduralMemory write rejected: %s", exc)
+            # Do NOT re-raise if the calling agent should continue operating.
+    """

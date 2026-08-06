@@ -34,6 +34,7 @@ from agent_memory_sdk.repositories.base import (
     _scope_predicates,
     logger,
 )
+from agent_memory_sdk.types import MemoryOrigin
 
 
 def _now() -> datetime:
@@ -54,20 +55,21 @@ class SemanticFactRepository(BaseRepository[SemanticFact]):
     # search(), and create()'s dedup-check to append "AND superseded_at IS NULL".
     _HAS_SUPERSESSION = True
 
-    # Override _SELECT_COLS to include the three supersession columns.
+    # Override _SELECT_COLS to include origin and the three supersession columns.
     # Index map (0-based):
     #   0  id          1  tenant_id   2  agent_id    3  user_id     4  thread_id
     #   5  content     6  metadata    7  embedding
     #   8  confidence  9  content_hash
     #   10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
-    #   15 superseded_by  16 superseded_at  17 supersede_reason
+    #   15 origin      (TRU-1 / migration 0008)
+    #   16 superseded_by  17 superseded_at  18 supersede_reason
     _SELECT_COLS = (
         "id, tenant_id, agent_id, user_id, thread_id, "
         "content, metadata, "
         "VECTOR_SERIALIZE(embedding) AS embedding, "
         "confidence, content_hash, "
         "created_at, updated_at, expires_at, version, deleted_at, "
-        "superseded_by, superseded_at, supersede_reason"
+        "origin, superseded_by, superseded_at, supersede_reason"
     )
 
     # Plain alias list for the outer SELECT of the ROW_NUMBER pagination
@@ -78,7 +80,7 @@ class SemanticFactRepository(BaseRepository[SemanticFact]):
         "embedding, "
         "confidence, content_hash, "
         "created_at, updated_at, expires_at, version, deleted_at, "
-        "superseded_by, superseded_at, supersede_reason"
+        "origin, superseded_by, superseded_at, supersede_reason"
     )
 
     def _model_from_row(self, row: tuple[Any, ...]) -> SemanticFact:
@@ -89,6 +91,7 @@ class SemanticFactRepository(BaseRepository[SemanticFact]):
             confidence,
             content_hash,
             created_at, updated_at, expires_at, version, deleted_at,
+            origin_str,
             superseded_by, superseded_at, supersede_reason,
         ) = row
 
@@ -108,6 +111,7 @@ class SemanticFactRepository(BaseRepository[SemanticFact]):
             expires_at=_parse_dt(expires_at),
             version=version if version is not None else 1,
             deleted_at=_parse_dt(deleted_at),
+            origin=MemoryOrigin(origin_str) if origin_str else MemoryOrigin.DIRECT_WRITE,
             superseded_by=superseded_by,
             superseded_at=_parse_dt(superseded_at),
             supersede_reason=supersede_reason,

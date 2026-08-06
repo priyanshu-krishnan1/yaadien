@@ -106,7 +106,7 @@ def _working_row(
     deleted_at: Any = None,
     consolidated_at: Any = None,
 ) -> tuple[Any, ...]:
-    """Fake DB row for working_memory (16 columns including consolidated_at)."""
+    """Fake DB row for working_memory (17 columns including origin + consolidated_at)."""
     return (
         id_, "t1", "agent-001", None, None,
         content, json.dumps({}),
@@ -114,7 +114,8 @@ def _working_row(
         1.0,                         # 8 confidence
         _content_hash(content),      # 9 content_hash
         _NOW, _NOW, None, version, deleted_at,
-        consolidated_at,             # 15 consolidated_at (ENH-4)
+        "DIRECT_WRITE",              # 15 origin (TRU-1)
+        consolidated_at,             # 16 consolidated_at (ENH-4)
     )
 
 
@@ -125,7 +126,7 @@ def _episodic_row(
     deleted_at: Any = None,
     consolidated_at: Any = None,
 ) -> tuple[Any, ...]:
-    """Fake DB row for episodic_memory (16 columns including consolidated_at)."""
+    """Fake DB row for episodic_memory (17 columns including origin + consolidated_at)."""
     return (
         id_, "t1", "agent-001", None, None,
         content, json.dumps({}),
@@ -133,7 +134,8 @@ def _episodic_row(
         1.0,
         _content_hash(content),
         _NOW, _NOW, None, version, deleted_at,
-        consolidated_at,
+        "DIRECT_WRITE",  # 15 origin (TRU-1)
+        consolidated_at, # 16 consolidated_at (ENH-4)
     )
 
 

@@ -14,6 +14,7 @@ from typing import Any
 
 from agent_memory_sdk.models import EntityProfile
 from agent_memory_sdk.repositories.base import BaseRepository, _parse_dt, _parse_vector
+from agent_memory_sdk.types import MemoryOrigin
 
 
 class EntityProfileRepository(BaseRepository[EntityProfile]):
@@ -30,6 +31,7 @@ class EntityProfileRepository(BaseRepository[EntityProfile]):
             confidence,
             content_hash,
             created_at, updated_at, expires_at, version, deleted_at,
+            origin_str,
         ) = row
 
         return EntityProfile(
@@ -48,4 +50,5 @@ class EntityProfileRepository(BaseRepository[EntityProfile]):
             expires_at=_parse_dt(expires_at),
             version=version if version is not None else 1,
             deleted_at=_parse_dt(deleted_at),
+            origin=MemoryOrigin(origin_str) if origin_str else MemoryOrigin.DIRECT_WRITE,
         )

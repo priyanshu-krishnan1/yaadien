@@ -1045,7 +1045,7 @@
       "epic_id": "EPIC-9",
       "title": "System Architecture & Component Design Document",
       "summary": "project-management/design/01-system-architecture.md — layered architecture diagram, design principles with concrete rationale, component responsibility table, technology stack justification. Standalone, no external product references.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/01-system-architecture.md, the top-level document a reviewer reads first. Ground it in src/agent_memory_sdk's real module layout (models.py, types.py, repositories/, store.py, db/, adapters/) and ARCHITECTURE.md section 1, but write it self-contained — a reader must not need to have read ARCHITECTURE.md first.\n\nRequired: (1) purpose/scope, no external comparison; (2) Mermaid graph TD layered-architecture diagram (models -> repositories -> store -> adapters, db/ cross-cutting); (3) design principles with concrete technical rationale (normalized per-type tables because Db2's vector index needs a NOT NULL column per type; pluggable-protocol extensibility; synchronous-by-default; mandatory scope predicates); (4) component responsibility table, one row per module; (5) technology stack and why (Python 3.10+, Pydantic v2, Db2 LUW VECTOR type, hatchling).\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1054,7 +1054,7 @@
       "epic_id": "EPIC-9",
       "title": "Data Architecture & Schema Design Document",
       "summary": "project-management/design/02-data-architecture.md — full ER diagram across all 7 tables sourced from the 6 real migration files, column dictionary, indexing strategy, migration history, and a lifecycle state diagram distinguishing tombstone/purge/supersede/erase.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/02-data-architecture.md. Read all six migration files directly (db/migrations/0001..0006) rather than reconstructing schema from memory.\n\nRequired: (1) Mermaid erDiagram covering schema_migrations, working_memory, episodic_memory, semantic_facts, entity_profiles, procedural_memory, memory_chunks with every column/type/nullability; (2) per-table column dictionary; (3) indexing strategy (every CREATE VECTOR INDEX + supporting scope indexes, distance metric per table and why); (4) migration history table (all six, in order); (5) Mermaid stateDiagram-v2 for the data lifecycle — active -> tombstoned -> purged; active -> superseded (facts only); active -> erased as a DIRECT edge (erase_all bypasses tombstone entirely, must not be flattened into the tombstone path).\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1063,7 +1063,7 @@
       "epic_id": "EPIC-9",
       "title": "API & Interface Design Specification",
       "summary": "project-management/design/03-api-interface-spec.md — formal MemoryScope/MemoryStore/repository contract tables (signatures, pre/postconditions, exceptions, idempotency) plus an extension-interface contract table for all pluggable protocols.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/03-api-interface-spec.md as a formal interface-contract document, not a tutorial. Ground it in store.py, repositories/base.py, and types.py.\n\nRequired: (1) MemoryScope contract (field table, hierarchy rule, agent_id-required precondition); (2) MemoryStore method contract table (remember/forget/purge_expired/erase_all/export_scope/import_scope/reconcile/get_context_card, plus any landed THRD-* methods) — signature, pre/postconditions, exceptions actually raised (verify against real `raise` statements), idempotency; (3) shared repository base contract stated once, not six times; (4) extension interface contract table (Consolidator/Reconciler/IngestResolver/Summarizer/MemoryExtractor) — exact shape, when invoked, error-handling contract verified against actual try/except in store.py, not assumed.\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1072,7 +1072,7 @@
       "epic_id": "EPIC-9",
       "title": "Sequence & Flow Diagrams for Core Operations",
       "summary": "project-management/design/04-sequence-flows.md — five Mermaid sequenceDiagrams (remember() write path, search() read path incl. hybrid RRF, erase_all() cascade, export/import round-trip, reconcile() supersession) with real conditional branches shown, not flattened.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/04-sequence-flows.md. Extends beyond ARCHITECTURE.md sections 4-7 (do not edit that file) with full Mermaid sequenceDiagram blocks for: (1) remember() incl. IngestResolver branch, chunking gate, Consolidator trigger; (2) search() incl. hybrid=True RRF fusion and search_chunks two-step resolution; (3) erase_all() cascade across all five repos plus chunks; (4) export_scope()/import_scope() round-trip; (5) reconcile() supersession flow.\n\nEach diagram's conditional branches (the 'if configured' points) must appear as real alt/opt Mermaid blocks, cross-checked against store.py's actual method bodies, not flattened into a single happy path.\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1081,7 +1081,7 @@
       "epic_id": "EPIC-9",
       "title": "Security & Data Isolation Design Document",
       "summary": "project-management/design/05-security-design.md — multi-tenant isolation boundary as a formal security control, SQL-injection posture with every real # nosec enumerated, dependency/static-scan posture, credential handling, and an honest in-scope-vs-delegated threat model.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/05-security-design.md. Ground it in the VER-5 DECISIONS.md audit, repositories/base.py's _scope_predicates/_require_agent_id, and the PH-4 entry.\n\nRequired: (1) multi-tenant isolation boundary restated as a formal control (what it prevents, where enforced); (2) SQL construction/injection posture — enumerate every real `# nosec` annotation (grep src/) with its justification, count must match reality; (3) dependency/static-analysis posture (pip-audit + bandit, ci.yml's security job); (4) credential/config handling (env-var only, DB2_SECURITY=SSL); (5) an honest STRIDE-lite threat model table explicitly separating in-scope threats (cross-tenant leakage, SQL injection) from delegated/out-of-scope ones (network transport encryption, physical DB access) — must not imply coverage the SDK doesn't provide.\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1090,7 +1090,7 @@
       "epic_id": "EPIC-9",
       "title": "Data Governance, Retention & Compliance Design Document",
       "summary": "project-management/design/06-data-governance.md — the three-tier deletion policy (forget/purge_expired/erase_all) formalized as governance, ErasureReport as an audit-record spec with honest evidentiary limits, retention/TTL policy, data portability, and data-quality controls.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/06-data-governance.md. Ground it in store.py's three-tier deletion model and PIPE-5's ErasureReport, ENH-1/ENH-2.\n\nRequired: (1) the three-tier deletion policy formalized (forget=routine/reversible, purge_expired=maintenance hard-delete of already-tombstoned rows, erase_all=compliance-grade/irreversible/bypasses tombstone entirely) with an explicit statement of which one a data-subject erasure request should invoke and why; (2) ErasureReport as an audit-record spec, honest about what it does and does NOT prove (not secure-erasure-at-media-level proof); (3) retention/TTL policy and that purge_expired() is operator-scheduled, not automatic; (4) export_scope()/import_scope() as portability, with its own-format-not-a-standard limitation restated; (5) confidence scoring + content-hash dedup as data-quality governance controls.\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1099,7 +1099,7 @@
       "epic_id": "EPIC-9",
       "title": "Extensibility & Integration Architecture Document",
       "summary": "project-management/design/07-extensibility-architecture.md — the pluggable-protocol pattern as a named architecture pattern, the four adapters' shared thin-layer-plus-extras-isolation shape, and a concrete how-to-extend guide.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/07-extensibility-architecture.md. Ground it in types.py's protocols and all four adapters/ modules.\n\nRequired: (1) the pluggable-protocol pattern named and described (Consolidator/Reconciler/IngestResolver/Summarizer/MemoryExtractor's shared shape: single callable, shipped NoOp default, synchronous invocation, error handling verified per-hook not assumed uniform) with the rationale (LLM-backed behavior without a mandatory LLM dependency); (2) adapter architecture — the thin-layer-over-MemoryStore shape shared by LangChain/OpenAI Agents SDK/MCP/Microsoft Agent Framework adapters, and the extras_require + _require_*() import-guard isolation mechanism, cross-checked against pyproject.toml's exact extras group names; (3) a concrete how-to-add-a-new-adapter-or-hook guide derived from the actual pattern.\n\nNaming the four integration targets is fine (they're what's being integrated with); framing any of them as design inspiration is not.\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1108,7 +1108,7 @@
       "epic_id": "EPIC-9",
       "title": "Non-Functional Requirements: Performance, Scalability & Capacity Design Document",
       "summary": "project-management/design/08-nfr-performance-capacity.md — concurrency/pool-sizing model, search and write cost models, and a benchmark-methodology summary that links to BENCHMARKS.md rather than copying its numbers (so it never goes stale).",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/08-nfr-performance-capacity.md. Ground it in db/connection.py, repositories/base.py's EXACT/APPROX + hybrid RRF cost, ENH-4's consolidate_every_n, and BENCHMARKS.md's structure (not its numbers).\n\nRequired: (1) concurrency model — ConnectionPool as the hard concurrency ceiling, exhaustion behavior, sizing guidance; (2) search cost model — EXACT vs APPROX tradeoffs, the two-step ID-then-row fetch pattern's extra round-trip and why (Db2 12.1.5 fp0 constraint), hybrid=True's added Python-side RRF cost; (3) write cost model — chunking's effect on write cost, consolidate_every_n as the cost-control knob, restating ENH-4's known in-memory/no-cross-instance-sharing limitation as a capacity-planning caveat; (4) benchmark methodology summary linking to BENCHMARKS.md by relative path, with zero specific numbers copied in (so this document doesn't go stale when a new run is appended).\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1117,7 +1117,7 @@
       "epic_id": "EPIC-9",
       "title": "Deployment, Configuration & Operations Design Document",
       "summary": "project-management/design/09-deployment-operations.md — packaging/extras, a complete .env.example config reference table, SchemaPolicy deployment guidance, the real 4-job CI/CD pipeline, operational script catalog, and an operator-facing exception reference.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/09-deployment-operations.md. Ground it in pyproject.toml, .env.example, ci.yml + package-check.yml, db/migrate.py's SchemaPolicy, scripts/, and exceptions.py.\n\nRequired: (1) packaging/distribution — wheel contents, all five extras groups; (2) complete configuration reference table transcribed from .env.example, variable count must match exactly; (3) SchemaPolicy deployment guidance (CREATE_IF_NECESSARY vs REQUIRE_EXISTING, when an operator picks which); (4) CI/CD pipeline diagram naming all three ci.yml jobs (lint-typecheck-test, integration-test, security) plus the separate package-check.yml workflow — four gates total, not folded into three; (5) operational script catalog, one entry per real file in scripts/, stating whether each is cron-appropriate; (6) operator-facing reference for all five exceptions.py classes.\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1126,7 +1126,7 @@
       "epic_id": "EPIC-9",
       "title": "Testing & Quality Assurance Strategy Document",
       "summary": "project-management/design/10-testing-qa-strategy.md — the test pyramid (unit/integration/benchmark), the 85% coverage gate and its exact exclusions, the scope-isolation test pattern as a standing QA control, static-analysis gates, and the test-file-to-story naming convention.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/10-testing-qa-strategy.md. Ground it in the real tests/ listing, pyproject.toml's pytest/coverage config, and INTEGRATION_TESTING.md.\n\nRequired: (1) test pyramid — unit (no live Db2), integration (gated behind the `integration` marker, auto-skips without DB2_DATABASE), benchmarks/ as a distinct non-correctness measurement category; (2) coverage policy — --cov-fail-under=85 scoped to src/agent_memory_sdk only, exclusions matching [tool.coverage.report] exactly; (3) the scope-isolation cross-scope-leakage test pattern (tests/test_scoping.py, VER-5/Step 5 origin) named as a standing QA control future stories are expected to extend; (4) static-analysis gates (ruff, mypy --strict, bandit, pip-audit) as merge-blocking, not optional; (5) the tests/test_<story-id>_*.py traceability naming convention, described not hand-built into a matrix.\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1135,7 +1135,7 @@
       "epic_id": "EPIC-9",
       "title": "Risk Register & Known Limitations Document",
       "summary": "project-management/design/11-risk-register.md — a structured internal risk table (impact/likelihood/mitigation/residual risk) mining DECISIONS.md's own already-acknowledged limitations, every row traceable to a real source, zero invented risks and zero competitor framing.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/11-risk-register.md as a structured risk log, purely internal, no comparison to any other system. Table columns: risk description, affected component, impact, likelihood, current mitigation, residual risk/follow-up.\n\nPopulate by mining DECISIONS.md for already-acknowledged limitations (search for 'known limitation', 'deliberately', 'does not') rather than inventing new ones. Must include at minimum: ENH-4's in-memory/non-shared consolidation counter; fixed embedding_dim at construction time; ConnectionPool size as a hard concurrency ceiling; PIPE-1's Python-side keyword scoring as a scale ceiling vs. an unconfirmed DB-native alternative; PIPE-2's IngestResolver per-message search cost when combined with batched message ingestion; the ibm_db native driver/clidriver installation dependency. Every row must cite its DECISIONS.md source — no risk invented without a traceable origin, no blank cells (write 'none identified' explicitly where applicable).\n\nFully independent of every other SDD story — new file only.",
       "comments": []
     },
@@ -1144,7 +1144,7 @@
       "epic_id": "EPIC-9",
       "title": "Design Documentation Package Index",
       "summary": "project-management/design/README.md — the front door linking all 11 documents in reading order, plus a section distinguishing this package from ARCHITECTURE.md/DECISIONS.md/BENCHMARKS.md without claiming to replace any of them.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Write project-management/design/README.md. One short paragraph per document (SDD-1..11), linking by relative path, in reading order (system architecture -> data architecture -> API/interface -> sequence flows -> security -> data governance -> extensibility -> performance/capacity -> deployment/operations -> testing strategy -> risk register). Add a 'relationship to other project docs' section distinguishing this package (point-in-time structured design-review artifact) from ARCHITECTURE.md (living current-state summary), DECISIONS.md (chronological decision log), and BENCHMARKS.md (living results data) — none of the three are superseded by this package.\n\nDepends on SDD-1 through SDD-11 all being merged — verify every linked path actually resolves to a real committed file before finishing, don't assume filenames match the story text exactly if an implementer deviated. Must run last, not in parallel with the other eleven.",
       "comments": []
     },
@@ -1419,7 +1419,7 @@
       "epic_id": "EPIC-11",
       "title": "First-class provenance metadata on memory records",
       "summary": "Add a governed `origin` field (enum: DIRECT_WRITE / EXTRACTION / CONSOLIDATION / RECONCILIATION / INGEST_RESOLVER) to every memory record instead of relying on free-form metadata — foundation for TRU-2's integrity guard.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Today no memory record tracks *how* it came to exist as a governed, queryable field — confirmed via grep: `_MemoryBase` in models.py has no `origin`/`provenance` column, and 'source' appears exactly once, as a free-form example key inside a `metadata={}` dict in a docstring, not enforced or typed anywhere. Add a `MemoryOrigin` enum to types.py (`DIRECT_WRITE`, `EXTRACTION`, `CONSOLIDATION`, `RECONCILIATION`, `INGEST_RESOLVER`, mirroring the SDK's five actual write paths: `remember()` called directly, `MemoryExtractor` output, `Consolidator` output, a `Reconciler`-driven supersession, and an `IngestResolver` UPDATE/ADD decision) and an `origin: MemoryOrigin` field on `_MemoryBase` in models.py, defaulting to `DIRECT_WRITE` so existing callers are unaffected. Add migration `0008_provenance.sql` (following the existing numbered pattern in `src/agent_memory_sdk/db/migrations/`, most recently `0007_widen_chunks_source_id.sql`) adding a nullable `origin` VARCHAR column to every memory table with a `DIRECT_WRITE` default, so it's backward-compatible with existing rows per ORC-4's `SchemaPolicy.REQUIRE_EXISTING` attach-mode discipline. Wire every internal call site that constructs a derived record (`_run_consolidator`, the `IngestResolver` dispatch in `remember()`, `Reconciler`-driven supersession writes, `MemoryExtractor` output in `add_messages()`) to stamp the correct `origin` value instead of leaving it at the default. Purely additive — no existing behavior changes, no new required constructor args. Independent of every other story in this epic except TRU-2, which depends on this field existing.",
       "comments": []
     },
@@ -1428,7 +1428,7 @@
       "epic_id": "EPIC-11",
       "title": "IntegrityGuard: pluggable poisoning/anomaly check on ProceduralMemory writes",
       "summary": "New opt-in IntegrityGuard protocol, parallel in shape to Consolidator/Reconciler/IngestResolver, that can flag or quarantine an incoming ProceduralMemory write before it's persisted — directly motivated by FARMA/SENTINEL's reasoning-trace poisoning attack (arXiv 2607.05029).",
-      "status": "To Do",
+      "status": "Done",
       "description": "FARMA/SENTINEL (Karamchandani et al., arXiv 2607.05029, July 2026) demonstrates an attack that poisons an agent's *stored reasoning* rather than stored facts, reaching 100% attack success against existing defenses, with a countermeasure (SENTINEL) that drives it to 0%. `ProceduralMemory` (models.py) — 'a learned skill, instruction set, or how-to knowledge... the agent recalls these before executing a task class to apply previously learned strategies' — is this SDK's closest existing structure to the attack's target, and today nothing inspects a `ProceduralMemory` write's content before it's persisted and later recalled.\n\nAdd an `IntegrityGuard` protocol to types.py, parallel in shape to `Consolidator`/`Reconciler`/`IngestResolver`: `(candidate: ProceduralMemory, origin: MemoryOrigin, context: list[_MemoryBase]) -> IntegrityDecision`, where `IntegrityDecision` is one of `ACCEPT` / `QUARANTINE` (write proceeds but is flagged, e.g. via a `quarantined: bool` field alongside TRU-1's `origin`) / `REJECT` (write is refused, caller gets an exception naming the reason). Ship a `NoOpIntegrityGuard` default (always `ACCEPT` — unchanged behavior). Wire it as an optional `integrity_guard=` constructor arg on `MemoryStore` (store.py, alongside the existing `consolidator=`/`reconciler=`/`ingest_resolver=` args at `__init__`, ~line 345), invoked specifically on `ProceduralMemory` candidates inside `remember()` before the write, using TRU-1's `origin` field to reason about trust (e.g. a guard implementation might treat `EXTRACTION`-origin content with lower default trust than `DIRECT_WRITE`). This is not a literal port of SENTINEL's detection model — it's the extension point a developer plugs a detector into, consistent with this SDK's 'developer-controlled writes, not mandatory passive extraction' positioning (the differentiator ai-agent-platform-competitive-analysis.md's SWOT calls out). Ship a reference example implementation (e.g. flagging `ProceduralMemory` writes whose content contradicts an existing high-confidence `ProceduralMemory` in the same scope) in `examples/`, not as the shipped default. Depends on TRU-1 for the `origin` field.",
       "comments": []
     },
@@ -1437,7 +1437,7 @@
       "epic_id": "EPIC-11",
       "title": "Sycophancy / contradiction-tracking benchmark category",
       "summary": "Extend the retrieval-quality suite (PH-6, scripts/run_benchmarks.py) with a new evaluation category testing whether retrieved memory causes an agent to over-align with a user against a stored fact — inspired by MemSyco-Bench (arXiv 2607.01071).",
-      "status": "To Do",
+      "status": "Done",
       "description": "MemSyco-Bench (Xiang et al., arXiv 2607.01071, July 2026) benchmarks a failure mode existing recall-accuracy suites like LongMemEval/LOCOMO don't test: whether an agent's retrieved memory causes it to sycophantically side with a user who contradicts a fact it has already stored, rather than surfacing or defending the stored fact. This SDK's `Reconciler` (ENH-3) already does contradiction *detection* among stored `SemanticFact`s, but nothing in the benchmark suite (BENCHMARKS.md, `scripts/run_benchmarks.py`) currently measures downstream behavior when a *user turn*, not another stored fact, contradicts memory.\n\nAdd a `sycophancy` ability category to the retrieval-quality suite's synthetic dataset generator (alongside the existing `extraction`/`multi_session`/`temporal_reasoning`/`knowledge_update`/`abstention` categories referenced in BENCHMARKS.md's Run B category breakdown): seed a scoped `SemanticFact` with confidence, then pose a follow-up question where the simulated user asserts something contradicting it, and score whether the agent's answer (a) holds the stored fact, (b) flags the contradiction explicitly, or (c) capitulates to the user's assertion without acknowledging the stored fact (the failure mode). Wire it through the existing `--suite retrieval` path in `scripts/run_benchmarks.py` as an additional category, reusing the existing judge infrastructure (`--judge keyword|<LLM>`). Report results as a new category row in BENCHMARKS.md's Run B/Run D-style breakdown table, following the same before/after and category-delta discipline PH-6's other categories already use. Independent of TRU-1/TRU-2/TRU-4/TRU-5.",
       "comments": []
     },
@@ -1446,7 +1446,7 @@
       "epic_id": "EPIC-11",
       "title": "Benchmark reproducibility self-audit: does the SDK's Run B win survive an embedding swap?",
       "summary": "Re-run BENCHMARKS.md's Run B 'with-SDK beats flat-context' comparison with `--embedding-provider` swapped and retrieval depth held constant, applying the exact critique the LightMem reproduction (arXiv 2607.29104) and MemPalace audit (arXiv 2604.21284) used to debunk other vendors' claimed wins.",
-      "status": "To Do",
+      "status": "Done",
       "description": "Two new findings in the August 2026 competitive-analysis update directly attack the credibility of vendor-reported memory-system benchmark gains: 'Reproducing LightMem: Naive RAG Is Just as Good for Memory Management' (Zhou et al., arXiv 2607.29104, July 31 2026) found retriever/embedding choice alone swings accuracy 58.1%→75.5%, and that naive raw-turn RAG matches or beats LightMem's constructed memories at equal retrieval depth; the earlier MemPalace audit (arXiv 2604.21284) found a headline 96.6% Recall@5 was mostly attributable to the default embedding model, not the claimed 'spatial palace' architecture. This SDK's own BENCHMARKS.md Run B currently reports the with-SDK path scoring *below* flat-context overall (84.0% vs 94.0%) but Run D (after BENCH-3a/3b/3c's Consolidator+Reconciler wiring) reports the SDK closing or reversing that gap — a claimed win that, per the same critique, should be checked against embedding choice before being treated as architecture-driven.\n\nRe-run Run D's exact configuration via `scripts/run_benchmarks.py --suite retrieval` with `--embedding-provider` swapped to a different provider than the one Run D used (nomic-embed-text), holding `--top-k`, `--seed 42`, and the Consolidator/Reconciler flags identical, and record the resulting category breakdown as a new 'Run E — embedding-swap reproducibility check' section in BENCHMARKS.md, directly comparable to Run D's table. If the SDK's win holds within a small margin across embedding providers, state that explicitly as evidence the gain is architecture-driven, not embedding-driven — the strongest form of the claim. If it doesn't hold, correct BENCHMARKS.md's summary-across-runs section to say so, following this project's own established discipline (BENCH-1 through BENCH-5 already root-caused and re-measured rather than just asserting improvement) applied here to a claimed win instead of a gap. Independent of TRU-1/TRU-2/TRU-3/TRU-5.",
       "comments": []
     },

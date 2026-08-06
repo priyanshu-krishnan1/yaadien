@@ -3,7 +3,7 @@
   "epic_id": "EPIC-9",
   "title": "System Architecture & Component Design Document",
   "summary": "project-management/design/01-system-architecture.md — layered architecture diagram, design principles with concrete rationale, component responsibility table, technology stack justification. Standalone, no external product references.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Write project-management/design/01-system-architecture.md, the top-level document a reviewer reads first. Ground it in src/agent_memory_sdk's real module layout (models.py, types.py, repositories/, store.py, db/, adapters/) and ARCHITECTURE.md section 1, but write it self-contained — a reader must not need to have read ARCHITECTURE.md first.\n\nRequired: (1) purpose/scope, no external comparison; (2) Mermaid graph TD layered-architecture diagram (models -> repositories -> store -> adapters, db/ cross-cutting); (3) design principles with concrete technical rationale (normalized per-type tables because Db2's vector index needs a NOT NULL column per type; pluggable-protocol extensibility; synchronous-by-default; mandatory scope predicates); (4) component responsibility table, one row per module; (5) technology stack and why (Python 3.10+, Pydantic v2, Db2 LUW VECTOR type, hatchling).\n\nFully independent of every other SDD story — new file only.",
   "comments": []
 }

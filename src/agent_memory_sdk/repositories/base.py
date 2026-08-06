@@ -823,16 +823,18 @@ class BaseRepository(ABC, Generic[M]):
     #   5  content     6  metadata    7  embedding
     #   8  confidence  9  content_hash
     #   10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
+    #   15 origin      (TRU-1 / migration 0008 — nullable VARCHAR(32))
     #
     # Repos with _HAS_CONSOLIDATED_AT=True (working_memory, episodic_memory)
-    # override _SELECT_COLS to append:
-    #   15 consolidated_at
+    # override _SELECT_COLS to append after origin:
+    #   16 consolidated_at
     _SELECT_COLS = (
         "id, tenant_id, agent_id, user_id, thread_id, "
         "content, metadata, "
         "VECTOR_SERIALIZE(embedding) AS embedding, "
         "confidence, content_hash, "
-        "created_at, updated_at, expires_at, version, deleted_at"
+        "created_at, updated_at, expires_at, version, deleted_at, "
+        "origin"
     )
 
     # Plain alias list for the *outer* SELECT of the ROW_NUMBER pagination
@@ -846,7 +848,8 @@ class BaseRepository(ABC, Generic[M]):
         "content, metadata, "
         "embedding, "
         "confidence, content_hash, "
-        "created_at, updated_at, expires_at, version, deleted_at"
+        "created_at, updated_at, expires_at, version, deleted_at, "
+        "origin"
     )
 
     # ------------------------------------------------------------------
@@ -992,12 +995,14 @@ class BaseRepository(ABC, Generic[M]):
                 id, tenant_id, agent_id, user_id, thread_id,
                 content, metadata, embedding,
                 confidence, content_hash,
-                created_at, updated_at, expires_at, version, deleted_at
+                created_at, updated_at, expires_at, version, deleted_at,
+                origin
             ) VALUES (
                 ?, ?, ?, ?, ?,
                 ?, ?, CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
                 ?, ?,
-                ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?,
+                ?
             )
         """  # nosec B608 — _TABLE is a hardcoded class constant; vec_str is produced by _vec_to_str() which coerces every element through float() before formatting (injection guard established in DECISIONS.md VER-5); all column values are bound params.
         params = [
@@ -1015,6 +1020,7 @@ class BaseRepository(ABC, Generic[M]):
             record.expires_at,
             record.version,
             record.deleted_at,
+            record.origin.value,
         ]
 
         with self._pool.get_connection() as conn:

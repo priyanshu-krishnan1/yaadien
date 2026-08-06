@@ -22,16 +22,10 @@ Test categories
 
 from __future__ import annotations
 
-import json
-import textwrap
 from pathlib import Path
 
 import pytest
-
 from benchmarks.common.scorecard import (
-    AgentQualityScore,
-    PerformanceScore,
-    RetrievalScore,
     ScorecardResult,
     _compute_agent_quality,
     _compute_performance,
@@ -42,7 +36,6 @@ from benchmarks.common.scorecard import (
     compute_scorecard,
     render_markdown,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — reusable test data

@@ -124,7 +124,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent_memory_sdk.thread import Thread
 
-from agent_memory_sdk.exceptions import ScopeMismatchError
+from agent_memory_sdk.exceptions import IntegrityRejectionError, ScopeMismatchError
 from agent_memory_sdk.exceptions import StaleWriteError as StaleWriteError  # re-export
 from agent_memory_sdk.models import (
     EntityProfile,
@@ -146,8 +146,11 @@ from agent_memory_sdk.types import (
     ErasureReport,
     IngestAction,
     IngestDecision,
+    IntegrityDecision,
+    MemoryOrigin,
     NoOpConsolidator,
     NoOpIngestResolver,
+    NoOpIntegrityGuard,
     NoOpMemoryExtractor,
     NoOpReconciler,
     NoOpSummarizer,
@@ -358,6 +361,8 @@ class MemoryStore:
         ingest_resolver: Any | None = None,
         resolver_k: int = 5,
         memory_extractor: Any | None = None,
+        integrity_guard: Any | None = None,
+        integrity_k: int = 5,
     ) -> None:
         # Kept for erase_all() (PIPE-5), which needs to reach memory_chunks
         # even when this instance was built without chunking enabled (e.g.
@@ -437,6 +442,13 @@ class MemoryStore:
         self._memory_extractor = (
             memory_extractor if memory_extractor is not None else NoOpMemoryExtractor()
         )
+        self._integrity_guard = (
+            integrity_guard if integrity_guard is not None else NoOpIntegrityGuard()
+        )
+
+        if integrity_k < 1:
+            raise ValueError(f"integrity_k must be >= 1; got {integrity_k!r}.")
+        self._integrity_k: int = integrity_k
 
         if consolidate_every_n < 1:
             raise ValueError(
@@ -508,6 +520,16 @@ class MemoryStore:
             )
 
         repo = getattr(self, repo_attr)
+
+        # TRU-2: IntegrityGuard check — runs specifically on ProceduralMemory
+        # writes, before any persistence attempt.  The guard either:
+        #   • returns silently (ACCEPT / QUARANTINE): write proceeds below;
+        #     for QUARANTINE, record.quarantined is set to True as a side-effect.
+        #   • raises IntegrityRejectionError (REJECT): write is aborted.
+        if isinstance(record, ProceduralMemory) and not isinstance(
+            self._integrity_guard, NoOpIntegrityGuard
+        ):
+            self._run_integrity_guard(record, scope)
 
         if isinstance(self._ingest_resolver, NoOpIngestResolver):
             # Fast path — unchanged pre-PIPE-2 behavior, no similarity search.
@@ -588,6 +610,9 @@ class MemoryStore:
             target.metadata = record.metadata
             target.embedding = record.embedding
             target.confidence = record.confidence
+            # TRU-1: stamp the target row so its provenance reflects that an
+            # IngestResolver decision drove the merge, not a direct write.
+            target.origin = MemoryOrigin.INGEST_RESOLVER
             updated: _MemoryBase = repo.update(target, scope)
             return updated, False
 
@@ -682,6 +707,10 @@ class MemoryStore:
                     type(derived_record).__name__,
                 )
                 continue
+            # Stamp TRU-1 provenance: records produced by the Consolidator
+            # are marked CONSOLIDATION so downstream tooling can distinguish
+            # them from direct writes without inspecting call-stack context.
+            derived_record.origin = MemoryOrigin.CONSOLIDATION
             try:
                 getattr(self, repo_attr).create(derived_record, scope)
                 logger.debug(
@@ -694,6 +723,74 @@ class MemoryStore:
                     "Failed to persist derived %s from consolidator.",
                     type(derived_record).__name__,
                 )
+
+    def _run_integrity_guard(
+        self, record: ProceduralMemory, scope: MemoryScope
+    ) -> _MemoryBase | None:
+        """Run the IntegrityGuard on a ProceduralMemory candidate (TRU-2).
+
+        Returns:
+            * ``None``      — guard returned ACCEPT; caller should proceed
+              with the normal write path.
+            * A stored record — guard returned QUARANTINE; the record was
+              written with ``quarantined=True`` and is returned directly.
+
+        Raises:
+            IntegrityRejectionError — if the guard returned REJECT.
+        """
+        if isinstance(self._integrity_guard, NoOpIntegrityGuard):
+            return None  # Fast path — no inspection, no overhead.
+
+        # Fetch context: top-integrity_k most-similar existing ProceduralMemory
+        # records in the same scope, by cosine distance.
+        context: list[_MemoryBase] = []
+        if self._embedding_provider is not None or record.embedding:
+            try:
+                embedding = record.embedding or self._embedding_provider(record.content)  # type: ignore[union-attr]
+                neighbors = self.procedures.search(
+                    embedding, scope, top_k=self._integrity_k
+                )
+                context = list(neighbors)
+            except Exception:
+                logger.exception(
+                    "_run_integrity_guard: failed to fetch context for "
+                    "ProceduralMemory id=%s; proceeding with empty context.",
+                    record.id,
+                )
+
+        try:
+            verdict = self._integrity_guard(record, record.origin, context)
+        except Exception:
+            logger.exception(
+                "IntegrityGuard raised an exception for ProceduralMemory id=%s; "
+                "failing open (treating as ACCEPT).",
+                record.id,
+            )
+            return None  # Fail-open: proceed with write.
+
+        if verdict.decision == IntegrityDecision.REJECT:
+            logger.warning(
+                "IntegrityGuard REJECTED ProceduralMemory id=%s: %s",
+                record.id, verdict.reason,
+            )
+            raise IntegrityRejectionError(
+                f"IntegrityGuard rejected ProceduralMemory id={record.id!r}: "
+                f"{verdict.reason}"
+            )
+
+        if verdict.decision == IntegrityDecision.QUARANTINE:
+            record.quarantined = True
+            logger.warning(
+                "IntegrityGuard QUARANTINED ProceduralMemory id=%s: %s",
+                record.id, verdict.reason,
+            )
+            # Proceed with the write — quarantine is a flag, not a block.
+            # Fall through to the normal write path by returning None; the caller
+            # will write the record (now with quarantined=True) as normal.
+            return None
+
+        # ACCEPT (or any unrecognised verdict value — treated conservatively as ACCEPT).
+        return None
 
     # ------------------------------------------------------------------
     # forget() — tombstone a row
@@ -1706,6 +1803,9 @@ class MemoryStore:
                         type(derived_record).__name__,
                     )
                     continue
+                # TRU-1: stamp provenance so extraction-derived records are
+                # distinguishable from direct writes at query time.
+                derived_record.origin = MemoryOrigin.EXTRACTION
                 try:
                     getattr(self, repo_attr).create(derived_record, scope)
                 except Exception:

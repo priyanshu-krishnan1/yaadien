@@ -14,6 +14,7 @@ from typing import Any
 
 from agent_memory_sdk.models import EpisodicMemory
 from agent_memory_sdk.repositories.base import BaseRepository, _parse_dt, _parse_vector
+from agent_memory_sdk.types import MemoryOrigin
 
 
 class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
@@ -29,14 +30,14 @@ class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
     _MODEL = EpisodicMemory
     _HAS_CONSOLIDATED_AT = True
 
-    # Extend base SELECT list with consolidated_at (index 15).
+    # Extend base SELECT list with origin (index 15) and consolidated_at (index 16).
     _SELECT_COLS = (
         "id, tenant_id, agent_id, user_id, thread_id, "
         "content, metadata, "
         "VECTOR_SERIALIZE(embedding) AS embedding, "
         "confidence, content_hash, "
         "created_at, updated_at, expires_at, version, deleted_at, "
-        "consolidated_at"
+        "origin, consolidated_at"
     )
 
     # Plain alias list for the outer SELECT of the ROW_NUMBER pagination
@@ -47,7 +48,7 @@ class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
         "embedding, "
         "confidence, content_hash, "
         "created_at, updated_at, expires_at, version, deleted_at, "
-        "consolidated_at"
+        "origin, consolidated_at"
     )
 
     def _model_from_row(self, row: tuple[Any, ...]) -> EpisodicMemory:
@@ -69,7 +70,8 @@ class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
           12 expires_at
           13 version
           14 deleted_at
-          15 consolidated_at (None = not yet consolidated; ENH-4 / migration 0005)
+          15 origin          (MemoryOrigin enum value or None for pre-0008 rows)
+          16 consolidated_at (None = not yet consolidated; ENH-4 / migration 0005)
         """
         (
             id_, tenant_id, agent_id, user_id, thread_id,
@@ -78,6 +80,7 @@ class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
             confidence,
             content_hash,
             created_at, updated_at, expires_at, version, deleted_at,
+            origin_str,
             consolidated_at,
         ) = row
 
@@ -97,5 +100,6 @@ class EpisodicMemoryRepository(BaseRepository[EpisodicMemory]):
             expires_at=_parse_dt(expires_at),
             version=version if version is not None else 1,
             deleted_at=_parse_dt(deleted_at),
+            origin=MemoryOrigin(origin_str) if origin_str else MemoryOrigin.DIRECT_WRITE,
             consolidated_at=_parse_dt(consolidated_at),
         )

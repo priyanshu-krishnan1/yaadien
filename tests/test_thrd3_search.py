@@ -96,6 +96,7 @@ def _working_row(uid: str, content: str) -> tuple[Any, ...]:
         uid, None, "agent-thrd3", None, None,
         content, _META, _VEC_STR,
         1.0, _HASH, _NOW, _NOW, None, 1, None,
+        "DIRECT_WRITE",  # origin (TRU-1)
         None,  # consolidated_at
     )
 
@@ -105,6 +106,7 @@ def _episodic_row(uid: str, content: str) -> tuple[Any, ...]:
         uid, None, "agent-thrd3", None, None,
         content, _META, _VEC_STR,
         1.0, _HASH, _NOW, _NOW, None, 1, None,
+        "DIRECT_WRITE",  # origin (TRU-1)
         None,  # consolidated_at
     )
 

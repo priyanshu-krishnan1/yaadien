@@ -3,7 +3,7 @@
   "epic_id": "EPIC-9",
   "title": "Non-Functional Requirements: Performance, Scalability & Capacity Design Document",
   "summary": "project-management/design/08-nfr-performance-capacity.md — concurrency/pool-sizing model, search and write cost models, and a benchmark-methodology summary that links to BENCHMARKS.md rather than copying its numbers (so it never goes stale).",
-  "status": "To Do",
+  "status": "Done",
   "description": "Write project-management/design/08-nfr-performance-capacity.md. Ground it in db/connection.py, repositories/base.py's EXACT/APPROX + hybrid RRF cost, ENH-4's consolidate_every_n, and BENCHMARKS.md's structure (not its numbers).\n\nRequired: (1) concurrency model — ConnectionPool as the hard concurrency ceiling, exhaustion behavior, sizing guidance; (2) search cost model — EXACT vs APPROX tradeoffs, the two-step ID-then-row fetch pattern's extra round-trip and why (Db2 12.1.5 fp0 constraint), hybrid=True's added Python-side RRF cost; (3) write cost model — chunking's effect on write cost, consolidate_every_n as the cost-control knob, restating ENH-4's known in-memory/no-cross-instance-sharing limitation as a capacity-planning caveat; (4) benchmark methodology summary linking to BENCHMARKS.md by relative path, with zero specific numbers copied in (so this document doesn't go stale when a new run is appended).\n\nFully independent of every other SDD story — new file only.",
   "comments": []
 }

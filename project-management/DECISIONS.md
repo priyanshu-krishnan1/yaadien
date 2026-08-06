@@ -5727,3 +5727,50 @@ All Microsoft Azure AI Foundry evaluator names, scale types (1–5 Likert / Bina
 - **Made during:** EPIC-21 (AGQ-1/AGQ-2/AGQ-3/AGQ-4 implementation)
 
 ---
+
+## 2026-08-09 — EPIC-11 TRU-4: Benchmark reproducibility self-audit infrastructure
+
+- **Decision:** Add Run E infrastructure: a pre-scripted embedding-swap reproducibility 
+  check that re-runs Run D's exact configuration with nomic-embed-text swapped to 
+  mxbai-embed-large. This applies the LightMem/MemPalace critique (arXiv 2607.29104, 
+  arXiv 2604.21284) to this SDK's own Run D claimed win. The run has not yet been 
+  executed; the BENCHMARKS.md section documents the methodology and provides the 
+  reproduce command. When executed: if the win holds within ±5% across embedding 
+  providers, BENCHMARKS.md should be updated to state the gain is architecture-driven. 
+  If it does not hold, BENCHMARKS.md Summary should be corrected accordingly.
+- **Reason:** Honest evaluation requires applying the same reproducibility standard 
+  to claimed wins that this project applies to everything else. Run D is a claimed win; 
+  it should be checked before being cited externally.
+- **Made during:** EPIC-11 TRU-4
+
+## 2026-08-09 — EPIC-11 TRU-1: First-class provenance metadata on memory records
+
+- **Decision:** Add `MemoryOrigin` enum (`DIRECT_WRITE`, `EXTRACTION`, `CONSOLIDATION`, `RECONCILIATION`, `INGEST_RESOLVER`) to `types.py` and an `origin: MemoryOrigin` field to `_MemoryBase` (default `DIRECT_WRITE`). Add migration `0008_provenance.sql` adding a nullable `VARCHAR(32)` `origin` column to all five memory tables. Wire origin stamps at the three internal write paths that produce derived records: `_run_consolidator()` → `CONSOLIDATION`; `_resolve_and_act()` UPDATE path → `INGEST_RESOLVER`; `add_messages()` MemoryExtractor derived records → `EXTRACTION`. Direct `remember()` calls use the model default (`DIRECT_WRITE`).
+- **Reason:** FARMA/SENTINEL (arXiv 2607.05029, July 2026) demonstrated attacks on stored reasoning traces, and the trust-hardening scope (EPIC-11) requires being able to reason about how a record came to exist. Without a governed provenance field, an `IntegrityGuard` (TRU-2) cannot distinguish a `DIRECT_WRITE` from an `EXTRACTION`-origin record at inspection time. The nullable column + Python-default approach ensures backward compatibility: existing rows get NULL (read as `DIRECT_WRITE` by the model), no backfill required.
+- **Made during:** EPIC-11 TRU-1
+
+## 2026-08-09 — EPIC-11 TRU-2: Write-time integrity guard for ProceduralMemory
+
+- **Decision:** Add `IntegrityDecision` enum (`ACCEPT`, `QUARANTINE`, `REJECT`),
+  `IntegrityVerdict` dataclass, `IntegrityGuard` Protocol, and `NoOpIntegrityGuard`
+  default to `types.py`.  Add `quarantined: bool = False` field to `_MemoryBase`
+  (Python-only, no migration — stored as a metadata flag, not a DB column).  Wire
+  `integrity_guard=` and `integrity_k=` constructor arguments into `MemoryStore`.
+  Fire the guard synchronously inside `remember()` for `ProceduralMemory` writes only,
+  before the record is persisted.  `ACCEPT` → proceed unchanged.  `QUARANTINE` → set
+  `record.quarantined = True`, persist, log.  `REJECT` → raise
+  `IntegrityRejectionError` (nothing persisted).  Guard exceptions are caught and
+  logged; the write proceeds as `ACCEPT` (fail-open) so a buggy guard cannot
+  permanently block all ProceduralMemory writes.  Add `IntegrityRejectionError` to
+  `exceptions.py` and re-export all new symbols from `__init__.py`.
+- **Reason:** Directly motivated by FARMA/SENTINEL (Karamchandani et al.,
+  arXiv 2607.05029, July 2026), which demonstrated attacks poisoning stored reasoning
+  traces (the exact threat model `ProceduralMemory` is exposed to).  The guard is
+  scoped to `ProceduralMemory` because that is the write path SENTINEL targets; other
+  memory types are not in scope for this story.  Fail-open is deliberate — the guard
+  is a developer-configured anomaly detector, not a mandatory security gate; a guard
+  crash must not make procedural memory unusable.  `quarantined` is Python-only
+  (not a DB column) because flagging is an in-memory classification, not a query
+  predicate — quarantined records are stored but can be filtered by downstream tooling
+  that inspects the field.
+- **Made during:** EPIC-11 TRU-2

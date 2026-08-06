@@ -116,23 +116,24 @@ def _vec_str() -> str:
 
 
 def _base_row(id_: str, content: str) -> tuple[Any, ...]:
-    """15-column row shape (entity_profiles / procedural_memory)."""
+    """16-column row shape (entity_profiles / procedural_memory) — includes origin (TRU-1)."""
     return (
         id_, "t1", "agent-001", None, None,
         content, json.dumps({"k": "v"}),
         _vec_str(),
         1.0, _hash(content),
         _NOW, _NOW, None, 1, None,
+        "DIRECT_WRITE",  # 15 origin (TRU-1)
     )
 
 
 def _consolidated_row(id_: str, content: str) -> tuple[Any, ...]:
-    """16-column row shape (working_memory / episodic_memory) — adds consolidated_at."""
+    """17-column row shape (working_memory / episodic_memory) — origin + consolidated_at."""
     return (*_base_row(id_, content), None)
 
 
 def _facts_row(id_: str, content: str) -> tuple[Any, ...]:
-    """18-column row shape (semantic_facts) — adds supersession columns."""
+    """19-column row shape (semantic_facts) — origin + supersession columns."""
     return (*_base_row(id_, content), None, None, None)
 
 

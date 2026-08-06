@@ -121,6 +121,7 @@ def _row(
         1.0,               # 8 — confidence (ENH-1)
         h,                 # 9 — content_hash (ENH-2)
         _NOW, _NOW, None, version, deleted_at,
+        "DIRECT_WRITE",    # 15 — origin (TRU-1)
         None,              # 15 — consolidated_at (ENH-4)
     )
 

@@ -285,6 +285,80 @@ baseline degrades — this is the BENCH-5 hypothesis (not yet measured on this h
 
 ---
 
+### Run E — Embedding-swap reproducibility check
+
+**Motivation:** The LightMem reproduction (arXiv 2607.29104) and MemPalace audit
+(arXiv 2604.21284) showed that vendor memory system wins were frequently attributable
+to the choice of embedding model rather than the architecture. Run D's result
+(98.0% SDK = 98.0% baseline, +0.0% delta, after embedding fix + BENCH-3a/3b/3c)
+is a claimed win for this SDK's architecture. Run E applies the same critique to
+our own result: does the win survive an embedding swap?
+
+**Methodology:** Identical to Run D in every respect **except** the embedding model:
+
+- `--suite retrieval`, `--seed 42`, `--top-k 5`
+- `--with-consolidator` (`BenchmarkConsolidator`), `--with-reconciler` (`BenchmarkReconciler`)
+- `--search-facts` (search `store.working` + `store.facts`, merged)
+- **Embedding model swapped:** `nomic-embed-text` → `mxbai-embed-large`
+  (768-dim → 1536 padded, same local Ollama family, different model family)
+
+Reproduce with:
+```bash
+make benchmark ARGS="--suite retrieval --embedding-provider ollama \
+    --embedding-model mxbai-embed-large \
+    --judge ollama:llama3.1:8b --dataset-size 10 --seed 42 \
+    --baseline --consolidator benchmark --reconcile --search-facts"
+```
+
+| Field | Value |
+|---|---|
+| **Date** | (not yet run) |
+| **Run id** | (not yet run) |
+| **Embedding provider** | `ollama` / `mxbai-embed-large` (768-dim → 1536 padded) |
+| **Judge** | `ollama:llama3.1:8b` |
+| **top_k** | 5 |
+| **Dataset size** | 50 questions (n=10 per category, seed=42) |
+| **Consolidator** | `BenchmarkConsolidator` (template-matching, BENCH-3a) |
+| **Reconciler** | `BenchmarkReconciler` (template-matching, BENCH-3b) |
+| **Search target** | `store.working` + `store.facts` merged (BENCH-3c) |
+
+| Category | With SDK | Without SDK (baseline) | Delta |
+|---|---|---|---|
+| extraction | (not yet run) | (not yet run) | (not yet run) |
+| multi_session | (not yet run) | (not yet run) | (not yet run) |
+| temporal_reasoning | (not yet run) | (not yet run) | (not yet run) |
+| knowledge_update | (not yet run) | (not yet run) | (not yet run) |
+| abstention | (not yet run) | (not yet run) | (not yet run) |
+| **Overall** | **(not yet run)** | **(not yet run)** | **(not yet run)** |
+
+#### Interpretation — embedding-swap verdict
+
+**If the Run E overall SDK accuracy is within ±5% of Run D's 98.0%:**
+The gain is **architecture-driven**. The consolidator + reconciler + facts-search
+pipeline produces consistent results regardless of whether the embedding model is
+`nomic-embed-text` or `mxbai-embed-large`. Update BENCHMARKS.md § "Summary across
+runs" to record this and state: *"Run D's SDK win survives an embedding swap to
+mxbai-embed-large (±5% tolerance) — gain is architecture-driven, not
+embedding-driven."*
+
+**If Run E accuracy falls outside the ±5% band:**
+The gain is **embedding-sensitive**. Update BENCHMARKS.md § "Summary across runs"
+to state: *"Run D's SDK win does not survive the mxbai-embed-large swap — gain may
+be embedding-driven; further investigation needed."* and re-evaluate the Run D
+claimed win before any external citation.
+
+> **Motivating critiques applied here:**
+> - LightMem reproduction — arXiv 2607.29104: embedding-swap tests on published
+>   memory system benchmarks showed that model-family choice explained most of the
+>   reported accuracy variance, not the memory architecture.
+> - MemPalace audit — arXiv 2604.21284: independent re-evaluation of a vendor
+>   memory system win found the result was not robust across embedding providers.
+>
+> Run E is this SDK applying that same reproducibility standard to its own Run D
+> result before citing it externally.
+
+---
+
 ### Run C — Judge: `deepseek-r1:8b` (Ollama, local) — with SDK only
 
 | Field | Value |
@@ -328,6 +402,7 @@ make benchmark ARGS="--suite retrieval --embedding-provider ollama --judge ollam
 | `llama3.1:8b` | **Without SDK (baseline)** | **98.0%** (49/50) | Run D baseline — flat context |
 | `llama3.1:8b` | **Delta (SDK vs. baseline)** | **+0.0%** | **Run D — SDK matches flat context; gap closed** |
 | `deepseek-r1:8b` | With SDK | 62.0%* (31/50) | `<think>` parsing bug, now fixed; re-run |
+| *(not yet run)* `llama3.1:8b` | With SDK + consolidator + reconciler (`mxbai-embed-large`) | (not yet run) | **Run E** — embedding-swap check; see Run E section |
 | *(pending)* `gpt-oss:20b` | — | — | Pull when bandwidth available |
 | *(pending)* `qwen3:8b` | — | — | Pull when bandwidth available |
 

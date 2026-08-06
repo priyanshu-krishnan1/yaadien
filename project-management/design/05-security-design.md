@@ -1,0 +1,339 @@
+# Security Design — agent-memory-sdk
+
+**EPIC-9 / SDD-5**  
+Last updated: 2026-08-02
+
+---
+
+## 1. Scope and approach
+
+This document describes the security controls that are implemented in this
+repository, the automated mechanisms that verify those controls, and—with equal
+prominence—the controls that are explicitly delegated to the deployment
+environment or left out of scope.
+
+The threat model in §6 is intentionally honest about this boundary. An SDK
+that stores and queries per-agent memory data in a shared database has a narrow
+but critical in-process attack surface: **keeping one tenant's data from
+leaking to another tenant**. That is what the code owns. Network transport
+security, physical database security, and secret management at rest are real
+concerns, but they belong to the Db2 server configuration and the deployment
+platform, not to this library.
+
+---
+
+## 2. Multi-tenant isolation boundary
+
+### 2.1 What it prevents
+
+Every table in the schema is shared across all agents, tenants, users, and
+threads. The only thing preventing agent A from reading agent B's data is the
+WHERE clause fragments that the repository layer is required to append to
+every query. This is the principal security control in the codebase.
+
+### 2.2 Where it is enforced
+
+The enforcement lives in two module-level functions in
+[`repositories/base.py`](../../src/agent_memory_sdk/repositories/base.py):
+
+**[`_require_agent_id(scope)`](../../src/agent_memory_sdk/repositories/base.py:173)**  
+Called at the entry point of every public repository method. Raises
+`ValueError` if `scope.agent_id` is falsy (catches both `None` and empty
+string). This is a hard gate — no SQL is constructed or executed unless
+`agent_id` is present.
+
+```python
+def _require_agent_id(scope: MemoryScope) -> None:
+    if not scope.agent_id:
+        raise ValueError("MemoryScope.agent_id is required on every repository call.")
+```
+
+**[`_scope_predicates(scope)`](../../src/agent_memory_sdk/repositories/base.py:193)**  
+Builds the WHERE clause fragment and the corresponding parameter list. It
+always emits `agent_id = ?`. It adds `tenant_id = ?`, `user_id = ?`, and
+`thread_id = ?` only when those fields are non-`None` in the scope, so a
+narrower scope filters more tightly without breaking a broader query:
+
+```python
+def _scope_predicates(scope: MemoryScope) -> tuple[str, list[Any]]:
+    parts: list[str] = ["agent_id = ?"]
+    params: list[Any] = [scope.agent_id]
+    if scope.tenant_id is not None:
+        parts.append("tenant_id = ?")
+        params.append(scope.tenant_id)
+    if scope.user_id is not None:
+        parts.append("user_id = ?")
+        params.append(scope.user_id)
+    if scope.thread_id is not None:
+        parts.append("thread_id = ?")
+        params.append(scope.thread_id)
+    return " AND ".join(parts), params
+```
+
+### 2.3 Coverage across SQL paths
+
+Every public method on `BaseRepository` that issues a SQL statement calls
+`_require_agent_id(scope)` first and then threads `scope_sql` + `scope_params`
+into its query. The VER-5 audit verified this for all seven SQL paths:
+
+| Method | Scope enforcement |
+|---|---|
+| `create()` | `_require_agent_id`; scope fields written into row at INSERT time (scope wins over record fields) |
+| `get_by_id()` | `WHERE id = ? AND {scope_sql} AND deleted_at IS NULL` |
+| `list_all()` | `WHERE {scope_sql} AND deleted_at IS NULL [AND ...]` |
+| `search()` | Scope predicates in step-1 ID-ranking SQL; step-2 row fetch also rechecks `deleted_at IS NULL` |
+| `forget()` | `WHERE id = ? AND {scope_sql} AND deleted_at IS NULL` |
+| `update()` | `WHERE id = ? AND {scope_sql} AND version = ? AND deleted_at IS NULL` |
+| `purge_expired()` | `DELETE WHERE deleted_at IS NOT NULL AND {scope_sql}` |
+| `erase_all()` | `DELETE WHERE {scope_sql}` |
+
+A cross-scope attempt to `get_by_id` or `forget` a row simply returns `None`
+or affects zero rows — the row appears not to exist from the perspective of
+the caller. For `update()`, a cross-scope attempt produces `rowcount = 0`,
+which raises `StaleWriteError`. The caller cannot distinguish "row not found",
+"wrong scope", and "stale version" from this error, which is intentional
+(information about row existence in another scope is not disclosed).
+
+### 2.4 Automated verification: VER-5 scope-isolation test suite
+
+[`tests/test_scoping.py`](../../tests/test_scoping.py) is the automated
+verification of this control. It contains 91 unit tests covering:
+
+- `MemoryScope` value-object properties (frozen, hashable, equality).
+- `_scope_predicates()` — output SQL fragment and bound-parameter list for
+  every combination of optional fields.
+- Five repository types × six operations = 30 parametrized cross-scope
+  isolation tests. Each test asserts that a row written under scope A returns
+  `None` / `[]` when queried under scope B, and verifies that the SQL
+  structure and bound parameters generated by the mock cursor match the
+  expected fragments.
+- `MemoryStore` facade scope propagation.
+- Empty `agent_id` rejection.
+
+These tests are part of the standard unit-test matrix and are merge-blocking
+(they run in the `lint-typecheck-test` CI job).
+
+---
+
+## 3. SQL construction and injection posture
+
+### 3.1 Overview: three-part approach
+
+SQL strings in `BaseRepository` are constructed with f-strings, which bandit
+flags as B608 (possible SQL injection). The VER-5 audit confirmed all 13
+occurrences in `base.py` are safe by a consistent three-part discipline:
+
+**Part A — Table and column names are hardcoded class constants.**  
+`self._TABLE` is a string literal defined at class-declaration time (e.g.
+`"working_memory"`). `self._SELECT_COLS` is likewise a hardcoded column-list
+string. Neither is ever derived from user input. No user-supplied value
+reaches the SQL structure.
+
+**Part B — All user-supplied values are bound parameters.**  
+Every value that could come from outside the process (content, metadata,
+IDs, scope fields, filter values) is passed as a `?` placeholder and bound
+in the `cur.execute(sql, params)` call. The SQL string itself contains only
+literal `?` characters for these positions. `_scope_predicates()` produces
+only `column = ?` fragments — never inline values.
+
+**Part C — Vector strings: `float()` coercion before inline substitution.**  
+Db2 12.1.5 fp0 does not support binding a vector string via `?` inside
+`TO_VECTOR(?, FLOAT32)` — the driver raises `SQL0901N` for any form of
+`CAST(? AS VECTOR)`. The only working approach on this version is to inline
+the vector literal directly:
+
+```
+CAST('{vec_str}' AS VECTOR({dim},FLOAT32))
+```
+
+`vec_str` is produced by
+[`_vec_to_str()`](../../src/agent_memory_sdk/repositories/base.py:179):
+
+```python
+def _vec_to_str(embedding: list[float]) -> str:
+    return "[" + ",".join(str(float(f)) for f in embedding) + "]"
+```
+
+Every element is coerced through `float()` before formatting. Any non-numeric
+value raises `ValueError` or `TypeError` before it reaches SQL — this closes
+the injection path. For `create()` and `update()`, the source is a
+Pydantic-validated `list[float]` field, so coercion is a no-op. For
+`search()`, the source is the caller-supplied `query_embedding` argument,
+which is an unenforced type hint and is externally reachable via the MCP
+`recall` tool. The `float()` coercion in `_vec_to_str()` is the actual
+security boundary on that path.
+
+Metadata filter field names (ORC-3) follow a fourth guard: field names are
+validated against the regex `^[A-Za-z_][A-Za-z0-9_.]*$` by
+`_build_metadata_filter()` before any interpolation, and filter values are
+passed as bound parameters.
+
+### 3.2 Complete `# nosec B608` register for `base.py`
+
+The grep-confirmed count is **13 `# nosec B608` annotations** on the
+following lines, each with the exact justification text from the source:
+
+| Line | Method | Justification (verbatim from source) |
+|---:|---|---|
+| 930 | `create()` — dedup SELECT | `_TABLE/_SELECT_COLS are hardcoded class constants; scope_sql contains only literal column=? fragments from _scope_predicates (all values bound); supersession_sql is a hardcoded string fragment. DECISIONS.md VER-5.` |
+| 1002 | `create()` — INSERT | `_TABLE is a hardcoded class constant; vec_str is produced by _vec_to_str() which coerces every element through float() before formatting (injection guard established in DECISIONS.md VER-5); all column values are bound params.` |
+| 1057 | `get_by_id()` — SELECT | `_TABLE/_SELECT_COLS are hardcoded class constants; scope_sql contains only literal column=? fragments; all values are bound params. DECISIONS.md VER-5.` |
+| 1147 | `list_all()` — FETCH FIRST path | `_TABLE/_SELECT_COLS are hardcoded constants; scope_sql from _scope_predicates (bound params only); supersession_sql/extra/conf_sql are hardcoded fragments; meta_sql from _build_metadata_filter which validates field names + uses bound params. DECISIONS.md VER-5.` |
+| 1164 | `list_all()` — ROW_NUMBER pagination path | `same safety as the FETCH FIRST path above: all interpolated fragments are hardcoded constants or outputs of vetted helpers with bound params. DECISIONS.md VER-5.` |
+| 1222 | `forget()` — UPDATE | `_TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.` |
+| 1316 | `update()` — UPDATE | `_TABLE hardcoded; vec_str from _vec_to_str() (float() coercion guard, DECISIONS.md VER-5); scope_sql bound-params only; EMBEDDING_DIM is an int constant.` |
+| 1385 | `purge_expired()` — DELETE | `_TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.` |
+| 1441 | `erase_all()` — DELETE | `_TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.` |
+| 1515 | `_claim_consolidated()` — UPDATE | `_TABLE is a hardcoded class constant; scope_sql contains only literal column=? fragments (all values bound). DECISIONS.md VER-5.` |
+| 1790 | `search()` — ID-ranking SELECT | `_TABLE hardcoded; vec_str/_zero_vec_str from _vec_to_str()/_zero_vec_str() (float() guard, DECISIONS.md VER-5); metric.value is a DistanceMetric enum (hardcoded strings); scope_sql/supersession_sql/extra/conf_sql/meta_sql are hardcoded or validated fragments with bound params; zero_vec_filter uses the same inline CAST pattern.` |
+| 1825 | `search()` — full-row fetch SELECT | `_TABLE/_SELECT_COLS are hardcoded constants; placeholders is a literal "?,?,…" string built from len(ordered_ids). DECISIONS.md VER-5.` |
+| 1989 | `_search_via_chunks()` — parent-row fetch SELECT | `_TABLE/_SELECT_COLS hardcoded; placeholders is literal "?,?…"; scope_sql/supersession_sql/extra/conf_sql/meta_sql are hardcoded or validated fragments with bound params. DECISIONS.md VER-5.` |
+
+All suppressions are scoped to the specific rule (`# nosec B608`) and placed
+on the closing `"""` line of each multiline f-string. No global bandit
+skip-lists are used; the full rule set is active for the entire scoped
+directory. Any new SQL-construction pattern added in the future will be flagged
+unless it is suppresssed with a recorded rationale.
+
+---
+
+## 4. Dependency and static-analysis posture
+
+Both tools run in the `security` CI job (`.github/workflows/ci.yml`, lines
+273–325), which executes in parallel with the unit-test matrix and the
+integration job. The `security` job is a required check — it is merge-blocking
+for all pull requests.
+
+### 4.1 bandit — static security scanner
+
+**Command:**
+```
+bandit -r \
+  src/agent_memory_sdk/db/ \
+  src/agent_memory_sdk/repositories/ \
+  src/agent_memory_sdk/store.py
+```
+
+Scope: the three module groups that contain all SQL construction in the
+codebase. The VER-5 audit hand-verified every SQL-construction pattern in
+these modules. Enforcing bandit over exactly this scope turns the manual audit
+into a mechanical gate: any new SQL-construction pattern added in the future
+will be flagged and must either pass cleanly or receive a per-site suppression
+with a rationale recorded in `DECISIONS.md`.
+
+Bandit is invoked with no `--skip` or `-t` flags. The full bandit rule set is
+active over the scoped directories.
+
+### 4.2 pip-audit — CVE scan
+
+**Command:**
+```
+pip install --upgrade "setuptools>=83.0.0"
+pip-audit --strict
+```
+
+Audits the fully resolved dependency set installed by `pip install -e ".[dev]"`.
+`--strict` causes the command to exit non-zero on any known vulnerability
+regardless of severity — no known CVEs with a published advisory in the PyPI
+advisory database are permitted in the resolved install.
+
+The `[langchain]`, `[openai-agents]`, and `[mcp]` extras are excluded from
+this scan because their rapidly-changing third-party dependency graphs are out
+of scope here; those adapter deps are exercised by the separate
+`integration-test` job. If a future advisory must be accepted (unfixed
+transitive-dep vuln with no upgrade path), the `--ignore-vuln <PYSEC-ID>` flag
+is added to the step and a risk acceptance with PYSEC ID, affected package,
+exploitability assessment, and expiry date is recorded in `DECISIONS.md`.
+
+---
+
+## 5. Credential and configuration handling
+
+All credentials are supplied exclusively through environment variables. No
+configuration file carrying live credentials is read by the SDK, and `.env`
+(a filled-in copy of `.env.example`) is listed in `.gitignore` to prevent
+accidental commit.
+
+### 5.1 Required variables
+
+| Variable | Purpose |
+|---|---|
+| `DB2_DATABASE` | Database name |
+| `DB2_HOSTNAME` | Server hostname or IP |
+| `DB2_UID` | Database username |
+| `DB2_PWD` | Database password |
+
+These four are validated at `ConnectionPool` construction time by
+[`_build_conn_str()`](../../src/agent_memory_sdk/db/connection.py:101). If any
+is absent, an `OSError` is raised before any connection is attempted, with
+a message that names the missing variable(s).
+
+### 5.2 Optional variables
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `DB2_PORT` | TCP port | `50000` |
+| `DB2_SECURITY` | Set to `SSL` to enable encrypted transport | *(plain TCP)* |
+| `DB2_POOL_SIZE` | Number of persistent connections in pool | `5` (max `20`) |
+| `DB2_POOL_TIMEOUT` | Seconds to wait for a free connection | `30` |
+| `IBM_DB_WIN_DLL_DIR` | Windows only: path to `clidriver/bin` | *(not set)* |
+| `IBM_DB_HOME` | Override bundled clidriver location | *(bundled)* |
+
+### 5.3 SSL / encrypted transport
+
+Setting `DB2_SECURITY=SSL` causes `_build_conn_str()` to append
+`Security=SSL` to the ODBC connection string. The ibm_db driver negotiates
+TLS with the Db2 server using the server's own certificate configuration.
+The SDK does not manage certificates, cipher suites, or TLS versions — those
+are delegated entirely to the ibm_db driver and the Db2 server. See §6 (threat
+model) for the explicit out-of-scope statement.
+
+### 5.4 Credential logging guard
+
+[`ConnectionPool.__init__`](../../src/agent_memory_sdk/db/connection.py:182)
+logs only the hostname segment of the connection string (split on `;` to
+isolate the `HOSTNAME=…` token) — never the full connection string, which
+contains `PWD`. The logger level for the connection pool is `logging.INFO` for
+pool-ready and pool-closed events, `logging.DEBUG` for per-connection-open
+messages — both are below the `WARNING` threshold of most default logging
+configurations.
+
+---
+
+## 6. STRIDE-lite threat model
+
+The table below categorises the threats relevant to this SDK, states whether
+each is in-scope for the SDK code, and records the current mitigation and
+residual risk. "Delegated" means the control is the responsibility of the
+deployment environment (the Db2 server, the host OS, or the operator's secret
+management system) — not this library.
+
+| Threat category | Threat description | In-scope? | Current mitigation | Residual risk |
+|---|---|---|---|---|
+| **Spoofing** | Cross-tenant data access: agent A reads or writes agent B's memory rows | ✅ In scope | Mandatory scope predicates in every repository SQL path (`_scope_predicates` + `_require_agent_id`); absence of `agent_id` raises `ValueError` before SQL runs; cross-scope reads return `None`/`[]` | Residual risk is low. A scope bypass would require either a bug in `_scope_predicates` or a call that entirely bypasses the repository layer. The VER-5 test suite (`test_scoping.py`, 91 tests) provides automated regression coverage for all seven SQL paths. |
+| **Tampering** | SQL injection: attacker supplies a crafted embedding, scope field, or metadata filter value to alter or exfiltrate data via SQL | ✅ In scope | Bound parameters (`?`) for all user-supplied values; `float()` coercion in `_vec_to_str()` for the one unavoidable inline literal; `^[A-Za-z_][A-Za-z0-9_.]*$` regex for metadata field names; 13 `# nosec B608` suppressions all justified by one of these three patterns (§3) | Residual risk is low. The Db2 12.1.5 fp0 vector-binding constraint forces one inline literal per vector query; the `float()` coercion guard closes that path. The MCP `recall` tool is the only externally-reachable entry point for `query_embedding` — that path is guarded by the same coercion. |
+| **Repudiation** | Unauthorized data erasure: `erase_all()` is called without the subject's knowledge, and no record exists of what was deleted | ⚠️ Partially in scope | `MemoryStore.erase_all(scope)` returns an `ErasureReport` that records the scope, timestamp, and per-table row counts. The scope-enforcement discipline ensures only the agent's own rows are erased. | Residual risk is moderate. The `ErasureReport` is an in-memory return value — it is not persisted or signed. There is no cryptographic proof of what was erased. Persistence of erasure audit records is an operator responsibility, not a function of this SDK. |
+| **Information disclosure** | Cross-scope search results: `search()` or `list_all()` returns records belonging to a different agent or tenant | ✅ In scope | The same scope predicates that prevent spoofing also prevent information disclosure via search. `search()` applies scope filtering in the step-1 ID-ranking query; `list_all()` includes `{scope_sql}` in every SELECT. | Residual risk is low, same as Spoofing above. |
+| **Denial of service** | Connection pool exhaustion: more concurrent callers than `DB2_POOL_SIZE` connections, blocking all new requests indefinitely | ⚠️ Partially in scope | `ConnectionPool` is bounded (`DB2_POOL_SIZE`, default 5, max 20). When all connections are checked out, `get_connection()` raises `ConnectionPoolExhausted` after `DB2_POOL_TIMEOUT` seconds (default 30) rather than blocking indefinitely. Pool size and timeout are configurable via environment variables. | Residual risk is acknowledged and documented as a known capacity limit. The pool is not auto-scaling. Under sustained concurrency beyond pool capacity, callers will receive `ConnectionPoolExhausted` exceptions. Scaling the pool or the number of SDK instances is an operator responsibility. |
+| **Elevation of privilege** | DB credential leakage: `DB2_UID` / `DB2_PWD` values are exposed in logs, error messages, or config files committed to version control | 🔲 Out of scope / Delegated | `.env` is in `.gitignore`; `.env.example` contains only placeholder values; `ConnectionPool` logs only the hostname token, never the full connection string containing `PWD`. Beyond these guards, secret management at rest is delegated to the deployment environment (OS environment variable injection, secrets manager, container secrets, etc.). | The deployment operator is responsible for ensuring credentials are not stored in plaintext, committed to version control, or exposed in application logs. This is not enforced by SDK code beyond the minimal logging guard described in §5.4. |
+| **Information disclosure** | Network transport: memory records are transmitted in plaintext between the SDK and the Db2 server | 🔲 Out of scope / Delegated | `DB2_SECURITY=SSL` is documented and available (§5.3). Enabling it, verifying the server certificate, and selecting cipher suites are delegated entirely to the ibm_db driver and the Db2 server's SSL configuration. | The deployment operator is responsible for enabling and verifying SSL/TLS for all production deployments. The SDK does not enforce this — a deployment that omits `DB2_SECURITY=SSL` transmits data in plaintext, and the SDK will not raise an error. |
+| **Elevation of privilege** | Physical database access: an attacker with direct access to the Db2 data files bypasses all SDK-level controls | 🔲 Out of scope / Delegated | None in this SDK. Physical and filesystem-level access controls are entirely the responsibility of the Db2 server administrator. | All SDK-level isolation controls are bypassed by direct database access. This is unavoidable for a library that stores data in a server-managed database. |
+
+---
+
+## 7. What this document does not claim
+
+- The SDK does not enforce row-level encryption of memory content at rest.
+  Data at rest is protected only by the Db2 server's own storage encryption,
+  which is a deployment-level configuration.
+- The SDK does not validate or sanitize memory `content` fields for downstream
+  use (e.g., prompt injection via stored content). Content retrieved from the
+  SDK is trusted at whatever level the calling agent or application trusts the
+  SDK store.
+- The SDK does not implement rate limiting, authentication, or authorization
+  above the database credential level. Callers that have a valid `ConnectionPool`
+  can call any repository method with any `agent_id`. Access control above the
+  database connection is an application responsibility.
+- The `ErasureReport` returned by `erase_all()` is not a compliance record —
+  it is a return value. Persisting and signing erasure audit records for
+  regulatory compliance is out of scope.

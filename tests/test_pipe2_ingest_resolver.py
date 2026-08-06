@@ -136,7 +136,7 @@ def _fact_row(
     version: int = 1,
     embedding_str: str = _VEC_STR,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row matching SemanticFactRepository._SELECT_COLS (18 cols)."""
+    """Build a fake DB row matching SemanticFactRepository._SELECT_COLS (19 cols)."""
     return (
         id_, "t1", "agent-001", None, None,
         content, json.dumps({}),
@@ -144,7 +144,8 @@ def _fact_row(
         1.0,
         "hash",
         _NOW, _NOW, None, version, None,
-        None, None, None,   # superseded_by, superseded_at, supersede_reason
+        "DIRECT_WRITE",     # 15 origin (TRU-1)
+        None, None, None,   # 16 superseded_by, 17 superseded_at, 18 supersede_reason
     )
 
 
@@ -156,6 +157,7 @@ def _wm_row(id_: str = "wm-1", content: str = "hello") -> tuple[Any, ...]:
         _VEC_STR,
         1.0, "hash",
         _NOW, _NOW, None, 1, None,
+        "DIRECT_WRITE",  # origin (TRU-1)
         None,  # consolidated_at
     )
 

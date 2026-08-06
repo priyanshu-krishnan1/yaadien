@@ -3,7 +3,7 @@
   "epic_id": "EPIC-9",
   "title": "Deployment, Configuration & Operations Design Document",
   "summary": "project-management/design/09-deployment-operations.md — packaging/extras, a complete .env.example config reference table, SchemaPolicy deployment guidance, the real 4-job CI/CD pipeline, operational script catalog, and an operator-facing exception reference.",
-  "status": "To Do",
+  "status": "Done",
   "description": "Write project-management/design/09-deployment-operations.md. Ground it in pyproject.toml, .env.example, ci.yml + package-check.yml, db/migrate.py's SchemaPolicy, scripts/, and exceptions.py.\n\nRequired: (1) packaging/distribution — wheel contents, all five extras groups; (2) complete configuration reference table transcribed from .env.example, variable count must match exactly; (3) SchemaPolicy deployment guidance (CREATE_IF_NECESSARY vs REQUIRE_EXISTING, when an operator picks which); (4) CI/CD pipeline diagram naming all three ci.yml jobs (lint-typecheck-test, integration-test, security) plus the separate package-check.yml workflow — four gates total, not folded into three; (5) operational script catalog, one entry per real file in scripts/, stating whether each is cron-appropriate; (6) operator-facing reference for all five exceptions.py classes.\n\nFully independent of every other SDD story — new file only.",
   "comments": []
 }

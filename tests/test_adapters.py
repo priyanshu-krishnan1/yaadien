@@ -127,7 +127,8 @@ def _row(
       5  content      6  metadata    7  embedding
       8  confidence   9  content_hash
       10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
-      15 consolidated_at  (ENH-4 — None = not yet consolidated)
+      15 origin           (TRU-1 / migration 0008)
+      16 consolidated_at  (ENH-4 — None = not yet consolidated)
     """
     import hashlib
     import re as _re
@@ -141,7 +142,8 @@ def _row(
         confidence,        # 8 — confidence (ENH-1)
         h,                 # 9 — content_hash (ENH-2)
         _NOW, _NOW, None, version, None,
-        None,              # 15 — consolidated_at (ENH-4)
+        "DIRECT_WRITE",    # 15 — origin (TRU-1)
+        None,              # 16 — consolidated_at (ENH-4)
     )
 
 
@@ -152,14 +154,15 @@ def _fact_row(
     version: int = 1,
     confidence: float = 1.0,
 ) -> tuple[Any, ...]:
-    """Build a fake DB row for SemanticFactRepository._model_from_row (18 cols).
+    """Build a fake DB row for SemanticFactRepository._model_from_row (19 cols).
 
     Index map (0-based):
       0  id           1  tenant_id   2  agent_id    3  user_id     4  thread_id
       5  content      6  metadata    7  embedding
       8  confidence   9  content_hash
       10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
-      15 superseded_by  16 superseded_at  17 supersede_reason
+      15 origin      (TRU-1 / migration 0008)
+      16 superseded_by  17 superseded_at  18 supersede_reason
     """
     import hashlib
     import re as _re
@@ -170,12 +173,13 @@ def _fact_row(
         id_, "tenant-x", "test-agent", None, "sess-1",
         content, json.dumps(meta),
         vec_str,
-        confidence,  # 8 — confidence
-        h,           # 9 — content_hash
+        confidence,        # 8 — confidence
+        h,                 # 9 — content_hash
         _NOW, _NOW, None, version, None,
-        None,        # 15 — superseded_by
-        None,        # 16 — superseded_at
-        None,        # 17 — supersede_reason
+        "DIRECT_WRITE",    # 15 — origin (TRU-1)
+        None,              # 16 — superseded_by
+        None,              # 17 — superseded_at
+        None,              # 18 — supersede_reason
     )
 
 

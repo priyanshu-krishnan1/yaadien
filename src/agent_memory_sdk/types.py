@@ -15,6 +15,51 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+# ---------------------------------------------------------------------------
+# MemoryOrigin — provenance enum (TRU-1)
+# ---------------------------------------------------------------------------
+
+class MemoryOrigin(str, enum.Enum):
+    """How a memory record came to exist.
+
+    Mirrors the five internal write paths that produce new rows:
+
+    DIRECT_WRITE
+        The caller passed a record directly to ``MemoryStore.remember()``
+        without any intermediate processing step.  This is the default for
+        all externally-created records.
+
+    EXTRACTION
+        The record was returned by a :class:`MemoryExtractor` callback and
+        persisted via ``MemoryStore.add_messages(extract_memories=True)``.
+
+    CONSOLIDATION
+        The record was returned by a :class:`Consolidator` callback during
+        the ``_run_consolidator()`` step that fires after working/episodic
+        writes.
+
+    RECONCILIATION
+        The record is the result of a :class:`Reconciler`-driven supersession
+        write (the *winner* fact in a supersede decision — the loser is merely
+        updated in-place, not re-created).  Note: most Reconciler operations
+        update existing rows rather than creating new ones; this value is
+        reserved for cases where a new row is explicitly produced as part of
+        a reconciliation pass.
+
+    INGEST_RESOLVER
+        The record was produced by an :class:`IngestResolver` UPDATE action —
+        the incoming write was merged into an existing record's content.  The
+        merged/updated row keeps the original id but its content/metadata now
+        reflects the resolver's decision.
+    """
+
+    DIRECT_WRITE = "DIRECT_WRITE"
+    EXTRACTION = "EXTRACTION"
+    CONSOLIDATION = "CONSOLIDATION"
+    RECONCILIATION = "RECONCILIATION"
+    INGEST_RESOLVER = "INGEST_RESOLVER"
+
+
 if TYPE_CHECKING:
     from agent_memory_sdk.models import (
         EntityProfile,
@@ -1013,3 +1058,178 @@ class Summary:
     content: str
     message_count: int
     truncated: bool
+
+
+# ---------------------------------------------------------------------------
+# IntegrityDecision, IntegrityGuard, NoOpIntegrityGuard (TRU-2)
+# ---------------------------------------------------------------------------
+
+class IntegrityDecision(str, enum.Enum):
+    """The three outcomes an :class:`IntegrityGuard` can return.
+
+    ACCEPT
+        The candidate write is clean; proceed normally.
+
+    QUARANTINE
+        The write proceeds, but the record is flagged as suspicious via the
+        ``quarantined = True`` field on the persisted model.  The record is
+        stored but can be filtered/reviewed by downstream tooling.
+        The caller is **not** notified by an exception; the record is
+        persisted with the quarantine flag set.
+
+    REJECT
+        The write is refused.  :meth:`~agent_memory_sdk.store.MemoryStore.remember`
+        raises :exc:`~agent_memory_sdk.exceptions.IntegrityRejectionError` with the
+        guard's ``reason`` string.  Nothing is persisted.
+    """
+
+    ACCEPT = "ACCEPT"
+    QUARANTINE = "QUARANTINE"
+    REJECT = "REJECT"
+
+
+@dataclass
+class IntegrityVerdict:
+    """The structured return value from an :class:`IntegrityGuard` callback.
+
+    Attributes:
+        decision: One of :class:`IntegrityDecision`.
+        reason:   Human-readable explanation string.  Required for
+                  ``QUARANTINE`` and ``REJECT``; ignored for ``ACCEPT``.
+                  Defaults to ``""``.
+    """
+
+    decision: IntegrityDecision
+    reason: str = ""
+
+
+class IntegrityGuard(Protocol):
+    """Protocol for pluggable integrity / anomaly checking on ProceduralMemory writes.
+
+    Directly motivated by FARMA/SENTINEL (Karamchandani et al., arXiv 2607.05029,
+    July 2026), which demonstrated attacks poisoning *stored reasoning traces* —
+    the exact threat model :class:`~agent_memory_sdk.models.ProceduralMemory`
+    is exposed to (its own docstring: 'the agent recalls these before executing
+    a task class to apply previously learned strategies').
+
+    This is the extension point a developer plugs a detector into.  It is
+    **not** a literal port of SENTINEL's detection model — it is the
+    pluggable hook consistent with the SDK's 'developer-controlled writes,
+    not mandatory passive extraction' principle.
+
+    Shape::
+
+        (candidate: ProceduralMemory,
+         origin: MemoryOrigin,
+         context: list[_MemoryBase]) -> IntegrityVerdict
+
+    * ``candidate`` — the :class:`~agent_memory_sdk.models.ProceduralMemory`
+      record about to be persisted (not yet written).
+    * ``origin``    — the :class:`MemoryOrigin` value set on the candidate
+      (TRU-1); allows the guard to treat ``EXTRACTION``-origin content with
+      lower default trust than ``DIRECT_WRITE``.
+    * ``context``   — the top-``integrity_k`` most-similar existing
+      :class:`~agent_memory_sdk.models.ProceduralMemory` records already
+      stored in the same scope (by cosine distance), ascending order.
+      Empty when no embedding provider is configured or no existing records
+      were found.
+
+    The guard must return an :class:`IntegrityVerdict`:
+
+    * ``ACCEPT``     — proceed normally; nothing is flagged.
+    * ``QUARANTINE`` — write proceeds but ``record.quarantined = True``
+      is set before insertion; reason is logged.
+    * ``REJECT``     — write is refused; a
+      :exc:`~agent_memory_sdk.exceptions.IntegrityRejectionError` is
+      raised with the reason; nothing is persisted.
+
+    **Default:** :class:`NoOpIntegrityGuard` — always returns
+    ``IntegrityVerdict(IntegrityDecision.ACCEPT)`` — unchanged write
+    behavior when no guard is configured.
+
+    **Error handling:** if the guard itself raises an exception, the
+    :class:`~agent_memory_sdk.store.MemoryStore` logs the exception and
+    proceeds with the write as if ``ACCEPT`` was returned (fail-open, so
+    the guard cannot permanently block all ProceduralMemory writes if it
+    crashes).
+
+    **Example — contradiction-flagging guard**::
+
+        from agent_memory_sdk.types import (
+            IntegrityDecision, IntegrityGuard, IntegrityVerdict, MemoryOrigin,
+        )
+        from agent_memory_sdk.models import ProceduralMemory
+
+        class ContradictionGuard:
+            \"\"\"QUARANTINE writes that contradict a high-confidence existing skill.\"\"\"
+
+            def __call__(
+                self,
+                candidate: ProceduralMemory,
+                origin: MemoryOrigin,
+                context: list,
+            ) -> IntegrityVerdict:
+                if origin == MemoryOrigin.EXTRACTION:
+                    # Treat extraction-origin content with lower trust.
+                    threshold = 0.85
+                else:
+                    threshold = 0.5
+
+                for existing in context:
+                    if existing.confidence >= 0.9:
+                        # Very rough heuristic: if a high-confidence skill
+                        # shares many words with the candidate and the candidate
+                        # is low-confidence, flag it.
+                        shared = set(existing.content.lower().split()) & set(
+                            candidate.content.lower().split()
+                        )
+                        if len(shared) >= 3 and candidate.confidence < threshold:
+                            return IntegrityVerdict(
+                                decision=IntegrityDecision.QUARANTINE,
+                                reason=(
+                                    f"Candidate overlaps with high-confidence skill "
+                                    f"id={existing.id!r} ({len(shared)} shared words)"
+                                ),
+                            )
+                return IntegrityVerdict(decision=IntegrityDecision.ACCEPT)
+
+        store = MemoryStore(pool, integrity_guard=ContradictionGuard())
+    """
+
+    def __call__(
+        self,
+        candidate: Any,
+        origin: MemoryOrigin,
+        context: list[_MemoryBase],
+    ) -> IntegrityVerdict:
+        """Inspect a ProceduralMemory candidate before it is persisted.
+
+        Args:
+            candidate: The record about to be written.
+            origin:    The provenance of the candidate (TRU-1).
+            context:   Up to ``integrity_k`` most-similar existing
+                       ProceduralMemory records, ascending by cosine distance.
+
+        Returns:
+            An :class:`IntegrityVerdict` naming the action to take.
+        """
+        ...
+
+
+class NoOpIntegrityGuard:
+    """Default integrity guard: always ``ACCEPT``.
+
+    This is the default used by :class:`~agent_memory_sdk.store.MemoryStore`
+    when no ``integrity_guard`` argument is supplied — no change to write
+    behavior, no overhead.
+    """
+
+    def __call__(
+        self,
+        candidate: Any,
+        origin: MemoryOrigin,
+        context: list[_MemoryBase],
+    ) -> IntegrityVerdict:
+        return IntegrityVerdict(decision=IntegrityDecision.ACCEPT)
+
+

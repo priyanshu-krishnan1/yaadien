@@ -116,7 +116,8 @@ def _fact_row(
       5  content     6  metadata    7  embedding
       8  confidence  9  content_hash
       10 created_at  11 updated_at  12 expires_at  13 version     14 deleted_at
-      15 superseded_by  16 superseded_at  17 supersede_reason
+      15 origin      (TRU-1)
+      16 superseded_by  17 superseded_at  18 supersede_reason
     """
     return (
         id_, "t1", "agent-001", None, None,
@@ -125,9 +126,10 @@ def _fact_row(
         1.0,                        # 8  confidence
         _content_hash(content),     # 9  content_hash
         _NOW, _NOW, None, version, deleted_at,
-        superseded_by,              # 15 superseded_by
-        superseded_at,              # 16 superseded_at
-        supersede_reason,           # 17 supersede_reason
+        "DIRECT_WRITE",             # 15 origin (TRU-1)
+        superseded_by,              # 16 superseded_by
+        superseded_at,              # 17 superseded_at
+        supersede_reason,           # 18 supersede_reason
     )
 
 
@@ -778,6 +780,7 @@ class TestReconcileSanityGuards:
             _vec_str_local,
             1.0, _h,
             _NOW, _NOW, None, 1, None,
+            "DIRECT_WRITE",     # origin (TRU-1)
             None, None, None,   # superseded_by, superseded_at, supersede_reason
         )
 
