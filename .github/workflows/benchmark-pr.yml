@@ -47,9 +47,12 @@ jobs:
     name: "Tier 0 — CodSpeed micro-benchmark smoke test"
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Tier 0 only needs read access; no gh-pages publish here.
     permissions:
       contents: read
+      # id-token: write is required for CodSpeedHQ/action@v4's OpenID Connect
+      # authentication with CodSpeed's API.  Without it the action falls back
+      # to the CODSPEED_TOKEN secret; with it no secret is needed for public repos.
+      id-token: write
 
     steps:
       # ── 1. Checkout ───────────────────────────────────────────────────────
@@ -76,14 +79,27 @@ jobs:
         run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
 
       # ── 3. CodSpeed instrumented run ─────────────────────────────────────
-      # CodSpeedHQ/action wraps pytest with Valgrind to count instructions.
-      # It uploads the result to CodSpeed's service which compares against
-      # the baseline and annotates the PR with any regressions.
-      # --codspeed enables the pytest-codspeed plugin which replaces
-      # pytest-benchmark's wall-clock timing with instruction counting.
+      # CodSpeedHQ/action@v4 wraps the pytest invocation with the CodSpeed
+      # runner (Valgrind-based instruction counting in 'walltime' mode, or
+      # cycle-accurate counting in 'simulation' mode).
+      #
+      # mode: walltime — measures real elapsed time using perf/samply; works
+      #   on standard GHA ubuntu-latest runners without special hardware.
+      #   Use 'simulation' only on CodSpeed-managed runners.
+      #
+      # run: — the exact pytest invocation to execute inside the runner.
+      #   -m benchmark_micro   selects only the Tier-0 CPU-only tests.
+      #   --codspeed            activates the pytest-codspeed plugin, replacing
+      #                         pytest-benchmark's wall-clock fixture with
+      #                         CodSpeed's instruction-count fixture.
+      #   -v                    verbose output for CI log readability.
+      #
+      # token: — optional when id-token: write is granted (OIDC auth);
+      #   kept as a fallback for repos that have CODSPEED_TOKEN configured.
       - name: Run micro-benchmarks under CodSpeed instrumentation
-        uses: CodSpeedHQ/action@v3
+        uses: CodSpeedHQ/action@v4
         with:
+          mode: walltime
           run: pytest benchmarks/micro/ -m benchmark_micro --codspeed -v
           token: ${{ secrets.CODSPEED_TOKEN }}
 
