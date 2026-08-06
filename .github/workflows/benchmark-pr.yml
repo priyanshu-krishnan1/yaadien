@@ -100,7 +100,7 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: walltime
-          run: pytest benchmarks/micro/ -m benchmark_micro --codspeed -v
+          run: pytest benchmarks/micro/ -m benchmark_micro --codspeed --no-cov -v
           token: ${{ secrets.CODSPEED_TOKEN }}
 
   # ──────────────────────────────────────────────────────────────────────────
