@@ -746,7 +746,11 @@ class MemoryStore:
         context: list[_MemoryBase] = []
         if self._embedding_provider is not None or record.embedding:
             try:
-                embedding = record.embedding or self._embedding_provider(record.content)  # type: ignore[union-attr]
+                if record.embedding:
+                    embedding = record.embedding
+                else:
+                    assert self._embedding_provider is not None  # narrowed by outer `if`
+                    embedding = self._embedding_provider(record.content)
                 neighbors = self.procedures.search(
                     embedding, scope, top_k=self._integrity_k
                 )
