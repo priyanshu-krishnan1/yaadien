@@ -1,6 +1,0 @@
-# DEPRECATED
-#
-# This workflow has been consolidated into .github/workflows/benchmarks.yml
-# (jobs: codspeed, benchmark-pr) and should be deleted.
-#
-# Run: git rm .github/workflows/benchmark-pr.yml
