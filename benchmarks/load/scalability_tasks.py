@@ -80,15 +80,15 @@ from benchmarks.common.scope_gen import make_scope, marker_for
 
 # ---------------------------------------------------------------------------
 # Re-use the shared infrastructure from the primary locustfile.
-# _STORE / _EMBED / _RUN_TAG are None at import time — they are
-# populated by the @events.init hook in locustfile.py before any VU starts.
+# Import the MODULE (not individual names) so that every access at task
+# runtime gets the current value that _on_locust_init() sets via
+#   global _POOL, _STORE, _EMBED
+# A bare "from locustfile import _STORE" would create a local None binding
+# that is never updated when the @events.init hook later reassigns the
+# module-level global — causing AssertionError in every task.
 # ---------------------------------------------------------------------------
-from benchmarks.load.locustfile import (  # noqa: E402
-    _EMBED,
-    _RUN_TAG,
-    _STORE,
-    MemoryStoreUser,
-)
+import benchmarks.load.locustfile as _lf  # noqa: E402
+from benchmarks.load.locustfile import MemoryStoreUser  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -160,12 +160,12 @@ class UserRampUser(MemoryStoreUser):
     @task(3)
     def task_search(self) -> None:
         """Vector search within this VU's scope."""
-        assert _STORE is not None and _EMBED is not None
-        query_vec = _EMBED(self._own_marker)
+        assert _lf._STORE is not None and _lf._EMBED is not None
+        query_vec = _lf._EMBED(self._own_marker)
         t0 = time.perf_counter()
         try:
             results = self._run(
-                _STORE.working.search,
+                _lf._STORE.working.search,
                 query_embedding=query_vec,
                 scope=self.scope,
                 top_k=10,
@@ -190,7 +190,7 @@ class UserRampUser(MemoryStoreUser):
     @task(3)
     def task_remember(self) -> None:
         """Write a working-memory record tagged with this VU's scope marker."""
-        assert _STORE is not None
+        assert _lf._STORE is not None
         turn = random.randint(0, 99_999)
         t0 = time.perf_counter()
         try:
@@ -200,10 +200,10 @@ class UserRampUser(MemoryStoreUser):
                 user_id=self.scope.user_id,
                 thread_id=self.scope.thread_id,
                 content=(
-                    f"{self._own_marker} user-ramp turn={turn} tag={_RUN_TAG}"
+                    f"{self._own_marker} user-ramp turn={turn} tag={_lf._RUN_TAG}"
                 ),
             )
-            self._run(_STORE.remember, mem, self.scope)
+            self._run(_lf._STORE.remember, mem, self.scope)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.environment.events.request.fire(
                 request_type="write",
@@ -252,7 +252,7 @@ class AgentSweepUser(MemoryStoreUser):
 
         # Override the scope set by the parent to use the sweep-specific slot.
         self.scope = make_scope(
-            run_id=_RUN_TAG,
+            run_id=_lf._RUN_TAG,
             tenant_index=0,          # single tenant for agent sweep
             agent_index=agent_index,
             user_index=vu_id,
@@ -261,12 +261,12 @@ class AgentSweepUser(MemoryStoreUser):
 
     @task(3)
     def task_search(self) -> None:
-        assert _STORE is not None and _EMBED is not None
-        query_vec = _EMBED(self._own_marker)
+        assert _lf._STORE is not None and _lf._EMBED is not None
+        query_vec = _lf._EMBED(self._own_marker)
         t0 = time.perf_counter()
         try:
             results = self._run(
-                _STORE.working.search,
+                _lf._STORE.working.search,
                 query_embedding=query_vec,
                 scope=self.scope,
                 top_k=10,
@@ -290,7 +290,7 @@ class AgentSweepUser(MemoryStoreUser):
 
     @task(3)
     def task_remember(self) -> None:
-        assert _STORE is not None
+        assert _lf._STORE is not None
         turn = random.randint(0, 99_999)
         t0 = time.perf_counter()
         try:
@@ -300,7 +300,7 @@ class AgentSweepUser(MemoryStoreUser):
                 user_id=self.scope.user_id,
                 content=f"{self._own_marker} agent-sweep turn={turn}",
             )
-            self._run(_STORE.remember, mem, self.scope)
+            self._run(_lf._STORE.remember, mem, self.scope)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.environment.events.request.fire(
                 request_type="write",
@@ -374,12 +374,12 @@ class MixedReadWriteUser(MemoryStoreUser):
     # ── internal helpers ────────────────────────────────────────────────────
 
     def _do_read(self) -> None:
-        assert _STORE is not None and _EMBED is not None
-        query_vec = _EMBED(self._own_marker)
+        assert _lf._STORE is not None and _lf._EMBED is not None
+        query_vec = _lf._EMBED(self._own_marker)
         t0 = time.perf_counter()
         try:
             results = self._run(
-                _STORE.working.search,
+                _lf._STORE.working.search,
                 query_embedding=query_vec,
                 scope=self.scope,
                 top_k=10,
@@ -407,7 +407,7 @@ class MixedReadWriteUser(MemoryStoreUser):
         self._maybe_reset_counters()
 
     def _do_write(self) -> None:
-        assert _STORE is not None
+        assert _lf._STORE is not None
         turn = random.randint(0, 99_999)
         t0 = time.perf_counter()
         try:
@@ -417,7 +417,7 @@ class MixedReadWriteUser(MemoryStoreUser):
                 user_id=self.scope.user_id,
                 content=f"{self._own_marker} mixed-rw turn={turn}",
             )
-            self._run(_STORE.remember, mem, self.scope)
+            self._run(_lf._STORE.remember, mem, self.scope)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.environment.events.request.fire(
                 request_type="write",
@@ -491,14 +491,14 @@ class LongSessionUser(MemoryStoreUser):
 
     def on_start(self) -> None:
         super().on_start()
-        assert _STORE is not None, "_STORE must be initialised by on_locust_init"
+        assert _lf._STORE is not None, "_STORE must be initialised by on_locust_init"
         session_length = int(os.environ.get("BENCH_SESSION_LENGTH", str(_SESSION_LENGTH)))
         # Seed the session with synthetic conversation turns.
         messages = [
             {
                 "role": "user" if i % 2 == 0 else "assistant",
                 "content": (
-                    f"{self._own_marker} session-turn={i} tag={_RUN_TAG}"
+                    f"{self._own_marker} session-turn={i} tag={_lf._RUN_TAG}"
                 ),
             }
             for i in range(session_length)
@@ -507,15 +507,15 @@ class LongSessionUser(MemoryStoreUser):
         batch_size = 50
         for start in range(0, len(messages), batch_size):
             batch = messages[start : start + batch_size]
-            self._run(_STORE.add_messages, batch, self.scope)
+            self._run(_lf._STORE.add_messages, batch, self.scope)
 
     @task
     def task_context_card(self) -> None:
         """Call get_context_card() and record latency — the primary P95 metric."""
-        assert _STORE is not None
+        assert _lf._STORE is not None
         t0 = time.perf_counter()
         try:
-            card = self._run(_STORE.get_context_card, self.scope)
+            card = self._run(_lf._STORE.get_context_card, self.scope)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.environment.events.request.fire(
                 request_type="read",
@@ -536,10 +536,10 @@ class LongSessionUser(MemoryStoreUser):
     @task
     def task_get_summary(self) -> None:
         """Call get_summary() and record latency."""
-        assert _STORE is not None
+        assert _lf._STORE is not None
         t0 = time.perf_counter()
         try:
-            summary = self._run(_STORE.get_summary, self.scope)
+            summary = self._run(_lf._STORE.get_summary, self.scope)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.environment.events.request.fire(
                 request_type="read",
@@ -611,12 +611,12 @@ class SoakUser(MemoryStoreUser):
 
     @task(3)
     def task_search(self) -> None:
-        assert _STORE is not None and _EMBED is not None
-        query_vec = _EMBED(self._own_marker)
+        assert _lf._STORE is not None and _lf._EMBED is not None
+        query_vec = _lf._EMBED(self._own_marker)
         t0 = time.perf_counter()
         try:
             results = self._run(
-                _STORE.working.search,
+                _lf._STORE.working.search,
                 query_embedding=query_vec,
                 scope=self.scope,
                 top_k=10,
@@ -640,7 +640,7 @@ class SoakUser(MemoryStoreUser):
 
     @task(3)
     def task_remember(self) -> None:
-        assert _STORE is not None
+        assert _lf._STORE is not None
         turn = random.randint(0, 99_999)
         t0 = time.perf_counter()
         try:
@@ -648,9 +648,9 @@ class SoakUser(MemoryStoreUser):
                 tenant_id=self.scope.tenant_id,
                 agent_id=self.scope.agent_id,
                 user_id=self.scope.user_id,
-                content=f"{self._own_marker} soak turn={turn} tag={_RUN_TAG}",
+                content=f"{self._own_marker} soak turn={turn} tag={_lf._RUN_TAG}",
             )
-            self._run(_STORE.remember, mem, self.scope)
+            self._run(_lf._STORE.remember, mem, self.scope)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.environment.events.request.fire(
                 request_type="write",
