@@ -4,7 +4,7 @@
 #
 # This file merges all benchmark-related GitHub Actions workflows into a single
 # manually-triggered workflow.  The following original files were consolidated
-# here and have been DEPRECATED:
+# here and have been DEPRECATED / DELETED:
 #
 #   - .github/workflows/benchmark-nightly.yml  (was: "Benchmark Nightly")
 #   - .github/workflows/benchmark-pr.yml       (was: "Benchmark PR gate")
@@ -18,10 +18,22 @@
 #
 #   1. trigger: workflow_dispatch ONLY — it cannot run on a pull_request event.
 #   2. The former "Benchmark PR gate" codspeed and benchmark-pr jobs that ran on
-#      pull_request have been removed from this file.  Those jobs should be
-#      re-instated as a separate lightweight PR-only file if a PR gate is needed.
+#      pull_request have been removed.  Re-instate them as a separate lightweight
+#      PR-only file if a PR gate is ever needed.
 #   3. No required-check registration should reference "Benchmarks (unified)" or
 #      any job id defined in this file.
+#
+# ── DB2 INFRASTRUCTURE NOTE ───────────────────────────────────────────────────
+#
+# GitHub Actions does not support sharing a running container across separate
+# jobs on different runners.  The canonical solution is to have each job that
+# needs a local Db2 instance spin one up itself, but coordinate execution order
+# via `needs:` so they do not consume runner quota simultaneously when that
+# matters.  The `db2-ready` job below acts as an explicit sequencing gate: it
+# validates that the Docker image can be pulled and logs a readiness marker
+# before any Db2-dependent job begins.  Each downstream job then re-uses the
+# exact same setup steps (identical YAML anchors are expanded by the GHA
+# engine), keeping every job fully self-contained and independently re-runnable.
 #
 # To run benchmarks: Repository → Actions → "Benchmarks (unified)" → Run workflow
 # ==============================================================================
@@ -60,16 +72,39 @@ permissions:
   issues: write
 
 # ==============================================================================
-# CONCURRENCY
-# Each job group has its own concurrency key so jobs from the same origin
-# workflow don't queue behind each other unnecessarily.
+# JOBS
 # ==============================================================================
 
 jobs:
 
   # ============================================================================
+  # JOB 0: db2-ready  (DB2 infrastructure sequencing gate)
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Pulls the Db2 community image and confirms it is accessible so that all
+  # downstream jobs can trust the image cache is warm on the runner pool.
+  # This job does NOT start a long-lived container; it merely acts as a
+  # dependency node so that codspeed (which needs no Db2) can run in parallel
+  # with the image-pull gate rather than blocking on it.
+  # ============================================================================
+  db2-ready:
+    name: "Db2 image pre-pull & sequencing gate"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      db2_image: "icr.io/db2_community/db2:12.1.5.0"
+
+    steps:
+      - name: Pull Db2 community image
+        run: |
+          docker pull icr.io/db2_community/db2:12.1.5.0
+          echo "db2_image_ready=true"
+
+  # ============================================================================
   # JOB 1: codspeed
   # Origin: benchmark-pr.yml → "Tier 0 — CodSpeed micro-benchmark smoke test"
+  # Runs in parallel with db2-ready (no Db2 dependency).
   # ============================================================================
   codspeed:
     name: "Tier 0 — CodSpeed micro-benchmark smoke test"
@@ -104,9 +139,11 @@ jobs:
   # ============================================================================
   # JOB 2: benchmark
   # Origin: benchmarks.yml (prior) → "Benchmark suite (Db2 LUW + pytest-benchmark)"
+  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   benchmark:
     name: "Benchmark suite (Db2 LUW + pytest-benchmark)"
+    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -345,9 +382,11 @@ jobs:
   # ============================================================================
   # JOB 3: locust-isolation
   # Origin: benchmarks.yml (prior) → "Locust isolation gate (BM-12 + BM-13)"
+  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   locust-isolation:
     name: "Locust isolation gate (BM-12 + BM-13)"
+    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -504,9 +543,11 @@ jobs:
   # ============================================================================
   # JOB 4: locust-scale
   # Origin: benchmarks.yml (prior) → "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
+  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   locust-scale:
     name: "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
+    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -734,9 +775,11 @@ jobs:
   # ============================================================================
   # JOB 5: benchmark-nightly
   # Origin: benchmark-nightly.yml → "Nightly benchmark suite — Tier 2 (BM-21)"
+  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   benchmark-nightly:
     name: "Nightly benchmark suite — Tier 2 (BM-21)"
+    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -1059,6 +1102,8 @@ jobs:
   # ============================================================================
   # JOB 6: benchmark-scale
   # Origin: benchmark-scale.yml → "Tier 3 weekly scale benchmark (live Db2)"
+  # Does NOT need db2-ready — connects to a live external Db2 instance, not a
+  # local Docker container.  Runs in parallel with local-Db2 jobs.
   # ============================================================================
   benchmark-scale:
     name: "Tier 3 weekly scale benchmark (live Db2)"
@@ -1211,3 +1256,231 @@ jobs:
               ].join('\n'),
               labels: ['benchmark', 'regression'],
             });
+
+  # ============================================================================
+  # JOB 7: consolidated-report
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Terminal job — runs after ALL benchmark jobs complete (success or failure).
+  # Downloads every benchmark artifact, merges them, and writes a single unified
+  # summary to $GITHUB_STEP_SUMMARY.  Also uploads a merged consolidated artifact.
+  #
+  # Results are grouped by benchmark type so it is immediately clear which tier
+  # or job origin each block of data came from.
+  # ============================================================================
+  consolidated-report:
+    name: "Consolidated benchmark report"
+    if: always()
+    needs:
+      - codspeed
+      - benchmark
+      - locust-isolation
+      - locust-scale
+      - benchmark-nightly
+      - benchmark-scale
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install report dependencies
+        run: pip install -e ".[dev,benchmark]" --quiet
+
+      # Download every benchmark artifact into separate sub-directories so their
+      # contents don't collide.
+      - name: Download benchmark-report (Tier 0/1 — Db2 + pytest-benchmark)
+        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        with:
+          name: benchmark-report
+          path: consolidated/benchmark
+        continue-on-error: true
+
+      - name: Download locust-isolation-report (BM-12 + BM-13)
+        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        with:
+          name: locust-isolation-report
+          path: consolidated/locust-isolation
+        continue-on-error: true
+
+      - name: Download locust-scale-report (BM-14 + BM-15)
+        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        with:
+          name: locust-scale-report
+          path: consolidated/locust-scale
+        continue-on-error: true
+
+      - name: Download benchmark-nightly-report (Tier 2 — BM-21)
+        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        with:
+          name: benchmark-nightly-report
+          path: consolidated/benchmark-nightly
+        continue-on-error: true
+
+      - name: Download benchmark-scale-report (Tier 3 — live Db2)
+        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        with:
+          name: benchmark-scale-report
+          path: consolidated/benchmark-scale
+        continue-on-error: true
+
+      - name: Write consolidated report to $GITHUB_STEP_SUMMARY
+        run: |
+          set -euo pipefail
+
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          cat >> "$GITHUB_STEP_SUMMARY" << HEADER
+          # Consolidated Benchmark Report
+
+          | Field | Value |
+          |-------|-------|
+          | **Workflow run** | [${{ github.run_number }}](${RUN_URL}) |
+          | **Commit** | \`${{ github.sha }}\` |
+          | **Ref** | \`${{ github.ref_name }}\` |
+          | **Triggered by** | \`${{ github.event_name }}\` |
+          | **Scenario** | \`${{ inputs.scenario || 'full' }}\` |
+          | **Corpus size** | \`${{ inputs.corpus_size || '50k' }}\` |
+          | **Dry run** | \`${{ inputs.dry_run || 'false' }}\` |
+
+          ---
+
+          HEADER
+
+          # ── Tier 0: CodSpeed micro-benchmarks ──────────────────────────────
+          echo "## Tier 0 — CodSpeed micro-benchmark smoke test" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Job:** \`codspeed\`  |  Origin: \`benchmark-pr.yml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Results for this tier are reported directly in the CodSpeed job log." >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ needs.codspeed.result }}" = "success" ]; then
+            echo "| ✅ Passed |" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ needs.codspeed.result }}" = "skipped" ]; then
+            echo "| ⏭️ Skipped |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| ❌ ${{ needs.codspeed.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+
+          # ── Tier 0/1: pytest-benchmark (Db2 LUW) ───────────────────────────
+          echo "## Tier 0/1 — Benchmark suite (Db2 LUW + pytest-benchmark)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Job:** \`benchmark\`  |  Origin: prior \`benchmarks.yml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ needs.benchmark.result }}" = "success" ] || [ "${{ needs.benchmark.result }}" = "failure" ]; then
+            for json_file in consolidated/benchmark/output_tier0.json consolidated/benchmark/output_tier1.json; do
+              if [ -f "$json_file" ]; then
+                label=$(basename "$json_file" .json | sed 's/output_//')
+                echo "### ${label}" >> "$GITHUB_STEP_SUMMARY"
+                python scripts/generate_benchmark_summary.py "$json_file" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+                  || echo "> Could not parse ${json_file}" >> "$GITHUB_STEP_SUMMARY"
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          else
+            echo "> Job result: \`${{ needs.benchmark.result }}\` — no artifacts available." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+
+          # ── Locust isolation (BM-12 + BM-13) ────────────────────────────────
+          echo "## Locust isolation gate (BM-12 + BM-13)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Job:** \`locust-isolation\`  |  Origin: prior \`benchmarks.yml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -d "consolidated/locust-isolation" ] && ls consolidated/locust-isolation/*_stats.csv 2>/dev/null | head -1; then
+            for csv in consolidated/locust-isolation/*_stats.csv; do
+              [ -f "$csv" ] || continue
+              label=$(basename "$csv" _stats.csv)
+              echo "### ${label}" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              head -3 "$csv" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            done
+          else
+            echo "> Job result: \`${{ needs.locust-isolation.result }}\` — no CSV artifacts found." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+
+          # ── Locust scale (BM-14 + BM-15) ─────────────────────────────────────
+          echo "## Locust scalability sweeps + pool saturation (BM-14 + BM-15)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Job:** \`locust-scale\`  |  Origin: prior \`benchmarks.yml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -d "consolidated/locust-scale" ] && ls consolidated/locust-scale/*_stats.csv 2>/dev/null | head -1; then
+            for csv in consolidated/locust-scale/*_stats.csv; do
+              [ -f "$csv" ] || continue
+              label=$(basename "$csv" _stats.csv)
+              echo "### ${label}" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              head -3 "$csv" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            done
+          else
+            echo "> Job result: \`${{ needs.locust-scale.result }}\` — no CSV artifacts found." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+
+          # ── Nightly (Tier 2 — BM-21) ─────────────────────────────────────────
+          echo "## Nightly benchmark suite — Tier 2 (BM-21)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Job:** \`benchmark-nightly\`  |  Origin: \`benchmark-nightly.yml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          NIGHTLY_JSON="consolidated/benchmark-nightly/output_benchmark.json"
+          if [ -f "$NIGHTLY_JSON" ]; then
+            python scripts/generate_benchmark_summary.py "$NIGHTLY_JSON" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+              || echo "> Could not parse ${NIGHTLY_JSON}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "> Job result: \`${{ needs.benchmark-nightly.result }}\` — no benchmark JSON artifact found." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+
+          # ── Scale (Tier 3 — live Db2) ─────────────────────────────────────────
+          echo "## Tier 3 — Scale benchmark (live Db2)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Job:** \`benchmark-scale\`  |  Origin: \`benchmark-scale.yml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          SCALE_JSON="consolidated/benchmark-scale/output_scale.json"
+          if [ -f "$SCALE_JSON" ]; then
+            python scripts/generate_benchmark_summary.py "$SCALE_JSON" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+              || echo "> Could not parse ${SCALE_JSON}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "> Job result: \`${{ needs.benchmark-scale.result }}\` — no scale JSON artifact found (expected if dry_run=true or job was skipped)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+
+          # ── Overall result summary ────────────────────────────────────────────
+          cat >> "$GITHUB_STEP_SUMMARY" << FOOTER
+          ## Overall job results
+
+          | Job | Result |
+          |-----|--------|
+          | \`codspeed\` (Tier 0 CodSpeed) | ${{ needs.codspeed.result }} |
+          | \`benchmark\` (Tier 0/1 pytest-benchmark) | ${{ needs.benchmark.result }} |
+          | \`locust-isolation\` (BM-12/13) | ${{ needs.locust-isolation.result }} |
+          | \`locust-scale\` (BM-14/15) | ${{ needs.locust-scale.result }} |
+          | \`benchmark-nightly\` (Tier 2) | ${{ needs.benchmark-nightly.result }} |
+          | \`benchmark-scale\` (Tier 3 live) | ${{ needs.benchmark-scale.result }} |
+
+          FOOTER
+
+      - name: Upload consolidated benchmark artifact
+        if: always()
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: consolidated-benchmark-report
+          path: consolidated/
+          retention-days: 90
+          if-no-files-found: warn
