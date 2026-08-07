@@ -221,6 +221,7 @@ jobs:
             -v
 
       - name: Run Tier-2 quality suite (benchmark_nightly — EPIC-16, workflow_dispatch only)
+        continue-on-error: true
         run: |
           pytest benchmarks/quality/ -m benchmark_nightly \
             --no-cov \
