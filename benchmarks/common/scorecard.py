@@ -86,7 +86,6 @@ try:
         return _yaml.safe_load(text)
 
 except ImportError:
-    import re as _re
 
     def _load_yaml(text: str) -> Any:
         """Minimal YAML parser for the two-level ``weights:`` schema only."""
