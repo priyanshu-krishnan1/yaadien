@@ -105,8 +105,11 @@ runs:
 
     - name: Start Db2 and wait for healthy
       shell: bash
-      timeout-minutes: 15
-      run: docker compose -f /tmp/docker-compose.db2${{ inputs.compose-suffix }}.yml up -d --wait
+      # Note: composite action steps do not support timeout-minutes.
+      # The 15-min budget is enforced by the calling job's own timeout.
+      run: |
+        timeout 900 docker compose -f /tmp/docker-compose.db2${{ inputs.compose-suffix }}.yml up -d --wait \
+          || { echo "::error::Db2 container did not become healthy within 15 minutes."; exit 1; }
 
     - name: Wait for Db2 DDL readiness (catalog-agent drain)
       shell: bash
