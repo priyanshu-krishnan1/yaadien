@@ -1,0 +1,9 @@
+{
+  "id": "WF-7",
+  "epic_id": "EPIC-23",
+  "title": "Add chub-content/dist/ to .gitignore and document the onboarding steps in README",
+  "summary": "Add chub-content/dist/ to .gitignore (built registry is generated, not tracked) and add a 'Context Hub' section to the repo README with the one-time setup command and session bootstrap snippet.",
+  "status": "To Do",
+  "description": "`chub-content/dist/` is produced by `chub build` and must not be committed — it can always be regenerated from the source files in `chub-content/`. Without a .gitignore entry, git status will show the entire built registry tree as untracked files, which pollutes `git status` output and risks accidental commits.\n\nAdd a comment block to .gitignore: `# Context Hub — built registry (generated from chub-content/, not tracked)` followed by the `chub-content/dist/` entry.\n\nAlso add a 'Context Hub Integration' section to the project README.md (near the 'Commands' section) referencing chub-content/README.md for full details, with the three-line quickstart: install chub globally, run chub_init.py, and the session bootstrap command sequence.\n\nAcceptance: `chub-content/dist/` appears in .gitignore; after building the registry, `git status` does not list any files under chub-content/dist/; README.md has a Context Hub section with the quickstart commands.",
+  "comments": []
+}

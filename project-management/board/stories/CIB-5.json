@@ -1,0 +1,9 @@
+{
+  "id": "CIB-5",
+  "epic_id": "EPIC-24",
+  "title": "Single fan-in gh-pages publish — stop 3 concurrent independent pushes",
+  "summary": "Move all gh-pages publishing (report HTML, site root, BENCHMARKS.md commit-back) out of the benchmark/benchmark-nightly/benchmark-scale jobs and into consolidated-report as the sole writer, using the already-downloaded artifacts.",
+  "status": "Done",
+  "description": "Removed `peaceiris/actions-gh-pages` calls from `benchmark` and `benchmark-nightly` jobs. Removed `git push` to main from `benchmark-scale`. Added three new steps to `consolidated-report`: 'Prepare consolidated gh-pages site', 'Publish all benchmark results to gh-pages (single writer)', and 'Commit BENCHMARKS.md if Tier 3 scale results available'. Updated permissions: `benchmark`/`benchmark-nightly`/`benchmark-scale` now have `contents: read`; `consolidated-report` has `contents: write`. `grep -c 'actions-gh-pages@' .github/workflows/benchmarks.yml` returns 1.",
+  "comments": []
+}

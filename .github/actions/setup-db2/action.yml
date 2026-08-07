@@ -1,0 +1,152 @@
+name: "Start Db2 community container"
+description: "Writes the TESTDB-creation script, writes a docker-compose file, starts Db2, waits for DDL readiness, and expands the transaction log."
+# ── CIB-2 EVALUATION: GHA services: block vs docker compose ──────────────────
+# Evaluated whether jobs.<job>.services: could replace docker compose for the
+# Db2 bootstrap used by this composite action.
+#
+# Findings:
+# - GHA services can express the core Db2 container settings we need, including
+#   privileged startup via options: --privileged, bind mounts via volumes:, and
+#   a connectivity health check via --health-cmd/--health-interval/
+#   --health-retries.
+# - The migration is blocked by service-container startup timing. GitHub Actions
+#   starts jobs.<job>.services: before any step runs, including before checkout.
+#   Our current architecture writes /tmp/var-custom/01_create_testdb.sh on the
+#   runner host and bind-mounts it to /var/custom/01_create_testdb.sh so Db2 can
+#   execute it during initialization.
+# - Because the service container starts before any step can create that host
+#   path, the bind mount source cannot be reliably populated before docker run
+#   is invoked. Since the /var/custom hook must exist at container start time,
+#   jobs.<job>.services: is incompatible with the current bootstrap design.
+# - What GHA services could absorb: the base connectivity readiness check
+#   (equivalent to db2 connect to TESTDB). However, because the required
+#   pre-start volume mount cannot be prepared in time, adopting services: would
+#   still require a broader bootstrap redesign rather than a direct swap.
+# - Alternative considered: build and publish a custom image derived from
+#   icr.io/db2_community/db2:12.1.5.0 with 01_create_testdb.sh pre-baked into
+#   /var/custom. That would remove the need for the host bind mount and would
+#   make jobs.<job>.services: viable, but it introduces image maintenance,
+#   registry overhead, and drift risk relative to the upstream Db2 image.
+#
+# Decision:
+# - Keep docker compose with the current architecture. The services: migration
+#   is blocked by the host-volume timing issue above.
+# - Re-evaluate if IBM publishes an official Db2 image with TESTDB already
+#   configured, or if this project adopts a custom Db2 image published to an
+#   existing registry.
+#
+# CIB-1 context:
+# - CIB-1 already achieved the spirit of this migration goal. docker compose up
+#   --wait now handles the base connectivity polling that a services: health
+#   check would otherwise provide.
+# - The remaining poll loop in this action is now only the Db2-specific DDL
+#   readiness probe (catalog-agent drain / vector-index probe) layered on top of
+#   that base connectivity check.
+#
+# ── DECISION: keep docker compose (see rationale above) ──────────────────────
+
+inputs:
+  compose-suffix:
+    description: "Suffix appended to the compose filename (e.g. '-locust' → /tmp/docker-compose.db2-locust.yml). Empty for the default path."
+    default: ""
+  db2-image:
+    description: "Db2 Docker image to use"
+    default: "icr.io/db2_community/db2:12.1.5.0"
+
+outputs:
+  container-id:
+    description: "Docker container ID of the running Db2 service"
+    value: ${{ steps.capture-id.outputs.container-id }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Write /var/custom TESTDB-creation script
+      shell: bash
+      run: |
+        mkdir -p /tmp/var-custom
+        cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        if [ "$(id -un)" = "db2inst1" ]; then
+          db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
+        else
+          su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
+        fi
+        EOF
+        sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
+        chmod +x /tmp/var-custom/01_create_testdb.sh
+
+    - name: Write docker-compose file
+      shell: bash
+      run: |
+        cat > /tmp/docker-compose.db2${{ inputs.compose-suffix }}.yml << 'EOF'
+        services:
+          db2:
+            image: ${{ inputs.db2-image }}
+            platform: linux/amd64
+            privileged: true
+            environment:
+              LICENSE: accept
+              DB2INST1_PASSWORD: passw0rd
+              ARCHIVE_LOGS: "false"
+            ports:
+              - "50000:50000"
+            shm_size: "1g"
+            volumes:
+              - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
+            healthcheck:
+              test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
+              interval: 30s
+              timeout: 60s
+              retries: 30
+              start_period: 300s
+        EOF
+
+    - name: Start Db2 and wait for healthy
+      shell: bash
+      timeout-minutes: 15
+      run: docker compose -f /tmp/docker-compose.db2${{ inputs.compose-suffix }}.yml up -d --wait
+
+    - name: Wait for Db2 DDL readiness (catalog-agent drain)
+      shell: bash
+      run: |
+        echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
+        for i in $(seq 1 20); do
+          # Resolve container ID inside the loop so a transient lookup
+          # failure is retried rather than aborting the step.
+          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2${{ inputs.compose-suffix }}.yml ps -q db2 2>/dev/null || true)
+          result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+            "db2 connect to TESTDB && \
+             db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
+             db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
+             db2 'DROP TABLE ddl_probe' && \
+             db2 terminate" 2>&1 || true)
+          if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
+            echo "Db2 DDL ready (vector index probe passed) after attempt $i."
+            exit 0
+          fi
+          echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
+          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+            "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
+            >/dev/null 2>&1 || true
+          sleep 15
+        done
+        echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
+        exit 0
+
+    - name: Expand Db2 transaction log
+      shell: bash
+      run: |
+        DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2${{ inputs.compose-suffix }}.yml ps -q db2 2>/dev/null || true)
+        docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
+          "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
+           db2 deactivate db TESTDB && \
+           db2 activate db TESTDB" >/dev/null 2>&1 || true
+
+    - name: Capture container ID output
+      id: capture-id
+      shell: bash
+      run: |
+        CONTAINER_ID=$(docker compose -f /tmp/docker-compose.db2${{ inputs.compose-suffix }}.yml ps -q db2 2>/dev/null || true)
+        echo "container-id=${CONTAINER_ID}" >> "$GITHUB_OUTPUT"

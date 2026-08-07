@@ -323,6 +323,47 @@ def _render_html(
 
 
 # ---------------------------------------------------------------------------
+# JSONL envelope output
+# ---------------------------------------------------------------------------
+
+def _emit_jsonl(
+    rows: list[dict],
+    suite: str,
+    run_number: str,
+    sha: str,
+    out_path: Path,
+) -> None:
+    """Write one JSONL envelope record per benchmark row to *out_path*.
+
+    Each record uses ``metric = mean_ms`` (mean converted from nanoseconds to
+    milliseconds), ``unit = ms``, ``status = pass``.
+    """
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sha12 = sha[:12] if sha else ""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as fh:
+        for r in rows:
+            mean_ms = r["mean"] / 1_000_000  # ns → ms
+            rec = {
+                "suite": suite,
+                "metric": "mean_ms",
+                "value": round(mean_ms, 6),
+                "unit": "ms",
+                "status": "pass",
+                "run_number": run_number,
+                "sha": sha12,
+                "timestamp": timestamp,
+            }
+            # Embed the benchmark name so readers can distinguish rows
+            rec["benchmark"] = r["name"]
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    print(
+        f"generate_benchmark_summary: wrote {len(rows)} JSONL records to {out_path}",
+        file=sys.stderr,
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -346,6 +387,22 @@ def main() -> None:
     parser.add_argument("--run-number", default="?", help="GitHub Actions run number.")
     parser.add_argument("--sha", default="", help="Git commit SHA.")
     parser.add_argument("--ref", default="", help="Git ref name (branch/tag).")
+    # Shared-schema envelope flags
+    parser.add_argument(
+        "--emit-jsonl",
+        action="store_true",
+        help="Also emit a results.jsonl file in the shared envelope schema.",
+    )
+    parser.add_argument(
+        "--jsonl-out",
+        default="",
+        help="Output path for results.jsonl (required when --emit-jsonl is set).",
+    )
+    parser.add_argument(
+        "--suite",
+        default="tier1-benchmark",
+        help="Suite name to embed in JSONL envelope records (e.g. tier1-benchmark).",
+    )
     args = parser.parse_args()
 
     paths = [Path(p) for p in args.inputs]
@@ -369,6 +426,15 @@ def main() -> None:
         print(_render_html(data, rows, args.run_id, args.run_number, args.sha, args.ref))
     else:
         print(_render_markdown(data, rows))
+
+    if args.emit_jsonl:
+        if not args.jsonl_out:
+            print(
+                "generate_benchmark_summary: --emit-jsonl requires --jsonl-out PATH",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _emit_jsonl(rows, args.suite, args.run_number, args.sha, Path(args.jsonl_out))
 
 
 if __name__ == "__main__":

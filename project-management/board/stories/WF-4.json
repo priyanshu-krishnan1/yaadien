@@ -1,0 +1,9 @@
+{
+  "id": "WF-4",
+  "epic_id": "EPIC-23",
+  "title": "Build and register the local chub registry",
+  "summary": "Run scripts/chub_init.py to build chub-content/dist/ and patch ~/.chub/config.yaml so all four project entries (sdk, coding-rules, board-workflow, sprint-workflow) are discoverable via chub search.",
+  "status": "To Do",
+  "description": "scripts/chub_init.py is a one-time setup script that: (1) checks that @aisuite/chub is installed globally (npm install -g @aisuite/chub if not), (2) runs `chub build chub-content/ -o chub-content/dist/` to compile the four local entries into a registry.json + content tree, (3) patches ~/.chub/config.yaml to add an `agent-memory-sdk` source pointing at the built dist/ directory alongside the public community registry, (4) runs `chub update --force` to refresh the cache, and (5) verifies by running `chub search agent memory` and checking that the local docs appear.\n\nAcceptance: `chub search agent memory` returns at minimum the four project entries (agent-memory-sdk/sdk, agent-memory-sdk/coding-rules, agent-memory-sdk/board-workflow, agent-memory-sdk/sprint-workflow); `chub get agent-memory-sdk/sdk --lang py` returns the SDK API reference without error; chub-content/dist/ exists and contains registry.json.",
+  "comments": []
+}

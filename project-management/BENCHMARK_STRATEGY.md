@@ -632,11 +632,14 @@ Four tiers. The design rule: **each tier's runtime budget is set by how often it
   regression
 - Rationale: everything expensive but still container-sized, run when nobody is waiting
 
-### Tier 3 — Weekly scale (`schedule: 0 4 * * 0` + `workflow_dispatch`) · ~4–6 h · **non-blocking**
+### Tier 3 — Scale (`workflow_dispatch: tier3-scale`) · ~2 h · **non-blocking**
 
-- Runner: `ubuntu-latest` (thin client) **connecting out to the live Db2** via repo secrets,
-  or a self-hosted Mac runner if outbound access is restricted
-- Dataset: the pre-seeded 500k–1M-row persistent corpus
+> **Updated (EPIC-24 / CIB-3):** Tier 3 now uses the same containerized Db2
+> as Tiers 1–2 (500k-row corpus). The live-Db2 dependency has been removed.
+> See `benchmarks/README.md`'s Workflow map for the current trigger/gate/output table.
+
+- Runner: `ubuntu-latest` + containerized Db2 (`.github/actions/setup-db2`)
+- Dataset: 500k-row corpus seeded at run time
 - Workloads:
   1. Search-latency-vs-corpus-size curve (1k → 1M)
   2. Vector index build time and APPROX recall at 1M vectors
@@ -650,15 +653,15 @@ Four tiers. The design rule: **each tier's runtime budget is set by how often it
 - Rationale: the only tier that touches shared infrastructure, so it runs rarely,
   on a schedule, and is explicitly manually dispatchable
 
-### Cross-cutting CI notes
+### Cross-cutting CI notes (updated for EPIC-24)
 
-- **Concurrency guard.** Tier 3 must use `concurrency: group: live-db2, cancel-in-progress: false`
-  so two runs never hit the shared instance simultaneously. Tier 3 datasets live under a
-  reserved `tenant_id` prefix and are never touched by other tiers.
-- **Cost.** Tiers 0–2 are free on public repos. Tier 3 is ~5 h/week of runner time; if the
-  repo is private, prefer the self-hosted Mac runner.
-- **Secrets.** `DB2_*` for Tier 3 only, via environment protection rules — never exposed to
-  PR-triggered workflows from forks.
+> See `benchmarks/README.md` → "Workflow map (post EPIC-24)" for the canonical
+> trigger/gate/output table for all active benchmark workflow jobs.
+
+- **Concurrency guard (CIB-7).** `benchmarks.yml` uses `concurrency: group: benchmarks-${{ github.ref }}, cancel-in-progress: false` so overlapping `workflow_dispatch` runs queue rather than racing on the single gh-pages writer.
+- **Cost.** Tiers 0–3 are all free on public repos (containerized Db2, no external services). Tier 3 is ~2 h per dispatch.
+- **Suite selector (CIB-4).** The `suite` input lets a dispatcher run only the tier they need (`tier0-codspeed`, `tier1-benchmark`, `tier2-nightly`, `tier3-scale`, `locust-isolation`, `locust-scale`, or `all`).
+- **Secrets.** No `DB2_*` secrets needed for any tier — all use the containerized Db2 with hardcoded local credentials.
 - **Reproducibility.** Every report stamps runner type, Db2 version, embedding provider +
   model, judge + model, seed, dataset size, and commit SHA. The existing
   `benchmarks/common/report.py` already does this well — that discipline should survive

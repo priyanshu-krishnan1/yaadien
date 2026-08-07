@@ -1,0 +1,9 @@
+{
+  "id": "CIB-1",
+  "epic_id": "EPIC-24",
+  "title": "Extract composite actions for Python/deps setup and Db2 container bootstrap",
+  "summary": "Create .github/actions/setup-bench-python and .github/actions/setup-db2 composite actions and replace the 6 duplicated copies (5 in benchmarks.yml, 1 in ci.yml) with calls to them.",
+  "status": "Done",
+  "description": "`.github/workflows/benchmarks.yml` currently repeats two blocks verbatim across jobs: (a) checkout + `actions/setup-python@...` (3.11) + `actions/cache@...` (pip) + `pip install -e \".[dev,benchmark,langchain,openai-agents,mcp]\"`, duplicated in `codspeed`, `benchmark`, `locust-isolation`, `locust-scale`, `benchmark-nightly`, `benchmark-scale`; (b) the ~75-line Db2 bootstrap (write `01_create_testdb.sh`, write `docker-compose.db2*.yml`, `docker compose up -d --wait`, the 20-attempt DDL-readiness poll for `CREATE VECTOR INDEX`, transaction-log expansion, and the on-failure `docker logs` step), duplicated byte-for-byte in `benchmark`, `locust-isolation`, `locust-scale`, `benchmark-nightly`, and in `ci.yml`'s existing Db2 job.\n\nCreated two composite actions:\n\n- `.github/actions/setup-bench-python/action.yml` — inputs: `extras`, `cache-key-suffix`, `install-quiet`. Wraps setup-python + cache + install.\n- `.github/actions/setup-db2/action.yml` — inputs: `compose-suffix`, `db2-image`. Wraps the compose-file write, `up --wait`, DDL-readiness poll, log-expansion, and container-id output.\n\nReplaced all duplicated occurrences in `benchmarks.yml` and `ci.yml`.",
+  "comments": []
+}

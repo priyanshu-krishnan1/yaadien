@@ -1,0 +1,9 @@
+{
+  "id": "CIB-6",
+  "epic_id": "EPIC-24",
+  "title": "Standardize a single output schema across pytest-benchmark, Locust, IR, and AGQ results",
+  "summary": "Define one JSONL/JSON envelope (suite, tier, metric, value, unit, status) that every benchmark/quality script writes, so consolidated-report parses one format instead of hand-grepping pytest-benchmark JSON, Locust *_stats.csv, and ad-hoc AGQ JSON differently per suite.",
+  "status": "Done",
+  "description": "Created shared JSONL envelope schema (suite/metric/value/unit/status/run_number/sha/timestamp per record). Created `scripts/render_results_summary.py` (reads `results.jsonl` files, renders Markdown/HTML summary). Created `scripts/locust_csv_to_jsonl.py` (converts Locust *_stats.csv to envelope). Updated `scripts/generate_benchmark_summary.py` with `--emit-jsonl`/`--jsonl-out`/`--suite` flags. Added 'Emit shared-schema results envelope' step to benchmark/locust-isolation/locust-scale/benchmark-nightly/benchmark-scale jobs. Added 'Render unified results schema summary' step to consolidated-report.",
+  "comments": []
+}

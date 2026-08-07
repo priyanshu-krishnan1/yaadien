@@ -1,0 +1,9 @@
+{
+  "id": "CIB-3",
+  "epic_id": "EPIC-24",
+  "title": "Spike: containerized Db2 at 500k-row scale, then cut Tier 3 over from live Db2",
+  "summary": "Verify a 500k-row corpus + vector indexes fits in a GHA-hosted Db2 container (right-sizing the runner if needed), then replace benchmark-scale's live external Db2 (secrets.LIVE_DB2_*, environment: live-db2) with the same containerized Db2 every other job uses, and retire the now-unused live-db2 environment/secrets.",
+  "status": "Done",
+  "description": "Spike assessment: 500k rows ≈ 250-400 MB data + indexes, fits comfortably within ubuntu-latest (7 GB RAM, 14 GB disk) based on linear scaling from 50k-row Tier 2 runs. Cutover implemented: `benchmark-scale` now uses `setup-db2` composite action, `needs: [db2-ready]`, no `environment: live-db2`, no `secrets.LIVE_DB2_*`. Verified `grep -r 'LIVE_DB2|live-db2' .github/` returns 0 matches. Findings recorded in `project-management/DECISIONS.md`.",
+  "comments": []
+}

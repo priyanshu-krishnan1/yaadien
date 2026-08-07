@@ -43,6 +43,19 @@ name: Benchmarks (unified)
 on:
   workflow_dispatch:
     inputs:
+      suite:
+        description: "Which suite to run (default: all)"
+        required: false
+        type: choice
+        options:
+          - all
+          - tier0-codspeed
+          - tier1-benchmark
+          - tier2-nightly
+          - tier3-scale
+          - locust-isolation
+          - locust-scale
+        default: all
       # ── benchmark-nightly inputs ────────────────────────────────────────────
       corpus_size:
         description: "[nightly] Seed corpus size: 1k / 50k / 500k"
@@ -64,12 +77,28 @@ on:
 
 # ==============================================================================
 # PERMISSIONS
-# contents: write — gh-pages publish steps + BENCHMARKS.md commit-back.
+# contents: write — gh-pages publish steps (consolidated-report only) +
+#                   BENCHMARKS.md commit-back (consolidated-report only).
 # issues: write   — opening regression issues on nightly/scale failure.
 # ==============================================================================
 permissions:
   contents: write
   issues: write
+
+# ==============================================================================
+# CONCURRENCY (CIB-7)
+# ─────────────────────────────────────────────────────────────────────────────
+# Two overlapping workflow_dispatch invocations (e.g. someone re-triggers before
+# the first finishes) would race on the consolidated-report gh-pages writer and
+# the BENCHMARKS.md commit-back, even with CIB-5's single-writer fix.
+#
+# cancel-in-progress: false — these are expensive multi-hour runs; silently
+# killing a second dispatch is worse than queuing it.  The second run waits
+# in the queue and starts once the first commits its gh-pages changes.
+# ==============================================================================
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: false
 
 # ==============================================================================
 # JOBS
@@ -88,6 +117,13 @@ jobs:
   # ============================================================================
   db2-ready:
     name: "Db2 image pre-pull & sequencing gate"
+    if: |
+      inputs.suite == 'all' ||
+      inputs.suite == 'tier1-benchmark' ||
+      inputs.suite == 'tier2-nightly' ||
+      inputs.suite == 'tier3-scale' ||
+      inputs.suite == 'locust-isolation' ||
+      inputs.suite == 'locust-scale'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -108,6 +144,7 @@ jobs:
   # ============================================================================
   codspeed:
     name: "Tier 0 — CodSpeed micro-benchmark smoke test"
+    if: inputs.suite == 'all' || inputs.suite == 'tier0-codspeed'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -117,21 +154,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
         with:
-          python-version: "3.11"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/pip
-          key: pip-codspeed-3.11-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-codspeed-3.11-
-
-      - name: Install package and benchmark dependencies
-        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
+          cache-key-suffix: codspeed
+          extras: benchmark,langchain,openai-agents,mcp
 
       - name: Run micro-benchmarks with pytest-codspeed
         run: pytest benchmarks/micro/ -m benchmark_micro --codspeed --no-cov -v
@@ -143,11 +170,12 @@ jobs:
   # ============================================================================
   benchmark:
     name: "Benchmark suite (Db2 LUW + pytest-benchmark)"
+    if: inputs.suite == 'all' || inputs.suite == 'tier1-benchmark'
     needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
 
     env:
       DB2_DATABASE: TESTDB
@@ -161,97 +189,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
         with:
-          python-version: "3.11"
+          cache-key-suffix: benchmark
+          extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Setup Db2 container
+        uses: ./.github/actions/setup-db2
+        id: db2-setup
         with:
-          path: ~/.cache/pip
-          key: pip-benchmark-3.11-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-benchmark-3.11-
-
-      - name: Install package and benchmark dependencies
-        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
-
-      - name: Write /var/custom TESTDB-creation script
-        run: |
-          mkdir -p /tmp/var-custom
-          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          if [ "$(id -un)" = "db2inst1" ]; then
-            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
-          else
-            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
-          fi
-          EOF
-          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
-          chmod +x /tmp/var-custom/01_create_testdb.sh
-
-      - name: Write docker-compose.db2.yml
-        run: |
-          cat > /tmp/docker-compose.db2.yml << 'EOF'
-          services:
-            db2:
-              image: icr.io/db2_community/db2:12.1.5.0
-              platform: linux/amd64
-              privileged: true
-              environment:
-                LICENSE: accept
-                DB2INST1_PASSWORD: passw0rd
-                ARCHIVE_LOGS: "false"
-              ports:
-                - "50000:50000"
-              shm_size: "1g"
-              volumes:
-                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
-              healthcheck:
-                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
-                interval: 30s
-                timeout: 60s
-                retries: 30
-                start_period: 300s
-          EOF
-
-      - name: Start Db2 and wait for healthy
-        run: docker compose -f /tmp/docker-compose.db2.yml up -d --wait
-        timeout-minutes: 15
-
-      - name: Wait for Db2 DDL readiness (catalog-agent drain)
-        run: |
-          echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
-          for i in $(seq 1 20); do
-            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
-            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && \
-               db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
-               db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
-               db2 'DROP TABLE ddl_probe' && \
-               db2 terminate" 2>&1 || true)
-            if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
-              echo "Db2 DDL ready (vector index probe passed) after attempt $i."
-              exit 0
-            fi
-            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
-            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
-              >/dev/null 2>&1 || true
-            sleep 15
-          done
-          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
-          exit 0
-
-      - name: Expand Db2 transaction log for benchmark workloads
-        run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
-          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
-             db2 deactivate db TESTDB && \
-             db2 activate db TESTDB" >/dev/null 2>&1 || true
+          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
 
       - name: Create benchmark output directory
         run: mkdir -p "$BENCH_OUT"
@@ -296,6 +244,23 @@ jobs:
             echo "> No benchmark output found — the benchmark run may have failed before producing results." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Emit shared-schema results envelope
+        if: always()
+        run: |
+          TIER0="${BENCH_OUT}/output_tier0.json"
+          TIER1="${BENCH_OUT}/output_tier1.json"
+          ARGS=""
+          [ -f "$TIER0" ] && ARGS="$ARGS $TIER0"
+          [ -f "$TIER1" ] && ARGS="$ARGS $TIER1"
+          if [ -n "$ARGS" ]; then
+            python scripts/generate_benchmark_summary.py $ARGS \
+              --emit-jsonl \
+              --jsonl-out "${BENCH_OUT}/results.jsonl" \
+              --suite tier1-benchmark \
+              --run-number "${{ github.run_number }}" \
+              --sha "${{ github.sha }}" || true
+          fi
+
       - name: Generate HTML report index
         if: always()
         run: |
@@ -327,51 +292,13 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      - name: Publish benchmark report to gh-pages
-        if: always()
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ${{ env.BENCH_OUT }}
-          destination_dir: benchmarks/${{ github.run_number }}
-          keep_files: true
-          commit_message: "benchmarks: run ${{ github.run_number }} (${{ github.sha }})"
-
-      - name: Prepare site root (board.html + index.html)
-        if: always()
-        run: |
-          mkdir -p site_root_stage
-          cp project-management/BOARD.html site_root_stage/board.html
-          git fetch origin gh-pages --depth=1 2>/dev/null || true
-          GH_PAGES_SCAN_DIR=$(mktemp -d)
-          git worktree add --detach "$GH_PAGES_SCAN_DIR" origin/gh-pages 2>/dev/null \
-            || git clone --depth=1 --branch gh-pages \
-               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
-               "$GH_PAGES_SCAN_DIR" 2>/dev/null \
-            || { echo "Warning: could not clone gh-pages for scan — using empty benchmarks list"; mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks"; }
-          mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks/${{ github.run_number }}"
-          python scripts/generate_site_index.py \
-            --site-root  "$GH_PAGES_SCAN_DIR" \
-            --run-number "${{ github.run_number }}" \
-            --sha        "${{ github.sha }}" \
-            --ref        "${{ github.ref_name }}" \
-            --out        site_root_stage/index.html
-          git worktree remove --force "$GH_PAGES_SCAN_DIR" 2>/dev/null || true
-
-      - name: Publish site root (board.html + index.html) to gh-pages
-        if: always()
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: site_root_stage
-          destination_dir: .
-          keep_files: true
-          commit_message: "docs(gh-pages): update site root for run ${{ github.run_number }} (${{ github.sha }})"
+      # gh-pages publishing has been moved to consolidated-report (CIB-5).
+      # This job only uploads its artifact; consolidated-report is the sole writer.
 
       - name: Print Db2 container logs (last 100 lines) on failure
         if: failure()
         run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2.yml ps -q db2 2>/dev/null || true)
+          DB2_CONTAINER="${{ steps.db2-setup.outputs.container-id }}"
           if [ -n "${DB2_CONTAINER}" ]; then
             echo "=== Last 100 lines of Db2 container logs ==="
             docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
@@ -386,6 +313,7 @@ jobs:
   # ============================================================================
   locust-isolation:
     name: "Locust isolation gate (BM-12 + BM-13)"
+    if: inputs.suite == 'all' || inputs.suite == 'locust-isolation'
     needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -404,97 +332,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
         with:
-          python-version: "3.11"
+          cache-key-suffix: locust
+          extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Setup Db2 container
+        uses: ./.github/actions/setup-db2
+        id: db2-setup
         with:
-          path: ~/.cache/pip
-          key: pip-locust-3.11-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-locust-3.11-
-
-      - name: Install package and Locust dependencies
-        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
-
-      - name: Write /var/custom TESTDB-creation script
-        run: |
-          mkdir -p /tmp/var-custom
-          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          if [ "$(id -un)" = "db2inst1" ]; then
-            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
-          else
-            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
-          fi
-          EOF
-          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
-          chmod +x /tmp/var-custom/01_create_testdb.sh
-
-      - name: Write docker-compose.db2-locust.yml
-        run: |
-          cat > /tmp/docker-compose.db2-locust.yml << 'EOF'
-          services:
-            db2:
-              image: icr.io/db2_community/db2:12.1.5.0
-              platform: linux/amd64
-              privileged: true
-              environment:
-                LICENSE: accept
-                DB2INST1_PASSWORD: passw0rd
-                ARCHIVE_LOGS: "false"
-              ports:
-                - "50000:50000"
-              shm_size: "1g"
-              volumes:
-                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
-              healthcheck:
-                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
-                interval: 30s
-                timeout: 60s
-                retries: 30
-                start_period: 300s
-          EOF
-
-      - name: Start Db2 and wait for healthy
-        run: docker compose -f /tmp/docker-compose.db2-locust.yml up -d --wait
-        timeout-minutes: 15
-
-      - name: Wait for Db2 DDL readiness (catalog-agent drain)
-        run: |
-          echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
-          for i in $(seq 1 20); do
-            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-locust.yml ps -q db2 2>/dev/null || true)
-            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && \
-               db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
-               db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
-               db2 'DROP TABLE ddl_probe' && \
-               db2 terminate" 2>&1 || true)
-            if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
-              echo "Db2 DDL ready after attempt $i."
-              exit 0
-            fi
-            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
-            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
-              >/dev/null 2>&1 || true
-            sleep 15
-          done
-          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
-          exit 0
-
-      - name: Expand Db2 transaction log for Locust workloads
-        run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-locust.yml ps -q db2 2>/dev/null || true)
-          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
-             db2 deactivate db TESTDB && \
-             db2 activate db TESTDB" >/dev/null 2>&1 || true
+          compose-suffix: "-locust"
+          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
 
       - name: Create Locust output directory
         run: mkdir -p "$LOCUST_OUT"
@@ -520,6 +369,16 @@ jobs:
             --csv "${LOCUST_OUT}/bm13_isolation" \
             IsolationUser SharedStoreIsolationUser
 
+      - name: Emit shared-schema results envelope
+        if: always()
+        run: |
+          python scripts/locust_csv_to_jsonl.py \
+            --csv-dir "${LOCUST_OUT}/" \
+            --suite locust-isolation \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" \
+            --out "${LOCUST_OUT}/results.jsonl" || true
+
       - name: Upload Locust isolation results
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
@@ -532,7 +391,7 @@ jobs:
       - name: Print Db2 container logs (last 100 lines) on failure
         if: failure()
         run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-locust.yml ps -q db2 2>/dev/null || true)
+          DB2_CONTAINER="${{ steps.db2-setup.outputs.container-id }}"
           if [ -n "${DB2_CONTAINER}" ]; then
             echo "=== Last 100 lines of Db2 container logs ==="
             docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
@@ -547,6 +406,7 @@ jobs:
   # ============================================================================
   locust-scale:
     name: "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
+    if: inputs.suite == 'all' || inputs.suite == 'locust-scale'
     needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -565,97 +425,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
         with:
-          python-version: "3.11"
+          cache-key-suffix: locust
+          extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Setup Db2 container
+        uses: ./.github/actions/setup-db2
+        id: db2-setup
         with:
-          path: ~/.cache/pip
-          key: pip-locust-3.11-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-locust-3.11-
-
-      - name: Install package and Locust dependencies
-        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
-
-      - name: Write /var/custom TESTDB-creation script
-        run: |
-          mkdir -p /tmp/var-custom
-          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          if [ "$(id -un)" = "db2inst1" ]; then
-            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
-          else
-            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
-          fi
-          EOF
-          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
-          chmod +x /tmp/var-custom/01_create_testdb.sh
-
-      - name: Write docker-compose.db2-scale.yml
-        run: |
-          cat > /tmp/docker-compose.db2-scale.yml << 'EOF'
-          services:
-            db2:
-              image: icr.io/db2_community/db2:12.1.5.0
-              platform: linux/amd64
-              privileged: true
-              environment:
-                LICENSE: accept
-                DB2INST1_PASSWORD: passw0rd
-                ARCHIVE_LOGS: "false"
-              ports:
-                - "50000:50000"
-              shm_size: "1g"
-              volumes:
-                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
-              healthcheck:
-                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
-                interval: 30s
-                timeout: 60s
-                retries: 30
-                start_period: 300s
-          EOF
-
-      - name: Start Db2 and wait for healthy
-        run: docker compose -f /tmp/docker-compose.db2-scale.yml up -d --wait
-        timeout-minutes: 15
-
-      - name: Wait for Db2 DDL readiness (catalog-agent drain)
-        run: |
-          echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
-          for i in $(seq 1 20); do
-            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-scale.yml ps -q db2 2>/dev/null || true)
-            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && \
-               db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
-               db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
-               db2 'DROP TABLE ddl_probe' && \
-               db2 terminate" 2>&1 || true)
-            if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
-              echo "Db2 DDL ready after attempt $i."
-              exit 0
-            fi
-            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
-            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
-              >/dev/null 2>&1 || true
-            sleep 15
-          done
-          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
-          exit 0
-
-      - name: Expand Db2 transaction log for scale workloads
-        run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-scale.yml ps -q db2 2>/dev/null || true)
-          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
-             db2 deactivate db TESTDB && \
-             db2 activate db TESTDB" >/dev/null 2>&1 || true
+          compose-suffix: "-scale"
+          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
 
       - name: Create Locust output directory
         run: mkdir -p "$LOCUST_OUT"
@@ -738,6 +519,16 @@ jobs:
             --csv "${LOCUST_OUT}/bm15_oversaturate" \
             OverSaturationUser || true
 
+      - name: Emit shared-schema results envelope
+        if: always()
+        run: |
+          python scripts/locust_csv_to_jsonl.py \
+            --csv-dir "${LOCUST_OUT}/" \
+            --suite locust-scale \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" \
+            --out "${LOCUST_OUT}/results.jsonl" || true
+
       - name: Upload Locust scale results
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
@@ -764,7 +555,7 @@ jobs:
       - name: Print Db2 container logs (last 100 lines) on failure
         if: failure()
         run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-scale.yml ps -q db2 2>/dev/null || true)
+          DB2_CONTAINER="${{ steps.db2-setup.outputs.container-id }}"
           if [ -n "${DB2_CONTAINER}" ]; then
             echo "=== Last 100 lines of Db2 container logs ==="
             docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
@@ -779,11 +570,12 @@ jobs:
   # ============================================================================
   benchmark-nightly:
     name: "Nightly benchmark suite — Tier 2 (BM-21)"
+    if: inputs.suite == 'all' || inputs.suite == 'tier2-nightly'
     needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
-      contents: write
+      contents: read
       issues: write
 
     env:
@@ -799,98 +591,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
         with:
-          python-version: "3.11"
+          cache-key-suffix: benchmark-nightly
+          extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Setup Db2 container
+        uses: ./.github/actions/setup-db2
+        id: db2-setup
         with:
-          path: ~/.cache/pip
-          key: pip-benchmark-nightly-3.11-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-benchmark-nightly-3.11-
-            pip-benchmark-3.11-
-
-      - name: Install package and all benchmark dependencies
-        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
-
-      - name: Write /var/custom TESTDB-creation script
-        run: |
-          mkdir -p /tmp/var-custom
-          cat > /tmp/var-custom/01_create_testdb.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          if [ "$(id -un)" = "db2inst1" ]; then
-            db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
-          else
-            su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
-          fi
-          EOF
-          sed -i 's/^[[:space:]]*//' /tmp/var-custom/01_create_testdb.sh
-          chmod +x /tmp/var-custom/01_create_testdb.sh
-
-      - name: Write docker-compose.db2-nightly.yml
-        run: |
-          cat > /tmp/docker-compose.db2-nightly.yml << 'EOF'
-          services:
-            db2:
-              image: icr.io/db2_community/db2:12.1.5.0
-              platform: linux/amd64
-              privileged: true
-              environment:
-                LICENSE: accept
-                DB2INST1_PASSWORD: passw0rd
-                ARCHIVE_LOGS: "false"
-              ports:
-                - "50000:50000"
-              shm_size: "1g"
-              volumes:
-                - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
-              healthcheck:
-                test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
-                interval: 30s
-                timeout: 60s
-                retries: 30
-                start_period: 300s
-          EOF
-
-      - name: Start Db2 and wait for healthy
-        run: docker compose -f /tmp/docker-compose.db2-nightly.yml up -d --wait
-        timeout-minutes: 15
-
-      - name: Wait for Db2 DDL readiness (catalog-agent drain)
-        run: |
-          echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
-          for i in $(seq 1 20); do
-            DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-nightly.yml ps -q db2 2>/dev/null || true)
-            result=$(docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && \
-               db2 'CREATE TABLE ddl_probe (id INT, v VECTOR(3) NOT NULL)' && \
-               db2 'CREATE VECTOR INDEX ix_ddl_probe_v ON ddl_probe (v) WITH DISTANCE COSINE' && \
-               db2 'DROP TABLE ddl_probe' && \
-               db2 terminate" 2>&1 || true)
-            if echo "$result" | grep -q "DB20000I" && ! echo "$result" | grep -qiE "SQL[0-9]+N|error"; then
-              echo "Db2 DDL ready (vector index probe passed) after attempt $i."
-              exit 0
-            fi
-            echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
-            docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-              "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
-              >/dev/null 2>&1 || true
-            sleep 15
-          done
-          echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
-          exit 0
-
-      - name: Expand Db2 transaction log for nightly workloads
-        run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-nightly.yml ps -q db2 2>/dev/null || true)
-          docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
-            "db2 'UPDATE DATABASE CONFIGURATION FOR TESTDB USING LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64' && \
-             db2 deactivate db TESTDB && \
-             db2 activate db TESTDB" >/dev/null 2>&1 || true
+          compose-suffix: "-nightly"
+          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
 
       - name: Create benchmark output directory
         run: mkdir -p "$BENCH_OUT"
@@ -1046,6 +758,17 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Emit shared-schema results envelope
+        if: always()
+        run: |
+          python scripts/generate_benchmark_summary.py \
+            "${BENCH_OUT}/output_benchmark.json" \
+            --emit-jsonl \
+            --jsonl-out "${BENCH_OUT}/results.jsonl" \
+            --suite tier2-nightly \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" || true
+
       - name: Upload benchmark artifact
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
@@ -1055,15 +778,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Publish nightly results to gh-pages
-        if: always()
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ${{ env.BENCH_OUT }}
-          destination_dir: benchmarks/nightly/${{ github.run_number }}
-          keep_files: true
-          commit_message: "benchmarks(nightly): run ${{ github.run_number }} (${{ github.sha }})"
+      # gh-pages publishing has been moved to consolidated-report (CIB-5).
 
       - name: Open regression issue on failure
         if: failure()
@@ -1091,7 +806,7 @@ jobs:
       - name: Print Db2 container logs (last 100 lines) on failure
         if: failure()
         run: |
-          DB2_CONTAINER=$(docker compose -f /tmp/docker-compose.db2-nightly.yml ps -q db2 2>/dev/null || true)
+          DB2_CONTAINER="${{ steps.db2-setup.outputs.container-id }}"
           if [ -n "${DB2_CONTAINER}" ]; then
             echo "=== Last 100 lines of Db2 container logs ==="
             docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
@@ -1101,25 +816,43 @@ jobs:
 
   # ============================================================================
   # JOB 6: benchmark-scale
-  # Origin: benchmark-scale.yml → "Tier 3 weekly scale benchmark (live Db2)"
-  # Does NOT need db2-ready — connects to a live external Db2 instance, not a
-  # local Docker container.  Runs in parallel with local-Db2 jobs.
+  # Origin: benchmark-scale.yml → "Tier 3 weekly scale benchmark"
+  # Needs db2-ready — spins up the same containerized Db2 used by all other
+  # Db2-dependent jobs via .github/actions/setup-db2.
+  #
+  # CIB-3 spike notes (2026-08-07):
+  #   - 500k rows × typical record size (id + text + VECTOR(768) + metadata)
+  #     ≈ 250–400 MB table data + index structures.
+  #   - Tier 2 nightly at 50k rows runs on ubuntu-latest (7 GB RAM, 14 GB disk)
+  #     without issue; 10× linear scaling stays within disk budget.
+  #   - Db2 in-container memory footprint scales more slowly than row count due
+  #     to buffer-pool reuse, so 7 GB RAM is expected to be sufficient.
+  #   - If resource pressure is observed, ubuntu-latest-4-cores (16 GB RAM) is
+  #     available by changing runs-on: alone — no other code changes needed.
+  #   See DECISIONS.md entry "CIB-3: Tier 3 scale benchmark — containerized Db2"
+  #   for the full spike assessment and rationale.
   # ============================================================================
   benchmark-scale:
-    name: "Tier 3 weekly scale benchmark (live Db2)"
+    name: "Tier 3 weekly scale benchmark (containerized Db2)"
+    if: inputs.suite == 'all' || inputs.suite == 'tier3-scale'
+    needs: [db2-ready]
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    environment: live-db2
+    # CIB-7 timeout note: was 180 min (padded for the old live-Db2 connectivity
+    # variability).  With containerized Db2 (CIB-3), the setup overhead is the
+    # same ~20-min Db2 bootstrap seen by nightly/benchmark jobs. 500k-row seed +
+    # benchmark_pr matrix is the actual runtime driver.  Adjusted to 120 min;
+    # increase to 180 min if the seed+benchmark step consistently exceeds 100 min.
+    timeout-minutes: 120
     permissions:
-      contents: write
+      contents: read
       issues: write
 
     env:
-      DB2_DATABASE: ${{ secrets.LIVE_DB2_DATABASE }}
-      DB2_HOSTNAME: ${{ secrets.LIVE_DB2_HOSTNAME }}
-      DB2_PORT:     ${{ secrets.LIVE_DB2_PORT }}
-      DB2_UID:      ${{ secrets.LIVE_DB2_UID }}
-      DB2_PWD:      ${{ secrets.LIVE_DB2_PWD }}
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
       BENCH_OUT: benchmark_scale_results
       BENCH_TENANT_PREFIX: ${{ inputs.tenant_prefix || 'bm22-scale' }}
 
@@ -1127,28 +860,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
         with:
-          python-version: "3.11"
+          cache-key-suffix: benchmark-scale
+          extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Setup Db2 container
+        uses: ./.github/actions/setup-db2
+        id: db2-setup
         with:
-          path: ~/.cache/pip
-          key: pip-benchmark-3.11-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-benchmark-3.11-
-
-      - name: Install package and benchmark dependencies
-        run: pip install -e ".[dev,benchmark,langchain,openai-agents,mcp]"
-
-      - name: Verify live Db2 connectivity
-        run: |
-          python scripts/check_connection.py || {
-            echo "::error::Cannot reach live Db2 instance. Aborting scale benchmark to avoid wasted runner time."
-            exit 1
-          }
+          compose-suffix: "-bench-scale"
+          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
 
       - name: Seed 500k corpus (tenant prefix ${{ env.BENCH_TENANT_PREFIX }})
         if: ${{ inputs.dry_run != true }}
@@ -1190,31 +913,24 @@ jobs:
             --no-cov \
             -v
 
-      - name: Commit results to BENCHMARKS.md
-        if: success()
-        run: |
-          python scripts/generate_benchmark_summary.py \
-            "${BENCH_OUT}/output_scale.json" \
-            --run-id "${{ github.run_id }}" \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" \
-            > /tmp/scale_summary.md
-          {
-            echo ""
-            echo "## Tier 3 Scale Run — $(date -u +%Y-%m-%d) (run ${{ github.run_number }})"
-            cat /tmp/scale_summary.md
-          } >> BENCHMARKS.md
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name  "github-actions[bot]"
-          git add BENCHMARKS.md
-          git diff --cached --quiet || git commit -m "benchmarks: tier-3 scale results run ${{ github.run_number }} (${{ github.sha }})"
-          git push
+      # BENCHMARKS.md commit-back has been moved to consolidated-report (CIB-5).
 
       - name: Generate Job Summary
         if: always()
         run: |
           python scripts/generate_benchmark_summary.py "${BENCH_OUT}/output_scale.json" \
             >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Emit shared-schema results envelope
+        if: always()
+        run: |
+          python scripts/generate_benchmark_summary.py \
+            "${BENCH_OUT}/output_scale.json" \
+            --emit-jsonl \
+            --jsonl-out "${BENCH_OUT}/results.jsonl" \
+            --suite tier3-scale \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" || true
 
       - name: Upload benchmark scale report artifact
         if: always()
@@ -1235,27 +951,33 @@ jobs:
               repo:  context.repo.repo,
               title: `Tier 3 scale benchmark regression — run ${{ github.run_number }}`,
               body: [
-                '## Tier 3 (live Db2) scale benchmark regression',
+                '## Tier 3 scale benchmark regression (containerized Db2)',
                 '',
                 `**Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
                 `**Commit:** ${{ github.sha }}`,
                 `**Triggered by:** ${{ github.event_name }}`,
                 '',
-                'One or more Tier 3 scale benchmark steps failed against the live Db2 instance.',
+                'One or more Tier 3 scale benchmark steps failed against the containerized Db2 instance.',
                 '',
                 '### Manual abort and cleanup',
                 'If this run appears hung (> 3 hours), use the GitHub Actions UI to cancel it.',
-                'To clean up test data on the live Db2 instance after an aborted run:',
-                '```sql',
-                "-- Replace 'bm22-scale' with the tenant_prefix used in the hung run",
-                "DELETE FROM working_memory WHERE tenant_id LIKE 'bm22-scale-%';",
-                "-- Repeat for all memory tables (semantic_facts, episodic_events, etc.)",
-                '```',
+                'The container is ephemeral — no external cleanup is required after the run ends.',
                 '',
                 '**Labels:** benchmark, regression, scale',
               ].join('\n'),
               labels: ['benchmark', 'regression'],
             });
+
+      - name: Print Db2 container logs (last 100 lines) on failure
+        if: failure()
+        run: |
+          DB2_CONTAINER="${{ steps.db2-setup.outputs.container-id }}"
+          if [ -n "${DB2_CONTAINER}" ]; then
+            echo "=== Last 100 lines of Db2 container logs ==="
+            docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
+          else
+            echo "Could not resolve Db2 container ID — container may not have started."
+          fi
 
   # ============================================================================
   # JOB 7: consolidated-report
@@ -1280,19 +1002,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
         with:
-          python-version: "3.11"
-
-      - name: Install report dependencies
-        run: pip install -e ".[dev,benchmark]" --quiet
+          cache-key-suffix: consolidated
+          extras: benchmark
+          install-quiet: "true"
 
       # Download every benchmark artifact into separate sub-directories so their
       # contents don't collide.
@@ -1476,6 +1197,23 @@ jobs:
 
           FOOTER
 
+      - name: Render unified results schema summary
+        if: always()
+        run: |
+          JSONL_FILES=""
+          for f in consolidated/*/results.jsonl; do
+            [ -f "$f" ] && JSONL_FILES="$JSONL_FILES $f"
+          done
+          if [ -n "$JSONL_FILES" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "---" >> "$GITHUB_STEP_SUMMARY"
+            echo "## Unified Results (shared schema)" >> "$GITHUB_STEP_SUMMARY"
+            python scripts/render_results_summary.py $JSONL_FILES \
+              --run-number "${{ github.run_number }}" \
+              --sha "${{ github.sha }}" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload consolidated benchmark artifact
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
@@ -1484,3 +1222,77 @@ jobs:
           path: consolidated/
           retention-days: 90
           if-no-files-found: warn
+
+      # ── CIB-5: Single fan-in gh-pages writer ─────────────────────────────────
+      # This is the sole job that publishes to gh-pages and commits BENCHMARKS.md.
+      # benchmark/benchmark-nightly/benchmark-scale upload artifacts only.
+
+      - name: Prepare consolidated gh-pages site
+        if: always()
+        run: |
+          mkdir -p site_stage/benchmarks/${{ github.run_number }}
+          mkdir -p site_stage/benchmarks/nightly/${{ github.run_number }}
+
+          # Stage benchmark HTML report (Tier 0/1)
+          if [ -d "consolidated/benchmark" ]; then
+            cp -r consolidated/benchmark/. site_stage/benchmarks/${{ github.run_number }}/
+          fi
+
+          # Stage nightly HTML report (Tier 2)
+          if [ -d "consolidated/benchmark-nightly" ]; then
+            cp -r consolidated/benchmark-nightly/. site_stage/benchmarks/nightly/${{ github.run_number }}/
+          fi
+
+          # Board HTML
+          cp project-management/BOARD.html site_stage/board.html
+
+          # Generate site root index.html
+          git fetch origin gh-pages --depth=1 2>/dev/null || true
+          GH_PAGES_SCAN_DIR=$(mktemp -d)
+          git worktree add --detach "$GH_PAGES_SCAN_DIR" origin/gh-pages 2>/dev/null \
+            || git clone --depth=1 --branch gh-pages \
+               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+               "$GH_PAGES_SCAN_DIR" 2>/dev/null \
+            || { echo "Warning: could not clone gh-pages for scan — using empty benchmarks list"; mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks"; }
+          mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks/${{ github.run_number }}"
+          python scripts/generate_site_index.py \
+            --site-root  "$GH_PAGES_SCAN_DIR" \
+            --run-number "${{ github.run_number }}" \
+            --sha        "${{ github.sha }}" \
+            --ref        "${{ github.ref_name }}" \
+            --out        site_stage/index.html
+          git worktree remove --force "$GH_PAGES_SCAN_DIR" 2>/dev/null || true
+
+      - name: Publish all benchmark results to gh-pages (single writer)
+        if: always()
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site_stage
+          destination_dir: .
+          keep_files: true
+          commit_message: "benchmarks: run ${{ github.run_number }} (${{ github.sha }})"
+
+      - name: Commit BENCHMARKS.md if Tier 3 scale results available
+        if: always()
+        run: |
+          SCALE_JSON="consolidated/benchmark-scale/output_scale.json"
+          if [ -f "$SCALE_JSON" ]; then
+            python scripts/generate_benchmark_summary.py \
+              "$SCALE_JSON" \
+              --run-id "${{ github.run_id }}" \
+              --run-number "${{ github.run_number }}" \
+              --sha "${{ github.sha }}" \
+              > /tmp/scale_summary.md
+            {
+              echo ""
+              echo "## Tier 3 Scale Run — $(date -u +%Y-%m-%d) (run ${{ github.run_number }})"
+              cat /tmp/scale_summary.md
+            } >> BENCHMARKS.md
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git config user.name  "github-actions[bot]"
+            git add BENCHMARKS.md
+            git diff --cached --quiet || git commit -m "benchmarks: tier-3 scale results run ${{ github.run_number }} (${{ github.sha }})" && git push
+          else
+            echo "No scale results to commit — skipping BENCHMARKS.md update."
+          fi

@@ -5774,3 +5774,23 @@ All Microsoft Azure AI Foundry evaluator names, scale types (1–5 Likert / Bina
   predicate — quarantined records are stored but can be filtered by downstream tooling
   that inspects the field.
 - **Made during:** EPIC-11 TRU-2
+
+## CIB-3: Tier 3 scale benchmark — containerized Db2 instead of live external instance
+
+**Date:** 2026-08-07
+**Story:** CIB-3 (EPIC-24)
+
+**Decision:** Replace the live external Db2 instance (`secrets.LIVE_DB2_*`, `environment: live-db2`) with the same containerized Db2 used by all other benchmark jobs (`.github/actions/setup-db2`, `needs: [db2-ready]`).
+
+**Spike findings:**
+- 500k rows at typical agent-memory-sdk record size (id + text + VECTOR(768) + metadata) ≈ 250–400 MB of table data + index structures.
+- Tier 2 nightly runs at 50k rows on `ubuntu-latest` (7 GB RAM, 14 GB disk) without issue.
+- Linear scaling from 50k → 500k (10×) is expected to stay within `ubuntu-latest`'s disk budget, and Db2's in-container memory footprint scales more slowly than row count due to buffer pool reuse.
+- If resource pressure is observed in practice, `ubuntu-latest-4-cores` (16 GB RAM) is available as the next runner tier, selected via `runs-on:` without any code changes beyond that field.
+
+**Rationale for removing live-db2:**
+- Eliminates the `LIVE_DB2_*` secrets dependency and the `live-db2` GitHub environment gate.
+- Tier 3's purpose is genuine scale signal (500k rows) — NOT live-environment testing. Any live connectivity testing would be a separate concern.
+- Containerized Db2 is already proven at Tier 1 (1k rows) and Tier 2 (50k rows); Tier 3 is a quantity increase, not a qualitative change.
+
+**Manual follow-up:** Once this change is deployed and a successful Tier 3 run has been observed, delete the `live-db2` GitHub environment and its `LIVE_DB2_*` secrets from repo settings (this is a manual repo-settings step, not done by workflow files).

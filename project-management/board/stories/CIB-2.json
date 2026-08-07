@@ -1,0 +1,9 @@
+{
+  "id": "CIB-2",
+  "epic_id": "EPIC-24",
+  "title": "Evaluate GHA-native services: health-checking as a replacement for the hand-rolled Db2 poll loop",
+  "summary": "Spike whether Db2's health-check can move into a GHA job-level `services:` block (with `--privileged` and volume mounts via `options:`), cutting the custom 20-attempt DDL-readiness poll down to only the Db2-specific vector-index probe.",
+  "status": "Done",
+  "description": "Evaluated whether `jobs.<job>.services:` could replace `docker compose` for the Db2 container bootstrap. Key finding: GHA `services:` containers start before any step runs (including before checkout), so the `/tmp/var-custom/01_create_testdb.sh` volume mount host path cannot be written before the service starts. This makes GHA `services:` incompatible with the current architecture. Decision documented in `.github/actions/setup-db2/action.yml` comments as option (b) per acceptance criteria.",
+  "comments": []
+}

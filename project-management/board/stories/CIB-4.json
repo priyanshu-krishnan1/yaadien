@@ -1,0 +1,9 @@
+{
+  "id": "CIB-4",
+  "epic_id": "EPIC-24",
+  "title": "Add a workflow_dispatch suite selector for targeted runs",
+  "summary": "Add a `suite` choice input (all / tier0 / tier1 / tier2 / tier3 / locust-isolation / locust-scale) to benchmarks.yml and gate each job with an `if:` so a manual run only executes what was asked for, instead of always running all 7 jobs.",
+  "status": "Done",
+  "description": "Added `suite` input (type: choice, options: all/tier0-codspeed/tier1-benchmark/tier2-nightly/tier3-scale/locust-isolation/locust-scale, default: all) to `benchmarks.yml`. Added `if:` guards to all 7 gated jobs. `db2-ready` runs for all suites except `tier0-codspeed`. `consolidated-report` keeps `if: always()`. Dispatching with `suite: locust-isolation` runs only `db2-ready` + `locust-isolation` + `consolidated-report`.",
+  "comments": []
+}

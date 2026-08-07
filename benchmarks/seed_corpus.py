@@ -264,6 +264,7 @@ def seed_corpus(args: argparse.Namespace) -> None:
                     metadata=metadata,
                     embedding=embedding_provider(content),
                 ),
+                scope,
             )
 
             batch_count += 1

@@ -1,0 +1,9 @@
+{
+  "id": "WF-6",
+  "epic_id": "EPIC-23",
+  "title": "Sprint lifecycle CLI smoke test (chub_sprint.py)",
+  "summary": "Run the full scripts/chub_sprint.py lifecycle (plan → start → done → review → retro) against a scratch story, confirming that board status changes, chub annotations, and board rebuild all fire correctly.",
+  "status": "To Do",
+  "description": "scripts/chub_sprint.py wraps board status transitions with chub annotation writes, providing a single CLI interface for the sprint loop. This story verifies the end-to-end flow without touching production stories:\n\n1. Create a scratch story `WF-scratch.json` in project-management/board/stories/ with status 'To Do' (not committed, used only for this test).\n2. Run: `python scripts/chub_sprint.py plan --stories WF-scratch --goal 'smoke test'`\n   → Confirms chub annotation on sprint-workflow is written.\n3. Run: `python scripts/chub_sprint.py start --story WF-scratch`\n   → Confirms WF-scratch.json status = 'In Progress' and board rebuilt.\n4. Run: `python scripts/chub_sprint.py done --story WF-scratch --note 'smoke test complete' --annotate-gotcha 'chub_sprint.py smoke-tested OK'`\n   → Confirms WF-scratch.json status = 'Done', chub annotation on sdk written.\n5. Run: `python scripts/chub_sprint.py review`\n   → Confirms WF-scratch appears in Done section and annotations are listed.\n6. Run: `python scripts/chub_sprint.py retro --note 'smoke test passed' --rate up`\n   → Confirms retro annotation written and chub feedback command fires.\n7. Delete WF-scratch.json, rebuild board.\n\nAcceptance: all six commands exit 0; WF-scratch status progresses correctly through the lifecycle; chub annotations are written and visible via `chub annotate --list`.",
+  "comments": []
+}

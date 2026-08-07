@@ -1,0 +1,9 @@
+{
+  "id": "WF-5",
+  "epic_id": "EPIC-23",
+  "title": "Verify Bob session bootstrap via use-context-hub skill",
+  "summary": "Confirm that the .bob/skills/use-context-hub/SKILL.md skill correctly instructs Bob to run chub update + chub get (with --with-annotations) for all four project entries at session start, and that the annotations store/retrieve round-trip works.",
+  "status": "To Do",
+  "description": "The .bob/skills/use-context-hub/SKILL.md skill is the session bootstrap contract for Bob. This story verifies it end-to-end:\n\n1. Write a test annotation: `chub annotate agent-memory-sdk/coding-rules 'TEST: vector binding via ? raises SQL0901N'`.\n2. Run the session bootstrap sequence from the skill: `chub update && chub get agent-memory-sdk/sdk --lang py --with-annotations && chub get agent-memory-sdk/coding-rules --with-annotations`.\n3. Confirm the annotation appears in the coding-rules output under the '[User-written note — ...]' label.\n4. Clear the test annotation: `chub annotate agent-memory-sdk/coding-rules --clear`.\n5. Confirm `chub get agent-memory-sdk/coding-rules` no longer includes the note (only the 'annotation available' pointer, since --with-annotations was not passed).\n\nAcceptance: the round-trip (write annotation → fetch with --with-annotations → annotation appears → clear → annotation gone) completes without error; the skill file's bootstrap commands produce non-empty output for all four project entries.",
+  "comments": []
+}

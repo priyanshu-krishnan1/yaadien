@@ -1,0 +1,9 @@
+{
+  "id": "WF-3",
+  "epic_id": "EPIC-22",
+  "title": "Single workflow map: which GHA file runs when, gates what, publishes where",
+  "summary": "Add one table (in benchmarks/README.md, cross-linked from BENCHMARK_STRATEGY.md and BENCHMARKS.md) mapping each of the four .github/workflows/*.yml benchmark files to its trigger, tier, blocking-vs-informational gates, and gh-pages output location.",
+  "status": "To Do",
+  "description": "Understanding which benchmark workflow runs when and what it gates currently requires reading inline comments across four separate `.github/workflows/*.yml` files plus `benchmarks/README.md`'s four-tier prose section plus `BENCHMARK_STRATEGY.md` — there is no single table a new contributor or external auditor can read in one pass to answer \"what runs on my PR, what runs nightly, what's blocking, and where do I find the output.\"\n\nAdd one table to `benchmarks/README.md` (the existing four-tier section is the natural home) with columns: workflow file, trigger, tier (0-3), blocking or informational, what it gates (e.g. instruction-count regression, round-trip counts, correctness invariants, wall-clock alert-only), and gh-pages output path. Include WF-1's outcome for `benchmarks.yml` (retired, or its documented unique scope) as a row so the map stays accurate rather than describing an aspirational state. Cross-link this table from `BENCHMARK_STRATEGY.md`'s Phase 6 section and from BENCHMARKS.md's methodology-up-front section (the structure BM-26 introduces).\n\nAcceptance: one table enumerates every active benchmark workflow file with no gaps or stale entries; the table is cross-linked from all three documents rather than duplicated prose in each; verified accurate against the actual `.github/workflows/*.yml` files as they exist after WF-1 lands (sequence this after WF-1, not before, so it doesn't describe a workflow that gets retired days later).",
+  "comments": []
+}

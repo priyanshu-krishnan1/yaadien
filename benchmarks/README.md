@@ -1,8 +1,9 @@
 # Benchmarks
 
 Not shipped in the wheel (`src/agent_memory_sdk` only) and not run by the
-required-status CI checks (PH-1/PH-2). Requires a live Db2 instance for
-Tiers 1–3; Tier 0 runs on any machine with no database.
+required-status CI checks (PH-1/PH-2). Requires a Db2 container for Tiers 1–3;
+Tier 0 runs on any machine with no database. All tiers now use containerized
+Db2 (EPIC-24 / CIB-3).
 
 > **Migration in progress (EPIC-13).** This folder is being migrated from a
 > bespoke timing/report/runner framework to an assembly of four maintained OSS
@@ -32,32 +33,59 @@ this Apache-2.0 repository.
 
 ---
 
+## Workflow map (post EPIC-24)
+
+> **Single source of truth** for which GHA file runs when, gates what, and publishes
+> where. Cross-linked from `BENCHMARK_STRATEGY.md` Phase 6 and `BENCHMARKS.md`.
+> Updated by CIB-7 (EPIC-24).
+
+| Workflow file | Trigger | Tier | Blocking? | What it gates | gh-pages output |
+|:---|:---|:---|:---|:---|:---|
+| `benchmarks.yml` (`codspeed` job) | `workflow_dispatch` (`suite: tier0-codspeed` or `all`) | 0 | Informational | CodSpeed instruction-count smoke test | — |
+| `benchmarks.yml` (`benchmark` job) | `workflow_dispatch` (`suite: tier1-benchmark` or `all`) | 0/1 | Informational | pytest-benchmark Tier 0/1 suite, Db2 container | `benchmarks/<run_number>/` |
+| `benchmarks.yml` (`locust-isolation` job) | `workflow_dispatch` (`suite: locust-isolation` or `all`) | 1 | Informational | BM-12/13 isolation gate | — |
+| `benchmarks.yml` (`locust-scale` job) | `workflow_dispatch` (`suite: locust-scale` or `all`) | 1 | Informational | BM-14/15 scalability sweeps | — |
+| `benchmarks.yml` (`benchmark-nightly` job) | `workflow_dispatch` (`suite: tier2-nightly` or `all`) | 2 | Informational | Full benchmark matrix + Locust + IR metrics, 50k rows | `benchmarks/nightly/<run_number>/` |
+| `benchmarks.yml` (`benchmark-scale` job) | `workflow_dispatch` (`suite: tier3-scale` or `all`) | 3 | Informational | Tier 3 scale at 500k rows, containerized Db2 (CIB-3) | — |
+| `benchmarks.yml` (`consolidated-report`) | Runs after all above (`if: always()`) | — | — | Fan-in summary, single gh-pages commit, optional BENCHMARKS.md commit | `index.html`, `board.html` |
+
+**Key architectural properties (EPIC-24):**
+
+- **Composite actions** — `setup-bench-python` and `setup-db2` (`.github/actions/`) eliminate all duplicated setup blocks (CIB-1).
+- **Suite selector** — `workflow_dispatch` input `suite` lets a dispatcher run only the desired tier without paying for all 7 jobs (CIB-4).
+- **Single gh-pages writer** — `consolidated-report` is the only job that pushes to `gh-pages` and commits `BENCHMARKS.md`, eliminating concurrent-write races (CIB-5).
+- **Shared output schema** — every job emits `results.jsonl` with a common envelope; `scripts/render_results_summary.py` consumes all of them in one pass (CIB-6).
+- **Concurrency guard** — `concurrency: group: benchmarks-${{ github.ref }}, cancel-in-progress: false` prevents overlapping dispatches from racing on the single writer (CIB-7).
+- **All-container Db2** — Tier 3 now uses containerized Db2, eliminating the `live-db2` environment and `LIVE_DB2_*` secrets dependency (CIB-3).
+
+---
+
 ## Four-tier structure
 
 ```
-Tier 0 — Smoke (every push & PR, ~90 s, blocking)
+Tier 0 — Smoke (workflow_dispatch: tier0-codspeed, ~10 min, informational)
   pytest -m benchmark_micro, fake DBAPI connection, no database
-  Gate: >10% instruction-count regression (pytest-codspeed — noise-free)
+  Gate: CodSpeed instruction-count smoke test (noise-free)
   Covers: _vec_to_str, metadata-filter SQL compilation, RRF fusion,
           chunk splitting, Pydantic validation, scope predicates
 
-Tier 1 — Pull request (every PR, ~25 min, blocking)
-  pytest -m benchmark_pr, Db2 container (reuses ci.yml job), 1k rows/scope
+Tier 1 — Benchmark + Locust (workflow_dispatch: tier1-benchmark / locust-isolation / locust-scale)
+  pytest -m benchmark_pr, containerized Db2, 1k rows/scope
   Gate: round-trip-count regression (deterministic, runner-invariant)
         correctness invariants (leak count == 0)
   Alert (not fail): >50% wall-clock regression via github-action-benchmark
 
-Tier 2 — Nightly (schedule: 0 3 * * *, ~2 h, non-blocking)
-  pytest -m benchmark, Db2 container, 50k rows/scope
+Tier 2 — Nightly (~2 h, workflow_dispatch: tier2-nightly, non-blocking)
+  pytest -m benchmark, containerized Db2, 50k rows/scope
   + Locust ramp 1→50 users, mixed 70/30 R/W, leak assertions
   + LongMemEval_S IR metrics (Recall@k / MRR / nDCG@k, no LLM)
   + pytest-memray peak-RSS checks
 
-Tier 3 — Weekly scale (schedule: 0 4 * * 0, ~4–6 h, non-blocking)
-  Live Db2, pre-seeded 500k–1M-row corpus
-  + Locust 200-user / 60-min soak, 1,000 agents
+Tier 3 — Scale (~2 h, workflow_dispatch: tier3-scale, non-blocking)
+  Containerized Db2 (CIB-3), pre-seeded 500k-row corpus
+  + Locust 200-user, 15 min soak
   + LLM-judged LongMemEval_S (full 500 questions, local Ollama — never gated)
-  + Vector index build time, APPROX recall at 1M vectors
+  + Vector index build time
 ```
 
 Wall-clock on shared runners is too noisy to gate — Tier 0 uses instruction

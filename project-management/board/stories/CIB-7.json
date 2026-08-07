@@ -1,0 +1,9 @@
+{
+  "id": "CIB-7",
+  "epic_id": "EPIC-24",
+  "title": "Add concurrency guard, right-size timeouts, and document the redesigned workflow",
+  "summary": "Add a `concurrency` group to benchmarks.yml so overlapping dispatches can't race on the (now single, per CIB-5) gh-pages/BENCHMARKS.md writer; review each job's timeout-minutes against real observed durations; update benchmarks/README.md and BENCHMARK_STRATEGY.md to describe the post-EPIC-24 architecture.",
+  "status": "Done",
+  "description": "Added `concurrency: { group: 'benchmarks-${{ github.ref }}', cancel-in-progress: false }` at the workflow level in `benchmarks.yml`. Adjusted `benchmark-scale` timeout from 180 to 120 minutes (eliminated live-Db2 connectivity variability overhead from CIB-3). Updated `benchmarks/README.md` with a 'Workflow map (post EPIC-24)' table and updated Four-tier structure. Updated `project-management/BENCHMARK_STRATEGY.md` Phase 6 cross-cutting CI notes. CIB-7 concurrency block present; at least one timeout adjusted with rationale noted.",
+  "comments": []
+}
