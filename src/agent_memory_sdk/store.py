@@ -747,10 +747,11 @@ class MemoryStore:
         if self._embedding_provider is not None or record.embedding:
             try:
                 if record.embedding:
-                    embedding = record.embedding
-                else:
-                    assert self._embedding_provider is not None  # narrowed by outer `if`
+                    embedding: list[float] = record.embedding
+                elif self._embedding_provider is not None:
                     embedding = self._embedding_provider(record.content)
+                else:
+                    embedding = []
                 neighbors = self.procedures.search(
                     embedding, scope, top_k=self._integrity_k
                 )
