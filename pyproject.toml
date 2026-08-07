@@ -78,36 +78,37 @@ dev = [
     "bandit>=1.9.4",
     "pip-audit>=2.10.1",
 ]
-# Optional real embedding/judge providers for benchmarks/ — see benchmarks/README.md.
-# Not required to run the harness (the "hashing"/"keyword" fallbacks need nothing
-# beyond the base install) but needed for a retrieval-quality number worth comparing
-# to vendor-reported LongMemEval figures.
-benchmark = [
-    # EPIC-13 BM-3: pytest-benchmark for the new four-tier benchmark suite.
+benchmark-core = [
+    # pytest-benchmark for the four-tier benchmark suite.
     "pytest-benchmark>=5.0",
-    # EPIC-17 BM-20: CodSpeed Valgrind instruction-count instrumentation for
-    # the Tier-0 smoke gate (benchmark-pr.yml).  The plugin wraps pytest-benchmark
-    # so the same benchmark functions work under both pytest-benchmark (local /
-    # weekly runs) and CodSpeed (every-push instruction-count gate).
+    # CodSpeed Valgrind instruction-count instrumentation.
     "pytest-codspeed>=2.2",
-    # pytest-benchmark's --benchmark-histogram flag requires pygal + pygaljs.
-    # Without them the step crashes with ImportError even when all tests pass.
-    "pygal>=3.0",
-    "pygaljs>=1.0.2",
-    # EPIC-13 BM-6: memory/CPU instrumentation (resource_sampler.py).
-    # pytest-memray is Linux+macOS only (Bloomberg Apache-2.0).
+    # Memory/CPU instrumentation (resource_sampler.py). Linux+macOS only.
     "pytest-memray>=1.6.0",
     "psutil>=6.0",
+]
+benchmark-load = [
+    "agent-memory-sdk[benchmark-core]",
+    # Locust concurrency harness.
+    "locust>=2.26",
+]
+benchmark-quality = [
+    "agent-memory-sdk[benchmark-core]",
+    # Real embedding/judge providers for quality benchmarks.
     "sentence-transformers>=5.6.1",
     "ollama>=0.6.2",
-    # EPIC-15 BM-12: Locust concurrency harness (MIT).
-    # gevent is bundled with locust; listed explicitly so the version
-    # constraint is visible and reproducible.
-    "locust>=2.26",
-    # EPIC-16 BM-16: HuggingFace datasets package for downloading and caching
-    # the real LongMemEval dataset (Apache-2.0).  Only needed on first fetch;
-    # subsequent runs load from the local JSONL cache (fully offline).
+    # HuggingFace datasets for LongMemEval corpus.
     "datasets>=2.14",
+]
+# Convenience: full benchmark stack — all of the above.
+# Use benchmark-load or benchmark-quality for narrower CI installs.
+benchmark = [
+    "agent-memory-sdk[benchmark-load]",
+    "agent-memory-sdk[benchmark-quality]",
+    # --benchmark-histogram flag support (local runs only; not used in CI).
+    # Without pygal+pygaljs the flag crashes with ImportError.
+    "pygal>=3.0",
+    "pygaljs>=1.0.2",
 ]
 
 [project.urls]
@@ -174,3 +175,18 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+
+# NOTE: After modifying [tool.uv.sources] or [[tool.uv.index]], run `uv lock`
+# to regenerate uv.lock and commit the updated lock file.
+
+# ── uv source overrides ──────────────────────────────────────────────────────
+# Use the CPU-only PyTorch index on CI runners (no GPU). This cuts the torch
+# wheel from ~527 MB to ~200 MB. The +cpu variant produces identical embeddings
+# to the CUDA wheel on CPU-only hardware (CIW-5).
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

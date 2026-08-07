@@ -242,9 +242,15 @@ def seed_corpus(args: argparse.Namespace) -> None:
         start_index = cp.rows_committed
         batch_count = 0
 
-        for row_index in range(start_index, total_rows):
-            rng = _make_row_rng(args.seed, row_index)
+        # CIW-10 profiling accumulators (zero-cost when _CIW10_PROFILE=False)
+        _t_gen_total = 0.0
+        _t_embed_total = 0.0
+        _t_db_total = 0.0
 
+        for row_index in range(start_index, total_rows):
+            if _CIW10_PROFILE:
+                _t0 = time.perf_counter()
+            rng = _make_row_rng(args.seed, row_index)
             scope = _generate_scope(
                 rng, run_id,
                 n_tenants=_DEFAULT_N_TENANTS,
@@ -254,6 +260,13 @@ def seed_corpus(args: argparse.Namespace) -> None:
             )
             content = _generate_content(rng)
             metadata = _generate_metadata(rng, cardinality)
+            if _CIW10_PROFILE:
+                _t_gen_total += time.perf_counter() - _t0
+                _t1 = time.perf_counter()
+            embedding = embedding_provider(content)
+            if _CIW10_PROFILE:
+                _t_embed_total += time.perf_counter() - _t1
+                _t2 = time.perf_counter()
             store.facts.create(
                 SemanticFact(
                     tenant_id=scope.tenant_id,
@@ -262,10 +275,12 @@ def seed_corpus(args: argparse.Namespace) -> None:
                     thread_id=scope.thread_id,
                     content=content,
                     metadata=metadata,
-                    embedding=embedding_provider(content),
+                    embedding=embedding,
                 ),
                 scope,
             )
+            if _CIW10_PROFILE:
+                _t_db_total += time.perf_counter() - _t2
 
             batch_count += 1
             if batch_count >= _CHECKPOINT_BATCH:
@@ -282,10 +297,31 @@ def seed_corpus(args: argparse.Namespace) -> None:
         cp.rows_committed = total_rows
         _save_checkpoint(cp_path, cp)
         elapsed = time.perf_counter() - start_ts
+        rows_seeded = total_rows - start_index
         print(
             f"[seed_corpus] Done: {total_rows:,} rows in {elapsed:.1f}s "
             f"(run_id={run_id})"
         )
+
+        # CIW-10 profiling report
+        if _CIW10_PROFILE and rows_seeded > 0:
+            _t_other = elapsed - _t_gen_total - _t_embed_total - _t_db_total
+            print(
+                f"\n[CIW10 PROFILE] Per-phase breakdown over {rows_seeded:,} rows:\n"
+                f"  content+metadata gen : {_t_gen_total:7.2f}s  "
+                f"({100*_t_gen_total/elapsed:.1f}%,  "
+                f"{1000*_t_gen_total/rows_seeded:.3f} ms/row)\n"
+                f"  embedding            : {_t_embed_total:7.2f}s  "
+                f"({100*_t_embed_total/elapsed:.1f}%,  "
+                f"{1000*_t_embed_total/rows_seeded:.3f} ms/row)\n"
+                f"  db write             : {_t_db_total:7.2f}s  "
+                f"({100*_t_db_total/elapsed:.1f}%,  "
+                f"{1000*_t_db_total/rows_seeded:.3f} ms/row)\n"
+                f"  other (checkpoint/IO): {_t_other:7.2f}s  "
+                f"({100*_t_other/elapsed:.1f}%)\n"
+                f"  TOTAL                : {elapsed:7.2f}s",
+                file=sys.stderr,
+            )
     finally:
         pool.close()
 

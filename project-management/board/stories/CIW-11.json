@@ -1,0 +1,20 @@
+{
+  "id": "CIW-11",
+  "epic_id": "EPIC-26",
+  "title": "Replace row-by-row seeding with a cached export and `db2 LOAD`",
+  "summary": "Generate the 500k corpus once, cache the export artifact, and LOAD it in CI instead of regenerating every run. LOAD bypasses transaction logging, which should also retire the log-expansion step. Blocked on CIW-10.",
+  "status": "To Do",
+  "description": "**Do not start until CIW-10 confirms `db2 LOAD` can represent the vector column.** If it can't, rescope this story to the batching interventions CIW-10 measured and rename it accordingly.\n\nWork, assuming LOAD is viable:\n\n- Generate the corpus once for each `--size` / `--seed` combination the workflow uses (500k/seed 99 for scale, 50k/seed 42 for nightly), export to a LOAD-compatible format, and store it — either as a release asset, an `actions/cache` entry keyed on the generation parameters plus `seed_corpus.py`'s hash, or baked into the CIW-9 image if that landed.\n- Add a `--load-from` path to `seed_corpus.py` that runs `db2 LOAD` against the cached file, keeping the existing generative path as the fallback and as the thing that produces the cached artifact in the first place.\n- Verify the loaded corpus is byte-identical to the generated one. The seeds (42, 99) and cardinality arguments exist so the corpus is reproducible; a cached artifact that silently diverges would corrupt every benchmark comparison downstream. Add a checksum assertion.\n- Rebuild the vector index after LOAD and confirm query plans match a generatively-seeded database — LOAD can leave statistics stale, which would change benchmark results without changing the data. Run `RUNSTATS` and verify.\n- Once LOAD is the CI path, remove the `LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64` expansion step from `setup-db2` and confirm nothing else depended on the larger log (the Locust write-heavy scenarios may still need it — check BM-14c and BM-15 before removing).\n\nDone when: `benchmark-scale`'s seed step is dominated by download-and-load rather than generation, corpus checksums match, and BM-14/BM-15 still pass with the original log config restored or proven unnecessary.",
+  "comments": [
+    {
+      "author": "CIW-1",
+      "date": "2026-08-08",
+      "text": "Pre-measurement note: Phase-1 changes have landed. Seed corpus time at 500k rows is the dominant unknown. CIW-10 must measure the actual seeding breakdown before CIW-11 commits to a db2 LOAD approach. The Phase-1 changes do not materially affect seeding time (uv install is faster but seeding is the SQL bottleneck). Case for CIW-11 is unchanged pending CIW-10's measurement."
+    },
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Gated on CIW-10. Do not start until CIW-10 confirms db2 LOAD can represent the vector column. If CIW-10 finds LOAD is not viable for VECTOR columns (most likely: the VECTOR type is proprietary and not preserved in DEL/IXF export format), rescope this story to multi-row VALUES batching + larger commit batches (options 1 and 2 from the story) and rename accordingly. Preliminary note: the VECTOR column type in Db2 12 uses a proprietary internal format; DEL/IXF export may not preserve it. This is the most likely blocker."
+    }
+  ]
+}

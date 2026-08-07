@@ -97,9 +97,9 @@ runs:
               - /tmp/var-custom/01_create_testdb.sh:/var/custom/01_create_testdb.sh
             healthcheck:
               test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1"]
-              interval: 30s
-              timeout: 60s
-              retries: 30
+              interval: 5s
+              timeout: 30s
+              retries: 120
               start_period: 300s
         EOF
 
@@ -115,6 +115,7 @@ runs:
       shell: bash
       run: |
         echo "Polling Db2 DDL readiness (CREATE VECTOR INDEX probe)..."
+        backoff=2
         for i in $(seq 1 20); do
           # Resolve container ID inside the loop so a transient lookup
           # failure is retried rather than aborting the step.
@@ -129,11 +130,12 @@ runs:
             echo "Db2 DDL ready (vector index probe passed) after attempt $i."
             exit 0
           fi
-          echo "Attempt $i: Catalog agents still settling. Waiting 15s..."
+          echo "Attempt $i: Catalog agents still settling. Waiting ${backoff}s..."
           docker exec "${DB2_CONTAINER}" su - db2inst1 -c \
             "db2 connect to TESTDB && db2 'DROP TABLE ddl_probe' && db2 terminate" \
             >/dev/null 2>&1 || true
-          sleep 15
+          sleep "${backoff}"
+          backoff=$(( backoff * 2 > 15 ? 15 : backoff * 2 ))
         done
         echo "WARNING: Db2 DDL probe did not confirm readiness after 300s; proceeding anyway."
         exit 0

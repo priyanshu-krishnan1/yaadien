@@ -1,0 +1,156 @@
+# ==============================================================================
+# Runner Variance Check (CIW-12)
+# ==============================================================================
+#
+# Measures inter-runner variance for BM-15 to determine whether it is safe to
+# matrix the BM-15 pool sweeps across different runner VMs.
+#
+# Run this manually with workflow_dispatch BEFORE implementing CIW-13.
+#
+# Deliverable: record p50/p95 spread in the CIW-12 story comment, compare
+# against the BM-15 pool=1 vs pool=20 effect size from a single-runner run.
+#
+# Decision rule (from CIW-12 story):
+#   - Spread < 20% of effect size → matrixing BM-15 is safe → CIW-13 full scope
+#   - Spread ≥ 20% of effect size → keep BM-15 co-located; only matrix BM-14a/b/c
+#
+# Usage:
+#   Actions → "Runner variance check (CIW-12)" → Run workflow
+#   Use repetitions: 5 (default) for the spread measurement.
+#   Run multiple times with different pool_size values (1, 5, 10, 20) to
+#   measure the effect size as well as the variance.
+# ==============================================================================
+
+name: Runner variance check (CIW-12)
+
+on:
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: "Number of parallel BM-15 repetitions (each on its own runner, 1–10)"
+        default: "5"
+        required: false
+      db2_pool_size:
+        description: "DB2_POOL_SIZE to test for variance (e.g. 5 for spread; 1 and 20 for effect size)"
+        default: "5"
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  DB2_IMAGE: icr.io/db2_community/db2:12.1.5.0
+
+jobs:
+  variance-sample:
+    name: "BM-15 pool=${{ inputs.db2_pool_size }} — sample ${{ matrix.sample }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        sample: [1, 2, 3, 4, 5]
+      fail-fast: false
+
+    env:
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
+      DB2_POOL_SIZE: ${{ inputs.db2_pool_size || '5' }}
+      LOCUST_OUT: variance_results
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
+        with:
+          cache-key-suffix: variance-check
+          extras: benchmark-load
+
+      - name: Setup Db2 container
+        uses: ./.github/actions/setup-db2
+        id: db2-setup
+        with:
+          compose-suffix: "-variance-${{ matrix.sample }}"
+          db2-image: ${{ env.DB2_IMAGE }}
+
+      - name: Create output directory
+        run: mkdir -p "$LOCUST_OUT"
+
+      - name: "BM-15 pool=${{ env.DB2_POOL_SIZE }} — variance sample ${{ matrix.sample }}"
+        run: |
+          locust \
+            -f benchmarks/load/pool_saturation_user.py \
+            --headless -u 50 -r 5 -t 2m \
+            --csv "${LOCUST_OUT}/bm15_pool${{ env.DB2_POOL_SIZE }}_sample${{ matrix.sample }}" \
+            PoolSaturationUser
+
+      - name: Upload variance sample artifact
+        if: always()
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: variance-sample-${{ matrix.sample }}
+          path: ${{ env.LOCUST_OUT }}/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Print Db2 container logs (last 100 lines) on failure
+        if: failure()
+        run: |
+          DB2_CONTAINER="${{ steps.db2-setup.outputs.container-id }}"
+          if [ -n "${DB2_CONTAINER}" ]; then
+            echo "=== Last 100 lines of Db2 container logs ==="
+            docker logs --tail 100 "${DB2_CONTAINER}" 2>&1 || true
+          else
+            echo "Could not resolve Db2 container ID — container may not have started."
+          fi
+
+  analyze-variance:
+    name: "Analyze inter-runner variance"
+    runs-on: ubuntu-latest
+    needs: [variance-sample]
+    if: always()
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python and dependencies
+        uses: ./.github/actions/setup-bench-python
+        with:
+          cache-key-suffix: variance-analyze
+          extras: benchmark-core
+
+      - name: Download all variance samples
+        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        with:
+          pattern: variance-sample-*
+          path: variance_data
+          merge-multiple: true
+
+      - name: Compute and report variance
+        run: |
+          echo "## Runner Variance Report — BM-15 pool=${{ inputs.db2_pool_size }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Raw CSVs (p50/p95/throughput per sample)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for csv in variance_data/*_stats.csv; do
+            [ -f "$csv" ] || continue
+            label=$(basename "$csv" _stats.csv)
+            echo "#### ${label}" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            head -3 "$csv" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Decision guide" >> "$GITHUB_STEP_SUMMARY"
+          echo "Compute spread = (max - min) / median across samples." >> "$GITHUB_STEP_SUMMARY"
+          echo "Compare against pool=1 vs pool=20 effect size on a single runner." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Spread < 20% of effect size → matrixing BM-15 is safe" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Spread ≥ 20% of effect size → keep BM-15 co-located, only matrix BM-14a/b/c" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Record your finding as a comment on the CIW-12 story before implementing CIW-13." >> "$GITHUB_STEP_SUMMARY"

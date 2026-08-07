@@ -39,16 +39,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6a463db41a5de1699b # v6.1.0
         with:
-          path: ~/.cache/pip
-          key: pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-${{ matrix.python-version }}-
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Install package and dev dependencies
-        run: pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Lint — ruff check
         run: ruff check .
@@ -134,30 +132,22 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Cache pip dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6a463db41a5de1699b # v6.1.0
         with:
-          path: ~/.cache/pip
-          key: pip-security-3.11-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            pip-security-3.11-
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Install package and dev dependencies
         # Full editable install so pip-audit sees the resolved dependency set
         # (including transitive deps) and bandit can import the package if needed.
-        run: pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Dependency audit — pip-audit
-        # Upgrade setuptools to >=83.0.0 before auditing — the runner image ships
-        # an older version with PYSEC-2026-3447.  setuptools is not a declared
-        # dependency of this project (hatchling is the build backend); upgrading it
-        # on the runner is safe and avoids a spurious CVE failure.
         # --ignore-vuln: add entries here with a DECISIONS.md reference when an
         # advisory is accepted (e.g. an unfixed vuln in a transitive dep with no
         # available upgrade path and a risk acceptance recorded in DECISIONS.md).
-        run: |
-          pip install --upgrade "setuptools>=83.0.0"
-          pip-audit --strict
+        run: uv run pip-audit --strict
 
       - name: Static security analysis — bandit
         # Scope: the three module groups VER-5 hand-verified for SQL injection

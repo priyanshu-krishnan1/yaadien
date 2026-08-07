@@ -1,0 +1,69 @@
+# ==============================================================================
+# Db2 Benchmark Image Build & Push (CIW-8/CIW-9)
+# ==============================================================================
+#
+# Builds and pushes the pre-baked Db2 benchmark image to GHCR.
+# Triggered on:
+#   - Weekly schedule (Sundays, 02:00 UTC)
+#   - Changes to the Dockerfile or creation script
+#   - Manual dispatch
+#
+# !! BLOCKED !! — Do not enable this workflow until CIW-8's layer-persistence
+# check passes. See .github/db2-bench/Dockerfile for the manual verification
+# steps. Once verified, remove the "BLOCKED" note and merge this workflow.
+#
+# Ownership note (from CIW-9): this workflow creates a maintained artifact.
+# Before merging, assign a named owner and document the failure path
+# (i.e. what to do if the weekly rebuild fails silently).
+# ==============================================================================
+
+name: Build Db2 benchmark image
+
+on:
+  schedule:
+    - cron: "0 2 * * 0"  # Sundays 02:00 UTC
+  push:
+    paths:
+      - ".github/db2-bench/Dockerfile"
+      - ".github/db2-bench/01_create_testdb.sh"
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push image to GHCR after build (default: false for manual dry-run)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-db2-image:
+    name: "Build and push db2-bench image"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Db2 benchmark image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .github/db2-bench
+          file: .github/db2-bench/Dockerfile
+          push: ${{ github.event_name == 'schedule' || inputs.push == true }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/db2-bench:12.1.5.0
+            ghcr.io/${{ github.repository_owner }}/db2-bench:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=Pre-baked Db2 community image for CI benchmarks (CIW-8/CIW-9)
+            org.opencontainers.image.revision=${{ github.sha }}

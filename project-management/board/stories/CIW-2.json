@@ -1,0 +1,15 @@
+{
+  "id": "CIW-2",
+  "epic_id": "EPIC-26",
+  "title": "Delete the `db2-ready` sequencing gate and promote the image ref to workflow env",
+  "summary": "Remove the `db2-ready` job and the `needs: [db2-ready]` edge from all five Db2 jobs. It pre-pulls an image that no downstream job can see, adding 4-6 min of serial latency to the critical path in exchange for a constant string.",
+  "status": "Done",
+  "description": "`db2-ready` (benchmarks.yml lines 118-143) states its purpose in the file header and in its own comment block: pull the Db2 image \"so that all downstream jobs can trust the image cache is warm on the runner pool.\"\n\nThat premise does not hold on GitHub-hosted runners. Every job is allocated a fresh VM with an empty Docker image store; there is no shared image cache across jobs. Nothing pulled in `db2-ready` is visible to `benchmark`, `locust-isolation`, `locust-scale`, `benchmark-nightly`, or `benchmark-scale` — each one re-pulls the full ~3 GB image inside `setup-db2` regardless.\n\nNet effect: the pull is paid six times instead of five, and five jobs are blocked behind the sixth.\n\nThe job's only real output is `db2_image: \"icr.io/db2_community/db2:12.1.5.0\"`, a hardcoded constant.\n\nDone when: `db2-ready` job is deleted, workflow-level `env: DB2_IMAGE` added, all downstream jobs reference `${{ env.DB2_IMAGE }}` and have no `needs: [db2-ready]`.",
+  "comments": [
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Implemented. Workflow-level `env: DB2_IMAGE: icr.io/db2_community/db2:12.1.5.0` added. The `db2-ready` job deleted. All 5 downstream jobs' `needs: [db2-ready]` edges removed. All 5 `setup-db2` invocations now pass `db2-image: ${{ env.DB2_IMAGE }}`. Workflow header comment updated to reflect the new architecture (CIW-2 rationale included). Saves 4-6 min of serial latency from the critical path."
+    }
+  ]
+}

@@ -1,15 +1,15 @@
 name: "Setup Python 3.11 and benchmark dependencies"
-description: "Sets up Python 3.11, restores the pip cache, and installs the package with the requested extras."
+description: "Sets up Python 3.11, installs uv, syncs the package with the requested extras from uv.lock."
 
 inputs:
   extras:
     description: "Comma-separated extras to install (prepended with 'dev,' automatically)"
     default: "benchmark,langchain,openai-agents,mcp"
   cache-key-suffix:
-    description: "Suffix used in the pip cache key: pip-{cache-key-suffix}-3.11-<hash>"
+    description: "Suffix used in the uv cache key (kept for interface compatibility; uv cache is keyed on uv.lock automatically)"
     default: "benchmark"
   install-quiet:
-    description: "Pass --quiet to pip install"
+    description: "Pass --quiet to uv sync"
     default: "false"
 
 runs:
@@ -20,19 +20,29 @@ runs:
       with:
         python-version: "3.11"
 
-    - name: Cache pip dependencies
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - name: Install uv
+      uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6a463db41a5de1699b # v6.1.0
       with:
-        path: ~/.cache/pip
-        key: pip-${{ inputs.cache-key-suffix }}-3.11-${{ hashFiles('pyproject.toml') }}
-        restore-keys: |
-          pip-${{ inputs.cache-key-suffix }}-3.11-
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
 
-    - name: Install package and dependencies
+    - name: Sync package and dependencies
       shell: bash
       run: |
+        # Build --extra flags from comma-separated input, prepending 'dev'
+        EXTRA_FLAGS="--extra dev"
+        IFS=',' read -ra EXTRAS <<< "${{ inputs.extras }}"
+        for extra in "${EXTRAS[@]}"; do
+          extra="$(echo "$extra" | xargs)"  # trim whitespace
+          [ -n "$extra" ] && EXTRA_FLAGS="$EXTRA_FLAGS --extra $extra"
+        done
+
         QUIET_FLAG=""
         if [ "${{ inputs.install-quiet }}" = "true" ]; then
           QUIET_FLAG="--quiet"
         fi
-        pip install -e ".[dev,${{ inputs.extras }}]" ${QUIET_FLAG}
+
+        # --locked: fail if uv.lock is out of sync with pyproject.toml
+        # uv automatically uses the pytorch-cpu index for torch (see pyproject.toml
+        # [tool.uv.sources]) — no GPU wheels are downloaded on GitHub-hosted runners.
+        uv sync --locked ${EXTRA_FLAGS} ${QUIET_FLAG}

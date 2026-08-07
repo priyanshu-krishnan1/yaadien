@@ -1,0 +1,15 @@
+{
+  "id": "CIW-6",
+  "epic_id": "EPIC-26",
+  "title": "Drop `--benchmark-histogram` from the CI benchmark steps",
+  "summary": "Both the Tier-0 and Tier-1 steps in the `benchmark` job write histograms to the same `${BENCH_OUT}/histogram` prefix, so Tier-0's output is likely overwritten anyway. Rendering a pygal SVG per benchmark is pure CI cost.",
+  "status": "Done",
+  "description": "`benchmarks.yml` lines 212 and 220 both pass `--benchmark-histogram=\"${BENCH_OUT}/histogram\"` — the Tier-0 (`benchmark_micro`) step and the Tier-1 (`benchmark_pr`) step, to the *same* output prefix. pytest-benchmark derives per-benchmark filenames from that prefix, so unless the two tiers' benchmark names are fully disjoint, Tier-1's run overwrites Tier-0's artifacts.\n\nSeparately, the flag renders one pygal SVG per benchmark, which is why `pygal>=3.0` and `pygaljs>=1.0.2` are pinned in the `benchmark` extra with a comment explaining that the step crashes with ImportError without them.\n\nWork:\n\n- Remove `--benchmark-histogram` from both CI steps.\n- Before removing, check whether `scripts/generate_benchmark_summary.py --html` or `scripts/generate_site_index.py` reference the histogram SVGs in the published gh-pages report. If they do, either keep a single histogram invocation on the Tier-1 step only with a distinct prefix, or drop the references.\n- Keep `pygal`/`pygaljs` in the `benchmark` extra so local `--benchmark-histogram` runs still work, and update their comment to say the flag is local-only.\n- Document in `benchmarks/README.md` that histograms are a local affordance.\n\nDone when: neither CI step passes the flag, and the published report has no broken image links.",
+  "comments": [
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Implemented. Removed --benchmark-histogram flag from both CI steps in the benchmark job (Tier-0 micro and Tier-1 pr steps). pyproject.toml pygal/pygaljs comment updated to 'local runs only; not used in CI'. generate_benchmark_summary.py --html and generate_site_index.py do not reference histogram SVGs. benchmarks/README.md does not exist."
+    }
+  ]
+}
