@@ -34,7 +34,6 @@
 # ==============================================================================
 
 name: Benchmarks (unified)
-# re-index trigger
 
 on:
   workflow_dispatch:
