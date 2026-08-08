@@ -1,0 +1,15 @@
+{
+  "id": "CIW-1",
+  "epic_id": "EPIC-26",
+  "title": "Baseline the workflow with real step timings before optimising anything",
+  "summary": "Pull actual per-step durations from a recent `suite: all` dispatch and record them in CI_BENCHMARK_PERFORMANCE.md, replacing the read-the-YAML estimates. Re-rank CIW-8 through CIW-13 against the measured data.",
+  "status": "In Progress",
+  "description": "Every cost figure in EPIC-26 and in `project-management/CI_BENCHMARK_PERFORMANCE.md` is an estimate derived from reading `benchmarks.yml`, `setup-db2/action.yml`, and `uv.lock` — not from a measured run. That is fine for the Phase-1 stories (CIW-2..CIW-6), which are cheap and whose reasoning doesn't depend on the numbers, but CIW-8 (GHCR image) and CIW-11 (db2 LOAD) are multi-day efforts being justified by guesses.\n\nWork:\n\n- Trigger `Benchmarks (unified)` with `suite: all` on a quiet branch, or use the most recent such run if one exists.\n- Pull per-step durations: `gh api /repos/{owner}/{repo}/actions/runs/{run_id}/jobs --paginate | jq '.jobs[] | {name, steps: [.steps[] | {name, started_at, completed_at}]}'`.\n- Produce a table per job: setup-python, pip install, docker pull, `compose up --wait`, DDL poll, and each benchmark step.\n- Specifically confirm or refute: (a) the ~3 GB Db2 pull happens twice per Db2 job — once in `db2-ready`, once in `setup-db2`; (b) `compose up --wait` really does sit for 5-10 min; (c) pip install is 4-8 min; (d) the DDL poll's actual attempt count.\n- Update the timing table in EPIC-26's description and §1 of the research note with measured values, and mark the estimates superseded.\n- Re-rank CIW-8 / CIW-11 / CIW-13 and note in each story's comments whether the measured data strengthens or weakens the case.\n\nDone when: the research note's §1 table and §5 caveat cite measured values, and each of CIW-8, CIW-11, CIW-13 has a comment recording the re-ranking.",
+  "comments": [
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Implementation note: CIW-1 cannot pull live timing data in the absence of a triggerable Actions run. Instead, §5 of CI_BENCHMARK_PERFORMANCE.md has been expanded with a detailed measurement guide (gh API command, what to confirm, what to update). The §1 table has been annotated with Phase-1 status (CIW-2..CIW-7 changes noted). CIW-8, CIW-11, and CIW-13 have been pre-annotated with notes about how Phase-1 changes affect the re-ranking. Actual measured timing data should be added after the first post-Phase-1 `suite: all` run. Run the gh CLI command in §5 to capture per-step durations and update the table."
+    }
+  ]
+}

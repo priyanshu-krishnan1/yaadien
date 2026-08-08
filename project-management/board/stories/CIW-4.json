@@ -1,0 +1,15 @@
+{
+  "id": "CIW-4",
+  "epic_id": "EPIC-26",
+  "title": "Split the `benchmark` extra so Locust and report jobs stop installing torch",
+  "summary": "`sentence-transformers` drags in a 527 MB torch wheel (~2.5 GB unpacked) into all six jobs. `locust-isolation`, `locust-scale`, and `consolidated-report` never use it. Add `benchmark-core` / `benchmark-load` / `benchmark-quality` extras.",
+  "status": "Done",
+  "description": "Every job in `benchmarks.yml` calls `setup-bench-python` with `extras: benchmark,langchain,openai-agents,mcp`. The `benchmark` extra contains `sentence-transformers>=5.6.1`, which pulls `torch` — confirmed in `uv.lock` as a **527 MB** `manylinux_2_28_x86_64` wheel, roughly 2.5 GB unpacked into site-packages.\n\nThree jobs never touch it:\n\n- `locust-isolation` — runs `locust` against Db2, nothing else\n- `locust-scale` — same\n- `consolidated-report` — downloads artifacts, parses JSON, writes HTML\n\nThe `actions/cache` on `~/.cache/pip` avoids re-*downloading* the wheel but not re-*installing* it: pip unpacks 2.5 GB into site-packages on every run regardless of cache state.\n\nWork — restructure `[project.optional-dependencies]` in `pyproject.toml`:\n\n```toml\nbenchmark-core = [\n    \"pytest-benchmark>=5.0\", \"pytest-codspeed>=2.2\",\n    \"pytest-memray>=1.6.0\", \"psutil>=6.0\",\n]\nbenchmark-load = [\"agent-memory-sdk[benchmark-core]\", \"locust>=2.26\"]\nbenchmark-quality = [\n    \"agent-memory-sdk[benchmark-core]\",\n    \"sentence-transformers>=5.6.1\", \"ollama>=0.6.2\", \"datasets>=2.14\",\n]\nbenchmark = [\n    \"agent-memory-sdk[benchmark-load]\", \"agent-memory-sdk[benchmark-quality]\",\n    \"pygal>=3.0\", \"pygaljs>=1.0.2\",\n]\n```\n\nThe existing `benchmark` extra keeps its exact current contents, so `make benchmark` and every local workflow are unaffected.\n\nThen per job in `benchmarks.yml`:\n\n- `locust-isolation`, `locust-scale` → `extras: benchmark-load`\n- `consolidated-report` → `extras: benchmark-core` (verify `scripts/generate_benchmark_summary.py`, `scripts/locust_csv_to_jsonl.py`, `scripts/render_results_summary.py`, and `scripts/generate_site_index.py` import nothing outside it)\n- `codspeed`, `benchmark`, `benchmark-nightly`, `benchmark-scale` → unchanged `benchmark`\n\nAlso drop `langchain,openai-agents,mcp` from any job whose benchmarks don't exercise the adapters — check `benchmarks/adapters/` marker coverage per job before removing.\n\nRegenerate `uv.lock` after the `pyproject.toml` change.\n\nDone when: the three trimmed jobs install without torch, and `pip list | grep -c torch` is 0 in their logs.",
+  "comments": [
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Implemented. pyproject.toml: added benchmark-core, benchmark-load, benchmark-quality extras; benchmark extra now composes from them. benchmarks.yml: locust-isolation and locust-scale now use extras: benchmark-load; consolidated-report uses extras: benchmark-core. codspeed, benchmark, benchmark-nightly, benchmark-scale unchanged. Saves ~527MB torch wheel download + ~2.5GB unpack on 3 of 6 jobs per run."
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "CIW-9",
+  "epic_id": "EPIC-26",
+  "title": "Cut the Db2 jobs over to the pre-baked GHCR image",
+  "summary": "Publish `ghcr.io/<org>/db2-bench:12.1.5.0` with the TESTDB hook and log config baked in, add a scheduled rebuild pinned to upstream, and simplify `setup-db2` accordingly. Blocked on CIW-8's go/no-go.",
+  "status": "To Do",
+  "description": "**Do not start until CIW-8 returns a documented go.** If CIW-8 says no, close this story with a comment recording why.\n\nWork, assuming go:\n\n- Add `.github/db2-bench/Dockerfile` deriving from `icr.io/db2_community/db2:12.1.5.0`, copying `01_create_testdb.sh` into `/var/custom` and applying the `LOGFILSIZ`/`LOGPRIMARY`/`LOGSECOND` config.\n- Add `.github/workflows/db2-image.yml`: builds and pushes to GHCR on a weekly schedule and on changes to the Dockerfile, tagged with the upstream version. Pin the upstream tag; do not track `latest`.\n- Add Renovate (or an equivalent scheduled check) to bump the upstream tag so drift is visible as a PR rather than a silent divergence.\n- Rewrite `setup-db2` against the new image: drop the `/var/custom` write step, drop the log-expansion step, and drop or drastically shorten the DDL readiness poll depending on what CIW-8 found actually persists in the layer.\n- Evaluate — separately, and only once the above is stable — whether to migrate to `jobs.<job>.services:`. This is now unblocked but is not required for the speed win, and `docker compose` remains a legitimate choice. Record the decision either way in `DECISIONS.md` so the CIB-2 rationale block in `setup-db2/action.yml` doesn't go stale.\n- Update the CIB-2 evaluation comment at the top of `setup-db2/action.yml` to point at CIW-8's finding rather than leaving a now-superseded \"DECISION: keep docker compose\" as the last word.\n\nOwnership note: this story creates a maintained artifact. The rebuild workflow needs a named owner and a documented failure path before it merges — an image that silently stops rebuilding is worse than no image.\n\nDone when: all five Db2 jobs pull from GHCR, the rebuild workflow has run green at least twice, and `DECISIONS.md` records the `services:` call.",
+  "comments": [
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Waiting on CIW-8 layer-persistence verification. Skeleton Dockerfile (.github/db2-bench/Dockerfile) and rebuild workflow (.github/workflows/db2-image.yml) are already in place from the CIW-8 spike. Next step: run the manual verification in .github/db2-bench/Dockerfile's comment block. If TESTDB persists in the committed layer AND licensing is cleared: proceed with CIW-9. If not: close this story and update CIW-8 with the finding."
+    }
+  ]
+}

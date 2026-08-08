@@ -1,0 +1,15 @@
+{
+  "id": "CIW-5",
+  "epic_id": "EPIC-26",
+  "title": "Use the CPU-only torch wheel index for the jobs that do need torch",
+  "summary": "The default PyPI torch wheel bundles CUDA kernels that are dead weight on a GPU-less runner. Pointing at download.pytorch.org/whl/cpu cuts it from ~527 MB to ~200 MB for the quality jobs.",
+  "status": "Done",
+  "description": "Follow-on to CIW-4, which removes torch from three jobs entirely. This story addresses the jobs that legitimately need it — `benchmark`, `benchmark-nightly`, `benchmark-scale`, and `codspeed` — where `sentence-transformers` requires torch for real embedding models.\n\nGitHub-hosted `ubuntu-latest` runners have no GPU. The default PyPI `torch` wheel ships bundled CUDA kernels and cuDNN that can never execute there.\n\nWork:\n\n- Add an `extra-index-url` input to `.github/actions/setup-bench-python/action.yml`, defaulting to empty so existing callers are unaffected.\n- Db2-quality jobs pass `https://download.pytorch.org/whl/cpu`.\n- If CIW-7 lands first, express this through uv instead — `[tool.uv.sources]` with an explicit CPU index and `torch = { index = \"pytorch-cpu\" }` — which is more reproducible than an `--extra-index-url` flag and avoids the index-priority ambiguity that `--extra-index-url` has with pip.\n- Confirm `sentence-transformers` still loads and produces identical embeddings on the CPU build — the quality-tier IR metrics (BM-17, AGQ-3, AGQ-4) must not shift. Run `benchmarks/quality/ -m benchmark_nightly` before and after and diff the scores.\n\nRisk: if any quality benchmark silently depends on CUDA availability for a fallback path, this surfaces it. That is a finding worth having, not a regression.\n\nDepends on CIW-4 landing first (the extras split determines which jobs this applies to).\n\nDone when: quality jobs install the `+cpu` torch build and IR metric outputs are unchanged.",
+  "comments": [
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Implemented via uv sources (CIW-7 path, landed first). pyproject.toml: added [tool.uv.sources] with torch = { index = 'pytorch-cpu' } and [[tool.uv.index]] declaring https://download.pytorch.org/whl/cpu with explicit=true. uv only uses the CPU index for torch; all other packages resolve from PyPI. Cuts torch wheel from ~527MB to ~200MB on the jobs that need it (benchmark, benchmark-nightly, benchmark-scale, codspeed). setup-bench-python/action.yml: added inline comment. NOTE: uv.lock must be regenerated with `uv lock` after merging."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "CIW-8",
+  "epic_id": "EPIC-26",
+  "title": "[Spike] Pre-baked Db2 image on GHCR — go/no-go on reopening CIB-2's rejection",
+  "summary": "Measure whether a custom Db2 image published to GHCR is worth the maintenance it introduces. Deliverable is a recommendation with numbers, not an image. CIB-2 rejected this; the case has changed and needs re-testing, not re-asserting.",
+  "status": "In Progress",
+  "description": "CIB-2 evaluated `jobs.<job>.services:` as a replacement for the hand-rolled Db2 bootstrap and correctly identified the blocker, documented at length in `setup-db2/action.yml`: GHA starts service containers before any step runs, so the host path bind-mounted to `/var/custom/01_create_testdb.sh` cannot be populated before `docker run`. CIB-2 considered a custom image derived from `icr.io/db2_community/db2:12.1.5.0` as the workaround and **rejected it**, citing image maintenance, registry overhead, and drift risk against upstream.\n\nThat was a defensible call when the only benefit was unblocking `services:`. The case is now broader — a pre-baked image would collapse five separate costs:\n\n1. Removes the `/var/custom` bind mount → unblocks the `services:` migration CIB-2 shelved.\n2. Bakes TESTDB creation into a layer → the entire DDL readiness poll loop disappears (not just gets faster, as in CIW-3).\n3. Bakes `LOGFILSIZ 4096 LOGPRIMARY 30 LOGSECOND 64` → drops the log-expansion step.\n4. GHCR pulls land in the same datacenter as the runner; icr.io does not.\n5. Optionally carries the seeded corpus from CIW-11, making scale-tier setup a single pull.\n\nThis story does **not** build the production image. It gathers the data to decide:\n\n- Confirm TESTDB creation actually persists in a committed layer — Db2's init may write to a `VOLUME`-declared path, which would silently discard it. **Test this first: if it fails, the whole approach collapses and the answer is no.**\n- Check licensing — the Db2 community image carries `LICENSE: accept` semantics; confirm republishing a derived image to a public GHCR namespace is permitted. **Hard blocker if it isn't.**\n- Build a throwaway image; measure `docker pull` from GHCR vs icr.io on an actual `ubuntu-latest` runner, cold, 3 trials each. This is the number the decision turns on.\n- Confirm the baked config survives, and that `services:` can then express everything `setup-db2` does today.\n- Estimate real maintenance cost: how often does `icr.io/db2_community/db2:12.1.5.0` actually update? What does Renovate auto-bump look like in practice?\n\nDone when: a written go/no-go recommendation exists with the pull-time measurement, the layer-persistence result, and the licensing check.",
+  "comments": [
+    {
+      "author": "CIW-1",
+      "date": "2026-08-08",
+      "text": "Pre-measurement note: Phase-1 changes (CIW-2..CIW-7) have landed. The `db2-ready` gate is deleted (CIW-2), healthcheck interval is now 5s (CIW-3), and setup uses uv (CIW-7). Before treating the GHCR image spike as necessary, re-run a `suite: all` dispatch and re-measure actual docker pull time for each Db2 job. The case for GHCR depends heavily on whether the pull is actually 4–6 min — if uv's faster install already dominates, the ROI calculus changes."
+    },
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Spike preparation complete. Skeleton Dockerfile (.github/db2-bench/Dockerfile), creation script (.github/db2-bench/01_create_testdb.sh), and rebuild workflow (.github/workflows/db2-image.yml) have been created. BLOCKED on manual layer-persistence check — see Dockerfile comments for the exact verification steps. Licensing check also required before public GHCR push. Once both checks pass and pull-time measurement confirms the win, CIW-9 can proceed. If the layer-persistence check fails, close CIW-9 and fall back to CIW-10/CIW-11's batching approach."
+    }
+  ]
+}

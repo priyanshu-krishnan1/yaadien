@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e
+if [ "$(id -un)" = "db2inst1" ]; then
+  db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768
+else
+  su - db2inst1 -c "db2 CREATE DATABASE TESTDB USING CODESET UTF-8 TERRITORY US PAGESIZE 32768"
+fi

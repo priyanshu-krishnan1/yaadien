@@ -1,0 +1,15 @@
+{
+  "id": "CIW-3",
+  "epic_id": "EPIC-26",
+  "title": "Tighten the Db2 healthcheck interval and give the DDL readiness probe exponential backoff",
+  "summary": "`interval: 30s` on the Db2 healthcheck plus a flat `sleep 15` in the DDL probe means up to 45 s of pure idle after Db2 is actually ready. Drop the interval to 5 s and back the probe off from 2 s.",
+  "status": "Done",
+  "description": "In `.github/actions/setup-db2/action.yml` the compose healthcheck is:\n\n```yaml\nhealthcheck:\n  test: [\"CMD-SHELL\", \"su - db2inst1 -c 'db2 connect to TESTDB' >/dev/null 2>&1\"]\n  interval: 30s\n  timeout: 60s\n  retries: 30\n  start_period: 300s\n```\n\nTwo separate sources of idle time:\n\n1. `interval: 30s` — once Db2 *is* ready, `docker compose up --wait` waits up to another 30 s before the next probe notices. Docker marks a container healthy the moment any probe passes, **including during `start_period`**, and probe failures during `start_period` do not count against `retries`. So a short interval paired with a long start period costs nothing and loses no tolerance — it only makes detection finer-grained. `start_period: 300s` should stay exactly as it is.\n\n2. The DDL readiness loop that follows sleeps a flat 15 s between attempts and re-runs a full connect → `CREATE TABLE ddl_probe` → `CREATE VECTOR INDEX` → `DROP TABLE` → `terminate` cycle each time. Catalog-agent drain is usually done well before the first 15 s elapses, so most runs pay a full extra interval for nothing.\n\nWork:\n\n- Healthcheck → `interval: 5s`, `timeout: 30s`, `retries: 120`, `start_period: 300s` (unchanged). Total tolerance is preserved: 120 × 5 s = 600 s of post-start-period grace, same order as the current 30 × 30 s.\n- DDL probe → replace `sleep 15` with backoff starting at 2 s and capping at 15 s (2, 4, 8, 15, 15, ...). Keep the total budget at ~300 s and keep the existing \"proceed anyway\" fallback and its warning.\n- Leave the in-loop container-ID re-resolution and the `DROP TABLE` cleanup between attempts alone — both are deliberate and correct.\n\nThis is a prerequisite for CIW-13: at today's ~12 min boot a Locust matrix is roughly break-even, because each new leg pays a full boot. At a 4-minute boot it becomes a clear win.\n\nDone when: a `suite: locust-isolation` dispatch shows a measurably shorter `setup-db2` step with no increase in flakiness across at least 3 runs.",
+  "comments": [
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Implemented. Healthcheck in setup-db2/action.yml changed: interval 30s→5s, timeout 60s→30s, retries 30→120, start_period 300s unchanged. DDL probe loop: replaced flat `sleep 15` with exponential backoff starting at 2s capping at 15s (sequence: 2→4→8→15→15→...). Total detection budget preserved (120×5s=600s vs 30×30s=900s). Container-ID re-resolution and DROP TABLE cleanup left intact."
+    }
+  ]
+}

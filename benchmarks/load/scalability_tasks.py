@@ -74,10 +74,6 @@ import time
 
 from locust import between, task  # type: ignore[import-untyped]
 
-from agent_memory_sdk.models import WorkingMemory
-from benchmarks.common.resource_sampler import ResourceSampler
-from benchmarks.common.scope_gen import make_scope, marker_for
-
 # ---------------------------------------------------------------------------
 # Re-use the shared infrastructure from the primary locustfile.
 # Import the MODULE (not individual names) so that every access at task
@@ -88,6 +84,9 @@ from benchmarks.common.scope_gen import make_scope, marker_for
 # module-level global — causing AssertionError in every task.
 # ---------------------------------------------------------------------------
 import benchmarks.load.locustfile as _lf  # noqa: E402
+from agent_memory_sdk.models import WorkingMemory
+from benchmarks.common.resource_sampler import ResourceSampler
+from benchmarks.common.scope_gen import make_scope, marker_for
 from benchmarks.load.locustfile import MemoryStoreUser  # noqa: E402
 
 logger = logging.getLogger(__name__)

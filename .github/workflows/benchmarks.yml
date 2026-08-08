@@ -25,15 +25,10 @@
 #
 # ── DB2 INFRASTRUCTURE NOTE ───────────────────────────────────────────────────
 #
-# GitHub Actions does not support sharing a running container across separate
-# jobs on different runners.  The canonical solution is to have each job that
-# needs a local Db2 instance spin one up itself, but coordinate execution order
-# via `needs:` so they do not consume runner quota simultaneously when that
-# matters.  The `db2-ready` job below acts as an explicit sequencing gate: it
-# validates that the Docker image can be pulled and logs a readiness marker
-# before any Db2-dependent job begins.  Each downstream job then re-uses the
-# exact same setup steps (identical YAML anchors are expanded by the GHA
-# engine), keeping every job fully self-contained and independently re-runnable.
+# Each Db2-dependent job boots its own container directly via .github/actions/setup-db2,
+# referencing the image from the workflow-level DB2_IMAGE env var.  Jobs are fully
+# self-contained and independently re-runnable.  (CIW-2: db2-ready gate removed —
+# it warms nothing on GitHub-hosted runners, which assign a fresh VM per job.)
 #
 # To run benchmarks: Repository → Actions → "Benchmarks (unified)" → Run workflow
 # ==============================================================================
@@ -100,6 +95,9 @@ concurrency:
   group: benchmarks-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  DB2_IMAGE: icr.io/db2_community/db2:12.1.5.0
+
 # ==============================================================================
 # JOBS
 # ==============================================================================
@@ -107,40 +105,8 @@ concurrency:
 jobs:
 
   # ============================================================================
-  # JOB 0: db2-ready  (DB2 infrastructure sequencing gate)
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Pulls the Db2 community image and confirms it is accessible so that all
-  # downstream jobs can trust the image cache is warm on the runner pool.
-  # This job does NOT start a long-lived container; it merely acts as a
-  # dependency node so that codspeed (which needs no Db2) can run in parallel
-  # with the image-pull gate rather than blocking on it.
-  # ============================================================================
-  db2-ready:
-    name: "Db2 image pre-pull & sequencing gate"
-    if: |
-      inputs.suite == 'all' ||
-      inputs.suite == 'tier1-benchmark' ||
-      inputs.suite == 'tier2-nightly' ||
-      inputs.suite == 'tier3-scale' ||
-      inputs.suite == 'locust-isolation' ||
-      inputs.suite == 'locust-scale'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    outputs:
-      db2_image: "icr.io/db2_community/db2:12.1.5.0"
-
-    steps:
-      - name: Pull Db2 community image
-        run: |
-          docker pull icr.io/db2_community/db2:12.1.5.0
-          echo "db2_image_ready=true"
-
-  # ============================================================================
   # JOB 1: codspeed
   # Origin: benchmark-pr.yml → "Tier 0 — CodSpeed micro-benchmark smoke test"
-  # Runs in parallel with db2-ready (no Db2 dependency).
   # ============================================================================
   codspeed:
     name: "Tier 0 — CodSpeed micro-benchmark smoke test"
@@ -166,12 +132,10 @@ jobs:
   # ============================================================================
   # JOB 2: benchmark
   # Origin: benchmarks.yml (prior) → "Benchmark suite (Db2 LUW + pytest-benchmark)"
-  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   benchmark:
     name: "Benchmark suite (Db2 LUW + pytest-benchmark)"
     if: inputs.suite == 'all' || inputs.suite == 'tier1-benchmark'
-    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -199,7 +163,7 @@ jobs:
         uses: ./.github/actions/setup-db2
         id: db2-setup
         with:
-          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
+          db2-image: ${{ env.DB2_IMAGE }}
 
       - name: Create benchmark output directory
         run: mkdir -p "$BENCH_OUT"
@@ -209,7 +173,6 @@ jobs:
           pytest benchmarks/ -m benchmark_micro \
             --no-cov \
             --benchmark-json="${BENCH_OUT}/output_tier0.json" \
-            --benchmark-histogram="${BENCH_OUT}/histogram" \
             -v
 
       - name: Run Tier-1 benchmark suite (benchmark_pr — requires Db2)
@@ -217,7 +180,6 @@ jobs:
           pytest benchmarks/ -m benchmark_pr \
             --no-cov \
             --benchmark-json="${BENCH_OUT}/output_tier1.json" \
-            --benchmark-histogram="${BENCH_OUT}/histogram" \
             -v
 
       - name: Run Tier-2 quality suite (benchmark_nightly — EPIC-16, workflow_dispatch only)
@@ -310,12 +272,10 @@ jobs:
   # ============================================================================
   # JOB 3: locust-isolation
   # Origin: benchmarks.yml (prior) → "Locust isolation gate (BM-12 + BM-13)"
-  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   locust-isolation:
     name: "Locust isolation gate (BM-12 + BM-13)"
     if: inputs.suite == 'all' || inputs.suite == 'locust-isolation'
-    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -336,15 +296,15 @@ jobs:
       - name: Setup Python and dependencies
         uses: ./.github/actions/setup-bench-python
         with:
-          cache-key-suffix: locust
-          extras: benchmark,langchain,openai-agents,mcp
+          cache-key-suffix: locust-load
+          extras: benchmark-load
 
       - name: Setup Db2 container
         uses: ./.github/actions/setup-db2
         id: db2-setup
         with:
           compose-suffix: "-locust"
-          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
+          db2-image: ${{ env.DB2_IMAGE }}
 
       - name: Create Locust output directory
         run: mkdir -p "$LOCUST_OUT"
@@ -403,12 +363,10 @@ jobs:
   # ============================================================================
   # JOB 4: locust-scale
   # Origin: benchmarks.yml (prior) → "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
-  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   locust-scale:
     name: "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
     if: inputs.suite == 'all' || inputs.suite == 'locust-scale'
-    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -429,15 +387,15 @@ jobs:
       - name: Setup Python and dependencies
         uses: ./.github/actions/setup-bench-python
         with:
-          cache-key-suffix: locust
-          extras: benchmark,langchain,openai-agents,mcp
+          cache-key-suffix: locust-load
+          extras: benchmark-load
 
       - name: Setup Db2 container
         uses: ./.github/actions/setup-db2
         id: db2-setup
         with:
           compose-suffix: "-scale"
-          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
+          db2-image: ${{ env.DB2_IMAGE }}
 
       - name: Create Locust output directory
         run: mkdir -p "$LOCUST_OUT"
@@ -567,12 +525,10 @@ jobs:
   # ============================================================================
   # JOB 5: benchmark-nightly
   # Origin: benchmark-nightly.yml → "Nightly benchmark suite — Tier 2 (BM-21)"
-  # Waits for db2-ready before starting its own Db2 container.
   # ============================================================================
   benchmark-nightly:
     name: "Nightly benchmark suite — Tier 2 (BM-21)"
     if: inputs.suite == 'all' || inputs.suite == 'tier2-nightly'
-    needs: [db2-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -603,7 +559,7 @@ jobs:
         id: db2-setup
         with:
           compose-suffix: "-nightly"
-          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
+          db2-image: ${{ env.DB2_IMAGE }}
 
       - name: Create benchmark output directory
         run: mkdir -p "$BENCH_OUT"
@@ -818,8 +774,7 @@ jobs:
   # ============================================================================
   # JOB 6: benchmark-scale
   # Origin: benchmark-scale.yml → "Tier 3 weekly scale benchmark"
-  # Needs db2-ready — spins up the same containerized Db2 used by all other
-  # Db2-dependent jobs via .github/actions/setup-db2.
+  # Spins up containerized Db2 via .github/actions/setup-db2.
   #
   # CIB-3 spike notes (2026-08-07):
   #   - 500k rows × typical record size (id + text + VECTOR(768) + metadata)
@@ -836,7 +791,6 @@ jobs:
   benchmark-scale:
     name: "Tier 3 weekly scale benchmark (containerized Db2)"
     if: inputs.suite == 'all' || inputs.suite == 'tier3-scale'
-    needs: [db2-ready]
     runs-on: ubuntu-latest
     # CIB-7 timeout note: was 180 min (padded for the old live-Db2 connectivity
     # variability).  With containerized Db2 (CIB-3), the setup overhead is the
@@ -872,7 +826,7 @@ jobs:
         id: db2-setup
         with:
           compose-suffix: "-bench-scale"
-          db2-image: ${{ needs.db2-ready.outputs.db2_image }}
+          db2-image: ${{ env.DB2_IMAGE }}
 
       - name: Seed 500k corpus (tenant prefix ${{ env.BENCH_TENANT_PREFIX }})
         if: ${{ inputs.dry_run != true }}
@@ -1012,8 +966,8 @@ jobs:
       - name: Setup Python and dependencies
         uses: ./.github/actions/setup-bench-python
         with:
-          cache-key-suffix: consolidated
-          extras: benchmark
+          cache-key-suffix: consolidated-core
+          extras: benchmark-core
           install-quiet: "true"
 
       # Download every benchmark artifact into separate sub-directories so their

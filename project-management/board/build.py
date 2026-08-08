@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -55,11 +56,33 @@ def natural_sort_key(story_id: str) -> tuple[str, int, str]:
     return (prefix, int(number), suffix)
 
 
+def _git_tracked_files(directory: Path) -> set[Path]:
+    """Return the set of paths under *directory* that git currently tracks.
+
+    Untracked and ignored files are excluded so that a developer's
+    work-in-progress JSON files on disk don't sneak into BOARD.html and
+    cause CI's --check to fail (CI only has the committed files).
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files", str(directory)],
+            cwd=directory,
+            text=True,
+        )
+        return {directory / Path(p).name for p in out.splitlines() if p}
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Not inside a git repo (e.g. a bare export) — fall back to all files.
+        return set(directory.glob("*.json"))
+
+
 def _load_json_files(directory: Path) -> list[dict[str, Any]]:
+    tracked = _git_tracked_files(directory)
     items = []
     for path in sorted(directory.glob("*.json")):
         if path.name.startswith("_"):
             continue  # e.g. _NEXT_ID.json — not a data record
+        if path not in tracked:
+            continue  # untracked/WIP file — exclude from build
         try:
             obj = json.loads(path.read_text())
         except json.JSONDecodeError as e:

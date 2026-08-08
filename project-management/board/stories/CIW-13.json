@@ -1,0 +1,20 @@
+{
+  "id": "CIW-13",
+  "epic_id": "EPIC-26",
+  "title": "Matrix the Locust scenarios that CIW-12 clears as safe to split",
+  "summary": "Convert `locust-scale`'s independent scenarios to a `strategy: matrix` so they run concurrently. Scope is whatever CIW-12's variance data clears — likely BM-14a/b/c, likely not BM-15's pool sweeps.",
+  "status": "To Do",
+  "description": "**Do not start until CIW-12 reports.** The default expectation from the research note is: split BM-14a/b/c into a matrix, keep BM-15's four pool sweeps co-located on one runner for comparability. CIW-12's data may change that in either direction.\n\nWork:\n\n- Convert the cleared steps to a `strategy: matrix` with `fail-fast: false` — one scenario failing should not cancel the others, since each produces an independent artifact.\n- Give each leg a distinct `compose-suffix` for `setup-db2` and a distinct `LOCUST_OUT` and artifact name, so the parallel legs don't collide on the compose file path or on artifact upload.\n- Update `consolidated-report`'s `needs:` and its artifact-download steps to handle N artifacts from a matrix rather than one from a single job. This is the part most likely to break quietly — verify the consolidated report actually contains every leg's results, not just the last one downloaded.\n- Update `scripts/locust_csv_to_jsonl.py` invocations if the output layout changes.\n- Keep the `suite:` selector working — a matrix leg still needs to respect `inputs.suite`.\n\nRunner cost: each leg pays its own Db2 boot. Public repositories get unmetered standard GitHub-hosted runners, so this is free in billing terms, but it does consume concurrency slots — check the org's concurrent-job limit before fanning out wide, since queueing behind your own matrix would defeat the purpose.\n\nDone when: `suite: locust-scale` wall clock is measurably shorter, every scenario's results appear in the consolidated report, and results are consistent with pre-matrix runs.",
+  "comments": [
+    {
+      "author": "CIW-1",
+      "date": "2026-08-08",
+      "text": "Pre-measurement note: CIW-3 has landed (healthcheck 5s interval, DDL backoff). The break-even analysis in CIW-12 should use the post-CIW-3 Db2 boot time as the baseline (not the original 12-min estimate). Once CIW-9 lands (if CIW-8 is a go), boot time could drop further. Run CIW-12 measurement after CIW-3 and CIW-9 have had a chance to settle."
+    },
+    {
+      "author": "implementation",
+      "date": "2026-08-08",
+      "text": "Gated on CIW-12. Do not implement until CIW-12's variance measurement workflow (.github/workflows/runner-variance-check.yml) has run and the p50/p95 spread vs effect size comparison is documented in CIW-12's comments. Default expectation: BM-14a/b/c split into matrix (3 parallel legs × ~5 min each = ~5 min wall clock vs current 13 min serial), BM-15 pool sweeps kept co-located on one runner. If CIW-3 and CIW-9 land before this: re-measure the break-even since boot time will have dropped significantly. Public repos get unmetered runners so billing is not a concern — only queue depth and org concurrency slot limits matter."
+    }
+  ]
+}
