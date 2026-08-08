@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/ci.yml/badge.svg)](https://github.com/priyanshu-krishnan1/yaadien/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/priyanshu-krishnan1/yaadien/graph/badge.svg)](https://codecov.io/gh/priyanshu-krishnan1/yaadien)
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/priyanshu-krishnan1/yaadien?utm_source=badge)
 [![Project Dashboard](https://img.shields.io/badge/dashboard-GitHub%20Pages-0f62fe)](https://priyanshu-krishnan1.github.io/yaadien/)
 
 Governed multi-type memory system for AI agents, backed by **IBM Db2 LUW**

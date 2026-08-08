@@ -1,0 +1,66 @@
+# ==============================================================================
+# CODSPEED — CONTINUOUS PERFORMANCE MEASUREMENT
+# ==============================================================================
+#
+# Runs the Tier 0 micro-benchmark suite (benchmarks/micro, marker
+# `benchmark_micro`) under CodSpeed's CPU-simulation instrument and uploads the
+# results to https://app.codspeed.io/priyanshu-krishnan1/yaadien.
+#
+# Why a separate file instead of a job inside benchmark-suite.yml:
+#
+#   1. benchmark-suite.yml is `workflow_dispatch`-only by design and is
+#      explicitly excluded from PR checks. CodSpeed needs to run on every push
+#      to main (to build the baseline) and on every pull_request (to diff
+#      against that baseline), so it cannot live there.
+#   2. Tier 0 needs no Db2 container and only the `benchmark-core` extra, so
+#      this workflow stays fast and independent of the heavy suite.
+#
+# This workflow is informational: CodSpeed reports performance changes as a PR
+# comment / check and is not intended as a blocking required status check.
+# ==============================================================================
+
+name: CodSpeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # `workflow_dispatch` also allows CodSpeed to trigger backtest performance
+  # analysis in order to generate initial baseline data.
+  workflow_dispatch:
+
+# id-token: write is required for OpenID Connect authentication with CodSpeed
+# (no CODSPEED_TOKEN secret needed).
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmarks:
+    name: "Tier 0 — CodSpeed micro-benchmarks"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python and benchmark dependencies
+        uses: ./.github/actions/setup-bench-python
+        with:
+          cache-key-suffix: codspeed
+          # benchmark-core pulls pytest-benchmark + pytest-codspeed only —
+          # Tier 0 needs neither Locust nor the sentence-transformers stack.
+          extras: benchmark-core
+
+      - name: Run micro-benchmarks with CodSpeed
+        uses: CodSpeedHQ/action@4296e51e7041e24dadb86d1d6e8b9320d223dbe8 # v5.0.3
+        with:
+          mode: simulation
+          # --no-cov: coverage instrumentation is enabled by default via the
+          # pyproject.toml addopts and would pollute the measurements.
+          run: pytest benchmarks/micro/ -m benchmark_micro --codspeed --no-cov
