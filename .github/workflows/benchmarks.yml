@@ -1,5 +1,5 @@
 # ==============================================================================
-# CONSOLIDATED BENCHMARK WORKFLOW
+# CONSOLIDATED BENCHMARK WORKFLOW  (name: "Benchmarks (unified)")
 # ==============================================================================
 #
 # This file merges all benchmark-related GitHub Actions workflows into a single
