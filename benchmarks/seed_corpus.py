@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -94,6 +95,10 @@ _DEFAULT_N_TENANTS = 5
 _DEFAULT_AGENTS_PER_TENANT = 4
 _DEFAULT_USERS_PER_TENANT = 10
 _DEFAULT_THREADS_PER_AGENT = 8
+
+# CIW-10: opt-in per-phase timing. Set CIW10_PROFILE=1 in the environment to
+# enable; defaults to False so normal runs pay zero overhead.
+_CIW10_PROFILE: bool = os.environ.get("CIW10_PROFILE", "0") not in ("0", "", "false", "False")
 
 
 # ---------------------------------------------------------------------------
