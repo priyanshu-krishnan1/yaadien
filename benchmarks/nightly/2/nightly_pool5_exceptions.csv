@@ -1,0 +1,21 @@
+Count,Message,Traceback,Nodes
+104017,,"  File ""/home/runner/work/yaadien/yaadien/.venv/lib/python3.11/site-packages/locust/user/task.py"", line 363, in run
+    self.execute_next_task()
+  File ""/home/runner/work/yaadien/yaadien/.venv/lib/python3.11/site-packages/locust/user/task.py"", line 396, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+  File ""/home/runner/work/yaadien/yaadien/.venv/lib/python3.11/site-packages/locust/user/task.py"", line 513, in execute_task
+    task(self.user)
+  File ""/home/runner/work/yaadien/yaadien/benchmarks/load/pool_saturation_user.py"", line 112, in task_search
+    assert _STORE is not None and _EMBED is not None
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+",local
+104188,,"  File ""/home/runner/work/yaadien/yaadien/.venv/lib/python3.11/site-packages/locust/user/task.py"", line 363, in run
+    self.execute_next_task()
+  File ""/home/runner/work/yaadien/yaadien/.venv/lib/python3.11/site-packages/locust/user/task.py"", line 396, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+  File ""/home/runner/work/yaadien/yaadien/.venv/lib/python3.11/site-packages/locust/user/task.py"", line 513, in execute_task
+    task(self.user)
+  File ""/home/runner/work/yaadien/yaadien/benchmarks/load/pool_saturation_user.py"", line 154, in task_remember
+    assert _STORE is not None
+           ^^^^^^^^^^^^^^^^^^
+",local
