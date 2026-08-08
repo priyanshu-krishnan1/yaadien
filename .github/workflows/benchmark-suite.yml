@@ -107,6 +107,12 @@ jobs:
   # ============================================================================
   # JOB 1: codspeed
   # Origin: benchmark-pr.yml → "Tier 0 — CodSpeed micro-benchmark smoke test"
+  #
+  # NOTE: this job is a local smoke test only — it verifies that the Tier 0
+  # suite still collects and runs under pytest-codspeed, but it does not upload
+  # anything. The instrumented, uploading run lives in
+  # .github/workflows/codspeed.yml, which runs on push to main and on every PR
+  # and reports to https://app.codspeed.io/priyanshu-krishnan1/yaadien.
   # ============================================================================
   codspeed:
     name: "Tier 0 — CodSpeed micro-benchmark smoke test"

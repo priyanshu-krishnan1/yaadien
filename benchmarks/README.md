@@ -41,7 +41,8 @@ this Apache-2.0 repository.
 
 | Workflow file | Trigger | Tier | Blocking? | What it gates | gh-pages output |
 |:---|:---|:---|:---|:---|:---|
-| `benchmarks.yml` (`codspeed` job) | `workflow_dispatch` (`suite: tier0-codspeed` or `all`) | 0 | Informational | CodSpeed instruction-count smoke test | — |
+| `codspeed.yml` (`benchmarks` job) | `push` to `main`, `pull_request`, `workflow_dispatch` | 0 | Informational | CodSpeed CPU-simulation run, uploaded to app.codspeed.io | — |
+| `benchmarks.yml` (`codspeed` job) | `workflow_dispatch` (`suite: tier0-codspeed` or `all`) | 0 | Informational | CodSpeed instruction-count smoke test (no upload) | — |
 | `benchmarks.yml` (`benchmark` job) | `workflow_dispatch` (`suite: tier1-benchmark` or `all`) | 0/1 | Informational | pytest-benchmark Tier 0/1 suite, Db2 container | `benchmarks/<run_number>/` |
 | `benchmarks.yml` (`locust-isolation` job) | `workflow_dispatch` (`suite: locust-isolation` or `all`) | 1 | Informational | BM-12/13 isolation gate | — |
 | `benchmarks.yml` (`locust-scale` job) | `workflow_dispatch` (`suite: locust-scale` or `all`) | 1 | Informational | BM-14/15 scalability sweeps | — |
