@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-3",
+  "epic_id": "EPIC-29",
+  "title": "[Spike] Where does BM25 live — Db2 text search, a term-frequency side table, or in-process",
+  "summary": "Three implementations with very different operational costs; the docs do not settle which is available on the Db2 builds we support.",
+  "status": "To Do",
+  "description": "Options and their real costs: (1) **Db2 Text Search** — native, but availability varies by edition and it is a separately-installed component, which collides with the container-only Db2 setup EPIC-24 standardised on; (2) **term-frequency side table** — pure SQL, works on any Db2, but we own tokenisation, stemming, stopwords, and the IDF maintenance job, and the write amplification is real; (3) **in-process index** (e.g. `rank_bm25`) — trivial to implement, but memory-resident and per-process, which breaks multi-replica deployments in the same way FLEX-3 already identified for the consolidation counter.\n\nEvaluate each against: availability on `icr.io/db2_community/db2:12.1.5.0` (the image CI and the quickstart both use); whether it survives multiple app replicas; write amplification; whether it respects `_scope_predicates()` without a bolted-on filter; and compatibility with the EPIC-25 dialect seam.\n\nTimebox: one working session, ending in a DECISIONS.md entry. Blocks RTRV-2.",
+  "comments": []
+}

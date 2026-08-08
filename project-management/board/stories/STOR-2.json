@@ -1,0 +1,9 @@
+{
+  "id": "STOR-2",
+  "epic_id": "EPIC-27",
+  "title": "Write edges from the four existing derived-record paths",
+  "summary": "Every path that already sets a non-DIRECT_WRITE MemoryOrigin gains a DERIVED_FROM or SUPERSEDES edge, so provenance becomes traversable instead of merely labelled.",
+  "status": "To Do",
+  "description": "`MemoryOrigin` records *how* a row was produced; this story records *from what*. Wire edge writes into the four paths that already set a non-default origin: `_run_consolidator()` (CONSOLIDATION -> `DERIVED_FROM` edges to every source turn it consumed), `reconcile()` (RECONCILIATION -> `SUPERSEDES` from winner to loser), the `IngestResolver` UPDATE action (INGEST_RESOLVER -> `ELABORATES` from the merged row to whatever it absorbed), and `MemoryExtractor` via `add_messages(extract_memories=True)` (EXTRACTION -> `DERIVED_FROM` to the source message).\n\nEdge writes join the same transaction as the record write. A partially-written provenance graph is worse than none, because GOV-6's cascading erasure will trust it.\n\nAcceptance: each of the four paths is covered by a live-Db2 test asserting both the record and its edges; an induced failure mid-consolidation leaves neither the derived record nor its edges (transaction rollback verified, not assumed); chunk parent/child relationships are explicitly decided in or out of the edge table with the reasoning recorded in DECISIONS.md — they are already modelled by `chunks.source_id`, and duplicating that relationship into `memory_edges` may be redundant rather than useful. Depends on STOR-1.",
+  "comments": []
+}

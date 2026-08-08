@@ -1,0 +1,9 @@
+{
+  "id": "GOV-6",
+  "epic_id": "EPIC-32",
+  "title": "ErasureCertificate covering derived records, indexes, summaries, and the write-path deny-list",
+  "summary": "Rows are the easy part; four other leaks survive erase_all() today.",
+  "status": "To Do",
+  "description": "Extend `ErasureReport` into an `ErasureCertificate` accounting for: rows deleted per table; edges cascaded per type (STOR-8); vector indexes rebuilt, with timestamps — tombstoned nodes leave traversable structure and neighbourhood geometry, and GDPR Art. 17 has a deadline, so the rebuild SLA must be documented and met rather than best-effort; summaries and community reports regenerated (GRPH-5) rather than patched; and deny-list entries created.\n\nThe deny-list addresses *information backflow*: content removed from memory can be regenerated from the model's parametric residue and written back, silently reversing the deletion. Mitigation is a check at the *write* path, not only at the read path — otherwise the agent re-learns and re-stores what was erased, and the certificate becomes a lie on the next turn.\n\nAcceptance: a certificate is produced for every erasure operation and is serialisable for compliance records; index rebuild is triggered and its completion recorded; a write matching a deny-list entry is rejected and logged; the certificate distinguishes what was erased from what was over-erased per STOR-8's documented policy. Depends on STOR-8 and GOV-5.",
+  "comments": []
+}

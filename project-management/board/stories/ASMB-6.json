@@ -1,0 +1,9 @@
+{
+  "id": "ASMB-6",
+  "epic_id": "EPIC-33",
+  "title": "Accuracy per 1K assembled tokens — the metric that judges all seven epics",
+  "summary": "The ratio this entire arc claims to optimise is not currently computed anywhere. Land it early despite its position in the list.",
+  "status": "To Do",
+  "description": "Add accuracy-per-1K-assembled-tokens to the benchmark harness and to the EPIC-20 composite scoring model (UNI-3): task accuracy divided by assembled token count, per LongMemEval and LoCoMo slice, reported alongside raw accuracy so a change that buys accuracy with tokens is visibly distinguished from one that buys it with better retrieval.\n\nThis is the measuring instrument for EPIC-27 through EPIC-33. Until it exists, no story in the arc can honestly claim to have improved the thing the research says we are improving — which is why, despite being listed last, it should be scheduled in the first wave alongside VIDX-3. The two are the arc's entire evidence base.\n\nAcceptance: the metric is computed for every quality benchmark run; it appears in `project-management/BENCHMARKS.md` and in the UNI-3 composite; historical runs are annotated as not-comparable rather than backfilled with estimates, per this repo's existing discipline of never silently replacing a recorded run; the metric's own sensitivity to judge variance is characterised, since a noisy numerator over a precise denominator is still noisy. Depends on ASMB-1.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "FLEX-5",
+  "epic_id": "EPIC-25",
+  "title": "Document/harden ibm_db clidriver install path for air-gapped, Windows, and macOS ARM64 (RISK-6)",
+  "summary": "Close the adoption-friction gaps in the auto-downloaded Db2 CLI driver: silent failure on air-gapped networks, manual DLL setup on Windows, pinned clidriver version needs on macOS ARM64.",
+  "status": "To Do",
+  "description": "RISK-6 (design/11-risk-register.md): `ibm_db`'s bundled clidriver auto-download happens at install time; it fails silently rather than loudly on restricted/air-gapped networks, needs manual `IBM_DB_WIN_DLL_DIR` setup on Windows (already referenced in `db/connection.py`, confirmed by VER-1's own verification comment), and macOS ARM64 needs a pinned clidriver version. Lower priority than FLEX-1..3 — this is an enterprise-adoption smoothness issue, not a correctness or scaling risk.\n\nScope:\n(a) an install-time or first-connection check that fails loudly with a clear remediation message instead of silently, in each of the 3 scenarios;\n(b) a dedicated \"Installation troubleshooting\" section in README.md covering air-gapped, Windows, and ARM64 explicitly;\n(c) evaluate whether a pre-flight doctor-style command (in the spirit of `scripts/check_connection.py`) could catch driver issues before a user hits a cryptic runtime error, and implement it if the evaluation supports it.\n\nAcceptance: each of the 3 failure scenarios produces an actionable error message, not a silent failure or generic traceback; README has the new troubleshooting section; default happy-path install behavior is unchanged.",
+  "comments": []
+}

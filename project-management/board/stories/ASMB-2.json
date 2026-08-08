@@ -1,0 +1,9 @@
+{
+  "id": "ASMB-2",
+  "epic_id": "EPIC-33",
+  "title": "Greedy score-density packing under a token budget, with per-type floors",
+  "summary": "(1 − 1/e)-optimal for the submodular objective MMR induces, which is good enough that exact knapsack is not worth its complexity.",
+  "status": "To Do",
+  "description": "Replace count-based selection with budget-constrained packing: greedily select by `score / tokens` under a caller-supplied `max_tokens`, subject to the existing `min_results_by_type` floors as hard constraints. Exact 0/1 knapsack is O(n·B) and affordable at our scale, but the greedy bound (Nemhauser, Wolsey & Fisher 1978) is strong enough that the exact solver would be complexity without benefit — record that reasoning in the docstring so it is not relitigated.\n\nPreserve `_relevant_with_backfill()` semantics: floors are satisfied first, then the remaining budget is packed by density.\n\nAcceptance: cards respect `max_tokens` and never exceed it; per-type floors are honoured even under tight budgets, or the call fails loudly rather than silently dropping a floor; measured against the existing suite reporting both quality and token count; `max_tokens=None` reproduces current behaviour exactly. Depends on ASMB-1 and RTRV-5.",
+  "comments": []
+}

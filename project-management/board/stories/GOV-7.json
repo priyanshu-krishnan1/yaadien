@@ -1,0 +1,9 @@
+{
+  "id": "GOV-7",
+  "epic_id": "EPIC-32",
+  "title": "AgentPoison-style attack-success-rate regression test in CI",
+  "summary": "Security becomes a number in the benchmark report next to recall and latency, not a claim in a README.",
+  "status": "To Do",
+  "description": "Build a poisoning harness in `benchmarks/`: inject optimised trigger content at a controlled poison rate (target <0.1%, matching the published threat model), issue trigger-bearing queries, and measure attack success rate — how often poisoned content reaches the assembled context card — alongside benign performance degradation on the clean corpus.\n\nRun it at the appropriate EPIC-17 tier and gate on regression: if a retrieval change raises ASR, that is a failure regardless of what it did to nDCG. Report ASR with and without the trust-tier defences so the governance plane's value is a measured delta rather than an argument.\n\nAcceptance: ASR measured with GOV-1/GOV-2/GOV-4 on and off; benign degradation on the clean corpus reported alongside (an ASR of zero achieved by breaking retrieval is not a win); the harness runs in CI within the tier's time budget; results carry EPIC-19-standard provenance; the number appears in `project-management/BENCHMARKS.md`. Depends on GOV-1; informs GOV-4.",
+  "comments": []
+}

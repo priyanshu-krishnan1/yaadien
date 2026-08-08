@@ -1,0 +1,9 @@
+{
+  "id": "VIDX-6",
+  "epic_id": "EPIC-28",
+  "title": "Inflate the candidate pool for filtered searches, not just hybrid ones",
+  "summary": "fetch_k is only over-fetched when hybrid=True, so a selective metadata or confidence filter silently returns fewer than top_k results.",
+  "status": "To Do",
+  "description": "`fetch_k = min(top_k * 4, 800)` applies only in the hybrid path. Every other filtered search asks Db2 for exactly `top_k` candidates with the predicates applied, which is the classic post-filter under-fetch: a selective predicate removes candidates that were already counted against the limit, and the caller gets a short list with no indication anything was lost. Scope columns are extremely high-selectivity by construction, so this is the common case rather than an edge case.\n\nImplement selectivity-aware inflation: estimate pass rate from the predicate set (a rolling per-scope estimate is fine; exactness is not required), inflate `fetch_k` accordingly, cap it, and iterate with a larger `fetch_k` if the first pass returns short. Record the inflation factor used in result metadata so the benchmark can see when a query needed three attempts.\n\nAcceptance: a search with a filter passing ~1% of rows returns `top_k` results where it previously returned fewer, with a live-Db2 test; latency impact measured at 500k rows and reported; the inflation cap is configurable and its default justified in the docstring; VIDX-3 recall is measured with filters applied, not only without. Depends on VIDX-1 and VIDX-3.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "VIDX-2",
+  "epic_id": "EPIC-28",
+  "title": "[Spike] Enumerate what CREATE VECTOR INDEX actually exposes, and write down what we cannot control",
+  "summary": "Establish the real tuning surface of Db2's DiskANN index so no downstream story is planned around a knob that does not exist.",
+  "status": "To Do",
+  "description": "Db2's vector index is DiskANN (`INDEXTYPE = 'VANN'`, shown as `VECIDX` in EXPLAIN). We consume it; we cannot modify or contribute to its internals. Public material mentions `CREATE VECTOR INDEX name ON table(column) WITH DISTANCE distance_type` plus unspecified 'clauses to place index data into dedicated tablespaces, determine physical properties, and the way the index is built' — which is too vague to plan against.\n\nEnumerate against the real product (12.1.5 GA, 25 June 2026) and the official SQL reference: every clause `CREATE VECTOR INDEX` accepts; which distance metrics are supported and whether the index is metric-specific (`base.py` already assumes it is — confirm); build-time parameters and their defaults; whether anything analogous to `efSearch`, `M`, or beam width is exposed at query time; rebuild and reorg semantics under heavy delete churn; `RUNSTATS` interaction; behaviour when the column dimension changes; and what `SYSCAT` exposes for monitoring index health.\n\nTimebox: one working session, no code. Output: a reference section in `project-management/design/02-data-architecture.md` under a clear 'what we cannot control' heading, and a comment here listing every tunable found. This is the story that stops a future epic proposing an ANN parameter sweep that Db2 has no way to accept.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-7",
+  "epic_id": "EPIC-31",
+  "title": "A-MEM-style evolution: let a new memory update its neighbours",
+  "summary": "New writes refine the tags, context, and links of related existing memories, so the network improves instead of only accreting.",
+  "status": "To Do",
+  "description": "On write, retrieve the k nearest existing memories and let an injected `MemoryEvolver` propose updates to their tags, contextual descriptions, and `ELABORATES` / `CO_OCCURS` edges. Runs as a background job, never on the write path. Every update goes through the existing `version` / `StaleWriteError` optimistic concurrency so concurrent evolution cannot silently clobber, and every update is auditable as an AI-initiated change distinct from user edits.\n\nThe failure mode to guard against explicitly is drift: repeated evolution passes gradually rewriting a memory away from what was actually said. Bound how many times a record can be evolved, and keep the original content immutable with evolution confined to derived fields (tags, context, links) rather than to `content` itself.\n\nAcceptance: evolution never modifies `content`; per-record evolution count is bounded and enforced; measured on the retrieval-quality suite with evolution on and off; concurrent evolution of the same record is safe under a live-Db2 concurrency test; the null evolver is the default. Depends on STOR-1, EVOL-1, and EVOL-6 not having ruled it out.",
+  "comments": []
+}

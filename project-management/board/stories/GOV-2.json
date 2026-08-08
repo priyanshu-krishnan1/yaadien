@@ -1,0 +1,9 @@
+{
+  "id": "GOV-2",
+  "epic_id": "EPIC-32",
+  "title": "Promotion gates between trust tiers",
+  "summary": "0→1 needs a policy check, 1→2 needs corroboration, 2→3 is human-only — and every transition is audited.",
+  "status": "To Do",
+  "description": "Implement `promote(record_id, target_tier, evidence)` with per-transition rules: 0 -> 1 requires an injected policy check (content scan, source allowlist, or caller callback); 1 -> 2 requires corroboration per GOV-3's definition or explicit user confirmation; 2 -> 3 is operator-only and never automatic. Demotion is always allowed and always audited — a record can fall back to quarantine when new evidence arrives, and that path must not require the same ceremony as promotion.\n\nEvery transition writes an audit entry with actor, evidence, and timestamp. This is the plane's whole value proposition: promotion is the mediated boundary between untrusted candidate memory and trusted typed memory, and an unaudited promotion is indistinguishable from a successful attack.\n\nAcceptance: each transition enforces its rule and refuses when unmet; 2 -> 3 cannot be reached by any code path without an operator credential, proven by an attempted-escalation test; demotion works and is audited; the policy check is injectable with a conservative default (deny). Depends on STOR-5 and GOV-3.",
+  "comments": []
+}

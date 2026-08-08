@@ -1,0 +1,9 @@
+{
+  "id": "GOV-1",
+  "epic_id": "EPIC-32",
+  "title": "min_trust read filter across every retrieval entry point",
+  "summary": "Quarantined memories stay out of results unless a caller explicitly opts in.",
+  "status": "To Do",
+  "description": "Add `min_trust` to `search()`, `list_all()`, `get_context_card()`, and the adapter surfaces, defaulting to 1 (OBSERVED) so tier-0 quarantined content is excluded unless explicitly requested. Apply it as a SQL predicate alongside the existing scope, supersession, expiry, and confidence predicates — and confirm via EXPLAIN that adding it does not change the access plan, since a `SMALLINT` comparison should be sargable but VIDX-1 exists precisely because 'should be' is not evidence.\n\nInteraction with VIDX-6 matters: `min_trust` is another selective predicate, so it must participate in candidate inflation or it reintroduces the short-result-set problem.\n\nAcceptance: default excludes tier 0 across every entry point, with a test per entry point rather than one test and an assumption; explicit opt-in returns quarantined records and flags them in result metadata; EXPLAIN shows no plan regression; the parameter is threaded through the LangChain, OpenAI Agents, and MCP adapters. Depends on STOR-5.",
+  "comments": []
+}

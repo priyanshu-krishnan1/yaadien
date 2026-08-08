@@ -1,0 +1,9 @@
+{
+  "id": "VIDX-7",
+  "epic_id": "EPIC-28",
+  "title": "[Spike] Per-scope index partitioning — is it even available on Db2, and does it pay",
+  "summary": "Partitioning by scope prefix would turn the hardest filtered-ANN case into the easy unfiltered case and close the shared-index isolation gap — if Db2 supports it and the long tail does not bite.",
+  "status": "To Do",
+  "description": "The theoretical argument is strong: scope predicates are extremely high-selectivity, which is the worst regime for filtered ANN over a shared index; an index per `(tenant_id, agent_id)` makes every search an unfiltered search over a small index. It also closes a real security gap, since a shared ANN index is a shared traversal structure regardless of what the SQL predicates say. Rare alignment of performance and isolation — which is exactly why it deserves scepticism rather than enthusiasm.\n\nThree things to establish: (1) whether Db2 supports partitioned or per-partition `VANN` indexes at all, or whether this means physically separate tables per tenant with everything that implies for the existing schema; (2) the long-tail cost — thousands of tiny indexes have their own pathologies (catalog bloat, RUNSTATS cost, memory per index, build time on tenant creation); (3) whether a cardinality threshold works, partitioning only above a floor and sharing below it.\n\nTimebox: one working session. Explicitly acceptable outcome: 'Db2 does not support this and the table-per-tenant alternative is not worth the schema churn' — record it in DECISIONS.md and close, so the idea does not get re-proposed every six months. Depends on VIDX-2.",
+  "comments": []
+}

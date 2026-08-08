@@ -1,0 +1,9 @@
+{
+  "id": "GRPH-3",
+  "epic_id": "EPIC-30",
+  "title": "Personalized PageRank as an additional RRF arm",
+  "summary": "Seed with query-matched entities, propagate, rank memories by accumulated node mass — multi-hop retrieval at roughly 20 sparse iterations.",
+  "status": "To Do",
+  "description": "Implement `π = α·s + (1−α)·Pᵀπ` with α ≈ 0.15 and ~20 power iterations, where `s` is the restart distribution seeded by entities matched from the query. Rank memories by accumulated mass and feed the ranking into `_rrf_fuse` as one more arm alongside dense and lexical — not as a separate query mode, so it composes with existing weighting and needs no new caller API.\n\nReported comparators: up to 20% improvement on multi-hop QA over strong RAG baselines, at 10-30x lower cost and 6-13x lower latency than iterative retrieval. The graph is per-scope and therefore small, which is what makes inline execution plausible.\n\nAcceptance: measured on the multi-hop slice of the retrieval-quality suite with the PPR arm on and off; p95 latency impact reported at the edge counts STOR-6 measured; α and iteration count configurable and swept in the ablation grid; scope isolation holds on traversal, proven by a test that plants a cross-scope edge and asserts mass does not cross. Depends on GRPH-1 and GRPH-2.",
+  "comments": []
+}

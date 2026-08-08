@@ -1,0 +1,9 @@
+{
+  "id": "GRPH-2",
+  "epic_id": "EPIC-30",
+  "title": "Entity extraction and a cost-controlled resolution cascade",
+  "summary": "Blocking, then similarity scoring, then LLM adjudication only on the ambiguous band — so cost scales with the band, not with N.",
+  "status": "To Do",
+  "description": "Without resolution, 'Priyanshu', 'P. Krishnan', and `user_42` are three nodes; the graph fragments into disconnected components, PPR mass never crosses between them, and `entity_profiles` accumulates duplicates that content-hash dedup cannot catch because the content genuinely differs.\n\nImplement the standard three-stage pipeline: (1) **blocking** on a cheap key — normalised name, or an embedding bucket — to avoid O(N²); (2) **pairwise scoring** with string and embedding similarity to settle the clear matches and clear non-matches; (3) **LLM adjudication** on the ambiguous middle band only, via an injected protocol. Resolution writes `CO_OCCURS` edges and merges `entity_profiles` through the existing reconciliation path rather than a new one, so the audit trail stays uniform.\n\nAcceptance: precision and recall measured on a hand-labelled entity set from the seed corpus; the ambiguous band is a tunable fraction and its LLM cost is reported per 1000 entities; a merge is reversible (it goes through reconciliation, so supersession applies); resolution runs as an EVOL-1 background job, never on the write path. Depends on STOR-1 and EVOL-1.",
+  "comments": []
+}

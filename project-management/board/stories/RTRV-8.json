@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-8",
+  "epic_id": "EPIC-29",
+  "title": "[Spike] Cross-encoder reranking — is the latency budget actually there",
+  "summary": "A forward pass per candidate is the quality ceiling below late interaction; whether p95 tolerates it at k=100 is unknown.",
+  "status": "To Do",
+  "description": "Reranking 100 candidates to 10 with a cross-encoder is one model forward pass per candidate. Whether that fits depends on numbers this repo has but has not put side by side: current p95 read latency from `benchmarks/latency_cost/`, the cross-encoder's own latency at batch 100 on the runner hardware, and what quality it actually buys on this corpus rather than on MS MARCO.\n\nMeasure three configurations — no rerank, rerank top 50, rerank top 100 — against the retrieval-quality suite, reporting nDCG@10 and p95 latency for each, plus the accuracy-per-token figure once ASMB-6 lands. Include the deployment question in the finding: a cross-encoder means either a local model (heavy install, contradicting the dependency-light promise) or a network call (latency and a new failure mode).\n\nTimebox: one working session. Explicitly acceptable outcome: 'the quality gain does not justify p95 at any k' — record it and close, which also settles the ColBERT question by implication since late interaction is strictly more expensive at index time. Depends on ASMB-6 for the honest metric.",
+  "comments": []
+}

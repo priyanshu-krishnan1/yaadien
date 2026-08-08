@@ -1,0 +1,9 @@
+{
+  "id": "FLEX-2",
+  "epic_id": "EPIC-25",
+  "title": "Track embedding model/dimension as versioned metadata, not just schema DDL",
+  "summary": "Add a small metadata record (model name, dimension, effective_from) per embedding-bearing table so a future embedding-model switch is detected and planned instead of discovered as a silent dimension mismatch.",
+  "status": "To Do",
+  "description": "RISK-2 (design/11-risk-register.md): embedding dimension is fixed in DDL (default 1536) at migration time. Changing embedding provider/model today requires a new ALTER/drop-recreate migration plus full re-embedding of every stored row, with no tracked record anywhere of which model actually produced the vectors currently stored in each table.\n\nAdd a minimal new migration introducing an embedding-model registry table recording `{table_name, model, dimension, effective_from}`, populated on `MemoryStore` construction / first write, and checked against the configured embedding model on startup — mismatch should raise a clear, actionable error before any query executes, instead of silently comparing vectors produced by two different models.\n\nScope: metadata + startup validation only. A full multi-model re-embedding pipeline (batch re-embed on model switch) is a separate, larger follow-up to consider only if/when a model switch is actually planned — do not build it speculatively here.\n\nAcceptance: new migration (`0009_*.sql` or next free number) adds the registry table; `MemoryStore` records model+dimension on first write and validates on subsequent startups; a mismatch raises a clear `SchemaPolicyError`-style exception before any query runs; the schema-evolution section of `project-management/ARCHITECTURE.md` documents the new check.",
+  "comments": []
+}

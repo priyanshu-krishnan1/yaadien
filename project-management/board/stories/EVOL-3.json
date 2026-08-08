@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-3",
+  "epic_id": "EPIC-31",
+  "title": "Reflection: synthesise higher-level inferences and write them back",
+  "summary": "Periodically distil recent high-importance records into inferences stored as first-class retrievable memories with DERIVED_FROM edges.",
+  "status": "To Do",
+  "description": "Implement a `Reflector` protocol (caller-injected, like `Consolidator`) and a `REFLECT` job. Trigger on cumulative importance crossing a threshold rather than on a timer — quiet periods should cost nothing, and a burst of significant activity should trigger promptly rather than waiting for the next tick. Reflections are ordinary `semantic_facts` rows with `MemoryOrigin.CONSOLIDATION` (or a new `REFLECTION` origin if the audit trail warrants distinguishing them — decide and record which), `DERIVED_FROM` edges to every source, and a trust tier inherited as the minimum across sources per STOR-5.\n\nReflections are retrievable alongside raw observations, which means a reflection can itself be a source for a later reflection. Bound the recursion depth and record the bound.\n\nAcceptance: measured on LongMemEval's cross-session-reasoning slice with reflection on and off — this is an ablation and it does not ship if it loses; reflection depth is bounded and configurable; every reflection is traceable to its sources through edges; the null reflector is the default. Depends on STOR-1, STOR-2, EVOL-1, and on EVOL-6 not having ruled it out.",
+  "comments": []
+}

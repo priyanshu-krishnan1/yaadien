@@ -1,0 +1,9 @@
+{
+  "id": "FLEX-4",
+  "epic_id": "EPIC-25",
+  "title": "Instrument the hybrid-search Python-side ranking cap instead of redesigning it (RISK-4)",
+  "summary": "Add a log line/metric for when hybrid search's ~800-row Python-side keyword-ranking over-fetch cap is actually hit, so a future redesign is triggered by real usage data instead of speculation.",
+  "status": "To Do",
+  "description": "RISK-4 (design/11-risk-register.md): hybrid search's keyword-overlap ranker runs in Python rather than being pushed into Db2 (Text Search Extender availability is \"unconfirmed\" per the risk register), capped at an ~800-row over-fetch. Per the explicit decision to avoid premature optimization here, do not redesign this now — add lightweight instrumentation (a structured log line, or a metrics hook if the SDK exposes one) fired whenever a `search(hybrid=True, ...)` call hits the cap, including corpus size and query context, so it becomes visible whether/when real corpora actually exceed it.\n\nEPIC-24/CIB-3's planned 500k-row container-Db2 spike is a natural moment to also check whether this cap gets hit at that scale — coordinate with whoever picks up CIB-3 rather than duplicating the corpus setup.\n\nAcceptance: hitting the cap emits a structured log line (corpus size, query context, cap value) with no change to ranking behavior itself; RISK-4's risk-register entry is updated to note \"instrumented, redesign deferred pending data.\"",
+  "comments": []
+}

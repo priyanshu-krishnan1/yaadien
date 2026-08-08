@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-1",
+  "epic_id": "EPIC-31",
+  "title": "Durable job queue for background memory work (migration 0012)",
+  "summary": "A memory_jobs table with safe claim semantics — the substrate every expensive evolution operation needs.",
+  "status": "To Do",
+  "description": "Create `memory_jobs` with `id`, scope columns, `job_kind`, `payload`, `status`, `attempts`, `claimed_at`, `claimed_by`, `run_after`, `created_at`, `completed_at`, `last_error`. Job kinds: `CONSOLIDATE`, `REFLECT`, `RESOLVE_ENTITIES`, `SUMMARISE_COMMUNITY`, `DECAY_SWEEP`, `REINDEX`. Claim semantics per EVOL-2's finding, with a lease timeout so a worker that dies mid-job releases its claim rather than blocking that job forever.\n\nJobs must be idempotent and at-least-once — exactly-once is not achievable here and pretending otherwise produces subtler bugs than accepting duplicates. Per-scope fairness so one busy tenant cannot starve the rest. Rewrite `scripts/consolidate_pending.py` to drive this queue rather than scanning for unconsolidated rows, which also fixes the multi-replica hazard FLEX-3 identified in the `consolidate_every_n` counter.\n\nAcceptance: two concurrent workers never process the same job, proven by a live-Db2 concurrency test rather than by reasoning about the SQL; a killed worker's job is reclaimed after the lease expires; `consolidate_every_n` behaviour is preserved for callers who rely on it; per-scope fairness is demonstrated with one scope enqueueing heavily. Depends on EVOL-2. Blocks EVOL-3, EVOL-5, GRPH-2, GRPH-5.",
+  "comments": []
+}

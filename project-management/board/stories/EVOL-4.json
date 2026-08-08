@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-4",
+  "epic_id": "EPIC-31",
+  "title": "DSR decay scoring with access statistics",
+  "summary": "Power-law retrievability with a falling hazard rate, so memories that survive long intervals become progressively harder to evict.",
+  "status": "To Do",
+  "description": "Implement the DSR model: `R(t) = (1 + F·t/S)^D` with `D < 0`, and stability growth on successful retrieval `S' = S·(1 + G·(1 − R))`. Power law rather than Ebbinghaus exponential because FSRS v4 switched for a measured reason — a falling hazard rate matches the empirical pattern that a memory which has already survived a long interval is more durable going forward, which is exactly the behaviour wanted for a fact retrieved across many sessions.\n\nAccess statistics feed it without a write on every read: a Count-Min Sketch for retrieval frequency (O(1) update, one-sided error) and HyperLogLog for distinct-query cardinality — the latter distinguishes 'retrieved 100 times by one query pattern' from 'retrieved 100 times by 100 different needs', and the second is far more valuable and should survive eviction. Both live in-process and flush periodically; neither touches the hot write path.\n\nAcceptance: `stability` and `last_accessed` columns added and maintained; decay contributes to the RTRV-6 score components; sketch flush is crash-safe in the sense that lost counts degrade the score rather than corrupting it; per-type half-lives are configurable, since `working` should decay in hours while `procedural` arguably should not decay at all while its success rate holds; parameters are fitted against LongMemEval's knowledge-update slice rather than chosen. Depends on RTRV-6. Blocks EVOL-5.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-7",
+  "epic_id": "EPIC-29",
+  "title": "Query understanding: temporal expression extraction and intent routing",
+  "summary": "Turn 'last quarter' into an as-of bound, and route lookup / synthesis / temporal queries to different retrieval mixes.",
+  "status": "To Do",
+  "description": "Two cheap, high-yield additions currently absent. **Temporal extraction**: parse relative and absolute expressions ('last quarter', 'before the migration', 'in March') into `as_of` timestamps or interval bounds. Without this, STOR-3's bi-temporal columns and GRPH-6's as-of path are inert — nothing ever supplies the `:t`. **Intent routing**: a lookup ('what's my API key format') wants sparse-heavy retrieval; a synthesis question ('what does this user care about') wants community summaries (GRPH-5); a temporal question wants the as-of path. Routing before retrieving is cheaper and more accurate than one fused pipeline serving all three.\n\nBoth go behind caller-injected protocols so the SDK acquires no NLP or LLM dependency. Ship a regex/dateutil-based temporal extractor as the zero-dependency default; leave intent classification to an injected classifier with a permissive default that routes everything to the current pipeline.\n\nAcceptance: temporal expressions in a test set resolve to correct bounds, including the ambiguous cases documented rather than silently guessed; routing is observable in result metadata; both default to no-ops that reproduce current behaviour; the intent taxonomy is documented and small enough to be useful. Depends on STOR-3 to be worth anything; blocks GRPH-6.",
+  "comments": []
+}

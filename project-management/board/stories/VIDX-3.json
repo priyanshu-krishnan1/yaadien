@@ -1,0 +1,9 @@
+{
+  "id": "VIDX-3",
+  "epic_id": "EPIC-28",
+  "title": "Build the free recall harness: FETCH EXACT as ground truth against FETCH APPROX",
+  "summary": "Db2 gives us exact and approximate results over identical data from the same query, so recall@k is a set intersection — no labelled dataset, no judge.",
+  "status": "To Do",
+  "description": "Add `benchmarks/retrieval_quality/ann_recall.py` running matched query pairs — identical SQL, one under `FETCH EXACT` and one under `FETCH APPROX` — and computing recall@k as |approx ∩ exact| / |exact| across a query set. Report per k in {1, 5, 10, 20, 50, 100}, per memory type, and per corpus size, with p50/p95 latency for both modes so the recall/latency tradeoff is visible in one table.\n\nThis is the measurement instrument for the entire index plane. It needs no labelled ground truth, no LLM judge, and no embedding calls beyond the query itself, which makes it cheap enough to run per-PR rather than nightly. Wire it into the EPIC-17 tier structure at whatever tier the runtime supports, and into the UNI-3 composite score.\n\nAcceptance: recall numbers produced against live Db2 at 10k and 500k rows; the harness fails loudly rather than silently if APPROX falls back to EXACT (it would otherwise report a perfect 1.0 recall, which is the most dangerous possible failure mode for this specific tool — see VIDX-4); results carry full provenance per the EPIC-19 standard (runner, Db2 version, embedding model, corpus size, commit SHA). Depends on VIDX-4 for reliable mode detection.",
+  "comments": []
+}

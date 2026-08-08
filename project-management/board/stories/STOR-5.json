@@ -1,0 +1,9 @@
+{
+  "id": "STOR-5",
+  "epic_id": "EPIC-27",
+  "title": "Add trust_tier and default it from MemoryOrigin at write time",
+  "summary": "The column EPIC-32 is blocked on: a 0-3 trust level set automatically by which write path produced the row.",
+  "status": "To Do",
+  "description": "Add `trust_tier SMALLINT NOT NULL DEFAULT 1` to all five memory tables (migration 0011) and to the models. Default at write time from `MemoryOrigin`: DIRECT_WRITE and EXTRACTION -> 1 (OBSERVED); CONSOLIDATION, RECONCILIATION, and INGEST_RESOLVER -> inherit the *minimum* tier across their source records, which requires STOR-2's edges and is the reason this story sits after it.\n\nMinimum rather than maximum is the safe direction and is worth stating explicitly: a conclusion drawn partly from a quarantined source is itself quarantined, because trust does not launder through inference.\n\nAcceptance: every write path sets a tier and none leaves the default implicitly; a consolidation over a tier-0 source and a tier-2 source produces a tier-0 derived record, covered by a live-Db2 test; the column is present on all five tables with no NULLs after migration. This story adds the column and the defaulting only — the `min_trust` read filter is GOV-1 and promotion policy is GOV-2, both in EPIC-32. Depends on STOR-2.",
+  "comments": []
+}

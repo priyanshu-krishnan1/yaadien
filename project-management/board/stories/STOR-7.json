@@ -1,0 +1,9 @@
+{
+  "id": "STOR-7",
+  "epic_id": "EPIC-27",
+  "title": "[Spike] Decide the storage-tiering shape: status column, archive table, or separate tablespace",
+  "summary": "Three viable designs for hot/warm/cold with materially different erasure, backup, index, and restore consequences — pick one with evidence before EVOL-5 builds on it.",
+  "status": "To Do",
+  "description": "EVOL-5 needs somewhere for decayed memories to go. Three candidate shapes, each with a real drawback:\n\n1. **Status column on the existing tables.** Simplest, no new DDL beyond a column, all existing scope and erasure logic applies unchanged. But cold rows stay in the vector index unless excluded by a predicate, which is exactly the non-sargable pattern VIDX-1 is investigating as an index-defeating problem.\n2. **Separate archive tables.** Keeps cold data out of the indexed hot tables entirely. Doubles the table count, and every scope operation (`erase_all`, `export_scope`, `purge_expired`, `delete_user`) must be taught about both — a broad blast radius across code that currently works.\n3. **Separate tablespace, same tables.** Db2-native, good backup and restore story. Least understood by this team, and interacts with the vector index in ways not documented for `VANN` indexes.\n\nEvaluate each against: does cold data still occupy the vector index; how many call sites change; can a cold row be restored to hot without a new id; does `ErasureCertificate` (GOV-6) stay tractable; does the EPIC-25 dialect seam survive.\n\nTimebox: one working session, ending in a DECISIONS.md entry naming the choice and what would reverse it. Depends on VIDX-1 for the index-behaviour half of the question.",
+  "comments": []
+}

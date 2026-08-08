@@ -1,0 +1,9 @@
+{
+  "id": "STOR-8",
+  "epic_id": "EPIC-27",
+  "title": "Cascade erasure over the provenance graph",
+  "summary": "erase_all() and delete_memory() walk memory_edges so that facts derived from erased content are erased too.",
+  "status": "To Do",
+  "description": "Extend `erase_all()`, `delete_user()`, `delete_thread()`, and `delete_memory()` to walk `DERIVED_FROM` and `ELABORATES` edges from every erased row and erase the derived records transitively. Cycle-safe (visited set), depth-bounded with the bound recorded in the report, and it must count what it touched — the counts are what GOV-6's `ErasureCertificate` is built from.\n\nOne real design question to settle and document rather than decide implicitly: a derived record with sources both inside and outside the erased scope. Deleting it over-erases another scope's data; keeping it leaks the erased scope's content. The default should be to delete and record the over-erasure in the report, on the grounds that under GDPR Art. 17 an incomplete erasure is a compliance failure while an over-erasure is a data-loss annoyance — but it is a policy choice and belongs in DECISIONS.md where it can be argued with.\n\nAcceptance: a fact consolidated from three turns is erased when any one of those turns is erased, verified against live Db2; `ErasureReport` gains cascade counts by edge type; the mixed-scope case has a test asserting the documented behaviour; cycles terminate. Depends on STOR-1 and STOR-2.",
+  "comments": []
+}

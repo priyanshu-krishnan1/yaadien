@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-4",
+  "epic_id": "EPIC-29",
+  "title": "Expose RRF weights and K instead of hardcoding them",
+  "summary": "Per-retriever weights and a configurable K, so a scope can up-weight lexical retrieval for ID-heavy domains.",
+  "status": "To Do",
+  "description": "`_rrf_fuse` implements `RRF(r) = Σ 1/(K + rank_i(r))` with K fixed. Add per-retriever weights `w_i` and make K configurable, defaulting to 60 (the value from Cormack, Clarke & Büttcher 2009). The K semantics are worth documenting where a tuner will read them: lower K sharpens preference for top-ranked items, higher K flattens fusion toward democracy across retrievers.\n\nSurface both through `search()` and through a per-scope configuration path, and record the values used in result metadata so a benchmark run is reproducible from its own output.\n\nAcceptance: weights and K are settable and their effect is demonstrated on the retrieval-quality suite with at least two weight configurations; defaults reproduce current behaviour exactly, proven by a test rather than by inspection; values are recorded in benchmark output; `benchmarks/scoring_weights.yaml` gains the RRF parameters so they are fitted in the same place as everything else. Becomes materially more useful after RTRV-2.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "GRPH-5",
+  "epic_id": "EPIC-30",
+  "title": "Hierarchical community summaries for global questions",
+  "summary": "The only mechanism that answers 'what does this user actually care about' — top-k retrieval structurally cannot.",
+  "status": "To Do",
+  "description": "Run hierarchical community detection over the entity graph, produce an LLM summary per community per level, store the summaries as first-class retrievable records with `DERIVED_FROM` edges to their members, and route synthesis-intent queries (RTRV-7) to the summary level rather than to raw retrieval. Each level is a mutually-exclusive, collectively-exhaustive cover, which is what makes divide-and-conquer summarisation sound.\n\nSummaries are ordinary memory records: they carry trust tiers (minimum across members, per STOR-5), they decay, they are erased when their members are erased (STOR-8), and they are regenerated rather than patched after erasure (GOV-6).\n\nAcceptance: measured on a global-question set built during GRPH-4; summaries regenerate on graph change at the cadence GRPH-4 established; regeneration runs as an EVOL-1 job; summary records are correctly cascaded by STOR-8; cost per scope per refresh is reported. Depends on GRPH-4 clearing the threshold, GRPH-2, and EVOL-1. Do not start if GRPH-4 says no.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "FLEX-3",
+  "epic_id": "EPIC-25",
+  "title": "Make the consolidation throttle counter safe across multiple replicas (RISK-1)",
+  "summary": "Replace or clearly scope the in-process-only `consolidate_every_n` counter so behavior is correct — or at least honestly documented — when the SDK runs behind more than one process/replica.",
+  "status": "To Do",
+  "description": "RISK-1 (design/11-risk-register.md): the counter throttling synchronous consolidation (`consolidate_every_n`) is in-process only. Under horizontal scaling, each replica consolidates independently on its own cadence, and the documented async/background-worker escape hatch (`scripts/consolidate_pending.py`) does not share state with it either. This needs resolution before any \"production-ready, long-term\" claim is made about multi-replica deployments.\n\nInvestigate two options and pick one, favoring the SDK's stated zero-required-infra-beyond-Db2 constraint (prefer a Db2-backed counter over introducing Redis or another dependency):\n(a) move counter state into a shared Db2-backed table/row with correct concurrent-increment semantics, or\n(b) explicitly document `consolidate_every_n` as single-process-only in the README/docstring, steer multi-replica deployments exclusively to the background worker, and add a startup warning if a Db2 connection pool size / deployment hint suggests multi-replica use with the in-process throttle still active.\n\nAcceptance: either (a) is implemented and covered by a new integration test simulating concurrent increments, or (b)'s documentation and startup warning are added; the decision and rationale are recorded in `project-management/DECISIONS.md`; RISK-1's risk-register entry is updated to reflect the resolution.",
+  "comments": []
+}

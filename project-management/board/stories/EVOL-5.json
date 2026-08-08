@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-5",
+  "epic_id": "EPIC-31",
+  "title": "Hot / warm / cold eviction ladder driven by decay",
+  "summary": "Demote rather than delete: full fidelity, then summary-only, then archived-not-indexed, then purged with a tombstone.",
+  "status": "To Do",
+  "description": "Implement the ladder using whichever storage shape STOR-7 selected, driven by a `DECAY_SWEEP` job. Transitions: hot -> warm when retrievability drops below θ₁ and distinct-query cardinality is low (replace content with a summary, archive the original); warm -> cold below θ₂ (remove from the vector index, keep restorable); cold -> purged only on TTL expiry or explicit erasure, leaving a tombstone and an audit record.\n\nThe audit trail must keep three causes distinguishable — user-initiated `forget()`, AI-initiated reconciliation, and system-initiated decay. The SDK already separates the first two deliberately; decay extends that discipline rather than diluting it. A retrieval hit on a warm or cold record promotes it back up, which is what makes the ladder a cache rather than a one-way ratchet.\n\nAcceptance: thresholds configurable per memory type with defaults justified; demotion and promotion round-trip a record without changing its id; cold records are provably out of the vector index (index size measured, not assumed); the audit log distinguishes all three causes; a decayed record is still reachable by direct id lookup. Depends on EVOL-4 and STOR-7.",
+  "comments": []
+}
