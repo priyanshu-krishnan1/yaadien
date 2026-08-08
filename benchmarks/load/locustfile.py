@@ -41,7 +41,7 @@ Usage — headless run
 
 Environment variables
 ----------------------
-DB2_HOSTNAME, DB2_PORT, DB2_DATABASE, DB2_USERNAME, DB2_PASSWORD — same as the
+DB2_HOSTNAME, DB2_PORT, DB2_DATABASE, DB2_UID, DB2_PASSWORD — same as the
 integration test suite and benchmarks/conftest.py.
 
 DB2_POOL_SIZE   — override the connection-pool size (default 5).
@@ -111,6 +111,11 @@ _EMIT_RSS: bool = os.environ.get("BENCH_EMIT_RSS", "0") == "1"
 # ---------------------------------------------------------------------------
 
 
+# NOTE: This flag registration fires whenever this module is imported.
+# scalability_tasks.py and isolation_user.py both import this module,
+# which registers --fail-ratio automatically for those locustfiles too.
+# If you refactor those files to stop importing locustfile.py, you must
+# move this registration to a shared _cli.py module.
 @events.init_command_line_parser.add_listener
 def _add_cli_args(parser: Any) -> None:  # type: ignore[no-untyped-def]
     """Register custom CLI flags so they appear in ``--help``."""

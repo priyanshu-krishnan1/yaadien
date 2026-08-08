@@ -421,10 +421,11 @@ def run_groundedness(
 
         # --- Retrieve context ---
         try:
-            results = store.search(
-                query=q.question,
+            query_embedding = embedding_provider(q.question)
+            results = store.working.search(
+                query_embedding=query_embedding,
                 scope=q.scope,
-                max_results=top_k,
+                top_k=top_k,
             )
             retrieved_context = "\n\n".join(
                 r.content for r in results if hasattr(r, "content")

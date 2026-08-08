@@ -1,11 +1,13 @@
 # ==============================================================================
-# Benchmark workflow — manual only, never runs automatically.
+# Benchmark workflow — runs nightly (Mon–Fri 02:00 UTC) and on demand.
 # To run it: Actions tab → "Benchmarks (unified)" → Run workflow → pick a suite.
 # ==============================================================================
 
 name: Benchmarks (unified)
 
 on:
+  schedule:
+    - cron: '0 2 * * 1-5'
   workflow_dispatch:
     inputs:
       suite:
@@ -59,7 +61,7 @@ jobs:
   # Times small functions — no database involved.
   codspeed:
     name: "Measure small function speed"
-    if: inputs.suite == 'all' || inputs.suite == 'micro-benchmarks'
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'micro-benchmarks')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -76,6 +78,8 @@ jobs:
           extras: benchmark,langchain,openai-agents,mcp
 
       - name: Measure function speed
+        env:
+          CODSPEED_TOKEN: ${{ secrets.CODSPEED_TOKEN }}
         run: pytest benchmarks/micro/ -m benchmark_micro --codspeed --no-cov -v
 
   # Runs when suite = "core-suites" (or "all").
@@ -83,7 +87,7 @@ jobs:
   # read/write speed, tenant isolation, and load scaling.
   core-suites:
     name: "Speed, isolation & scaling tests"
-    if: inputs.suite == 'all' || inputs.suite == 'core-suites'
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'core-suites')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -125,12 +129,12 @@ jobs:
       - name: Cache LongMemEval dataset
         uses: actions/cache@v4
         with:
-          path: ~/.cache/longmemeval
+          path: /home/runner/.cache/longmemeval
           key: longmemeval-dataset-v1
 
       - name: Pre-warm LongMemEval cache (first run only; no-op when cache hits)
         env:
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
           python -c "
           from benchmarks.quality.longmemeval_adapter import load_longmemeval
@@ -157,7 +161,7 @@ jobs:
         continue-on-error: true
         env:
           BENCH_EMBEDDING_PROVIDER: ollama
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
           pytest benchmarks/quality/ -m benchmark_nightly \
             --no-cov \
@@ -281,6 +285,7 @@ jobs:
             PoolSaturationUser
 
       - name: Check pool fails gracefully
+        continue-on-error: true
         env:
           DB2_POOL_SIZE: "1"
         run: |
@@ -288,7 +293,7 @@ jobs:
             -f benchmarks/load/pool_saturation_user.py \
             --headless -u 10 -r 10 -t 1m \
             --csv "${LOCUST_SCALE_OUT}/bm15_oversaturate" \
-            OverSaturationUser || true
+            OverSaturationUser
 
       - name: Save scaling test results
         if: always()
@@ -310,7 +315,7 @@ jobs:
   # judged by an LLM, plus a moderate-scale read/write speed check.
   benchmark-nightly:
     name: "Check memory recall quality"
-    if: inputs.suite == 'all' || inputs.suite == 'memory-quality'
+    if: github.event_name == 'schedule' || inputs.suite == 'all' || inputs.suite == 'memory-quality'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -336,25 +341,25 @@ jobs:
           cache-key-suffix: benchmark-nightly
           extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Install and start Ollama
-        uses: ./.github/actions/setup-ollama
-
       # Cache LongMemEval dataset (avoid re-downloading ~250 MB every run)
       - name: Cache LongMemEval dataset
         uses: actions/cache@v4
         with:
-          path: ~/.cache/longmemeval
+          path: /home/runner/.cache/longmemeval
           key: longmemeval-dataset-v1
 
       - name: Pre-warm LongMemEval cache (first run only; no-op when cache hits)
         env:
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
           python -c "
           from benchmarks.quality.longmemeval_adapter import load_longmemeval
           load_longmemeval('longmemeval_s')
           print('longmemeval_s cached.')
           "
+
+      - name: Install and start Ollama
+        uses: ./.github/actions/setup-ollama
 
       - name: Start Db2 database
         uses: ./.github/actions/setup-db2
@@ -373,7 +378,8 @@ jobs:
             --size "${CORPUS_SIZE}" \
             --seed 42 \
             --cardinality-category 5 \
-            --cardinality-topic 20
+            --cardinality-topic 20 \
+            --provider ollama
 
       - name: Measure read/write speed
         if: inputs.scenario != 'ir-metrics'
@@ -426,7 +432,7 @@ jobs:
         continue-on-error: true
         env:
           BENCH_EMBEDDING_PROVIDER: ollama
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
           pytest benchmarks/quality/ -m benchmark_nightly \
             --no-cov \
@@ -464,7 +470,7 @@ jobs:
         if: inputs.scenario != 'locust' && inputs.scenario != 'ir-metrics'
         continue-on-error: true
         env:
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
           python -m benchmarks.agent_quality.groundedness \
             --judge-model llama3.1:8b \
@@ -480,7 +486,7 @@ jobs:
         if: inputs.scenario != 'locust' && inputs.scenario != 'ir-metrics'
         continue-on-error: true
         env:
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
           python -m benchmarks.agent_quality.coherence \
             --judge-model llama3.1:8b \
@@ -492,7 +498,11 @@ jobs:
           fi
 
       - name: Combine quality test results
-        if: inputs.scenario != 'locust'
+        if: |
+          inputs.scenario != 'locust' &&
+          (steps.agq2.outputs.agq2_ran == 'true' ||
+           steps.agq3.outputs.agq3_ran == 'true' ||
+           steps.agq4.outputs.agq4_ran == 'true')
         run: |
           python benchmarks/agent_quality/run_agq.py \
             --agq2-json "${BENCH_OUT}/agq2.json" \
@@ -545,7 +555,7 @@ jobs:
   # ubuntu-latest-4-cores (16 GB RAM) — no other change needed.
   benchmark-scale:
     name: "Test speed at 500k rows"
-    if: inputs.suite == 'all' || inputs.suite == 'scale-performance'
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'scale-performance')
     runs-on: ubuntu-latest
     # 180 minutes — generous headroom since this is the slowest job here
     # (seeding + testing 500k rows, plus a 200-VU load test).
@@ -580,12 +590,12 @@ jobs:
       - name: Cache LongMemEval dataset
         uses: actions/cache@v4
         with:
-          path: ~/.cache/longmemeval
+          path: /home/runner/.cache/longmemeval
           key: longmemeval-dataset-v1
 
       - name: Pre-warm LongMemEval cache (first run only; no-op when cache hits)
         env:
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
           python -c "
           from benchmarks.quality.longmemeval_adapter import load_longmemeval
@@ -600,6 +610,9 @@ jobs:
           compose-suffix: "-bench-scale"
           db2-image: ${{ env.DB2_IMAGE }}
 
+      - name: Make results folder
+        run: mkdir -p "$BENCH_OUT"
+
       - name: Add 500k test rows
         if: ${{ inputs.dry_run != true }}
         run: |
@@ -607,10 +620,8 @@ jobs:
             --size 500k \
             --seed 99 \
             --cardinality-category 10 \
-            --cardinality-topic 50
-
-      - name: Make results folder
-        run: mkdir -p "$BENCH_OUT"
+            --cardinality-topic 50 \
+            --provider ollama
 
       - name: Measure speed at 500k rows
         if: ${{ inputs.dry_run != true }}
@@ -637,9 +648,9 @@ jobs:
         if: ${{ inputs.dry_run != true }}
         env:
           BENCH_EMBEDDING_PROVIDER: ollama
-          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+          LONGMEMEVAL_CACHE_DIR: /home/runner/.cache/longmemeval
         run: |
-          pytest benchmarks/quality/ -m "benchmark_nightly or benchmark_micro" \
+          pytest benchmarks/quality/ -m benchmark_micro \
             --no-cov \
             -v
 

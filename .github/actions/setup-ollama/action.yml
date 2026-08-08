@@ -11,6 +11,9 @@ runs:
       with:
         path: ~/.ollama/models
         key: ollama-models-llama3.1-8b-nomic-embed-text-v1
+        restore-keys: |
+          ollama-models-llama3.1-8b-
+          ollama-models-
 
     - name: Install Ollama and pull judge + embedding models
       shell: bash
@@ -20,6 +23,7 @@ runs:
         # Wait up to 60 s for the daemon to be ready
         for i in $(seq 1 30); do
           curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 && echo "Ollama ready." && break
+          [ "$i" -eq 30 ] && echo "::error::Ollama did not start within 60s" && exit 1
           sleep 2
         done
         ollama pull llama3.1:8b

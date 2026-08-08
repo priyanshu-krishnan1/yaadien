@@ -173,7 +173,10 @@ class OllamaEmbeddingProvider:
         return raw
 
 
-def build_embedding_provider(name: str, dim: int = 1536):
+def build_embedding_provider(
+    name: str,
+    dim: int = 1536,
+) -> HashingEmbeddingProvider | SentenceTransformersEmbeddingProvider | OllamaEmbeddingProvider:
     """Factory used by the CLI entry point to select a provider by name.
 
     Args:

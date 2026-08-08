@@ -1,0 +1,9 @@
+{
+  "_comment": "BM-27 baseline latency thresholds (seconds). Generated from Tier-1 benchmark run. Piecewise-linear normalization: score=1.0 at threshold, score=0.0 at 10x threshold.",
+  "store.remember": 0.150,
+  "working.search": 0.080,
+  "store.add_messages": 0.200,
+  "store.get_context_card": 0.250,
+  "working.list_all": 0.080,
+  "store.erase_all": 0.100
+}

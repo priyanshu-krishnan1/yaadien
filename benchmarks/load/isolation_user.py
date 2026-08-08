@@ -60,12 +60,12 @@ from benchmarks.common.scope_gen import make_scope, marker_for
 # ---------------------------------------------------------------------------
 # Re-use the module-level globals and base class from locustfile.py.
 # ---------------------------------------------------------------------------
-from benchmarks.load.locustfile import (  # noqa: E402
-    _EMBED,
-    _RUN_TAG,
-    _STORE,
-    MemoryStoreUser,
-)
+import benchmarks.load.locustfile as _lf  # noqa: E402
+from benchmarks.load.locustfile import MemoryStoreUser  # noqa: E402
+
+# Re-export _RUN_TAG as a module-level alias so _iter_other_markers can use it.
+# Access _lf._RUN_TAG at call time (after init hook fires) everywhere except
+# the module-level default argument which must use the live reference.
 
 _log = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class IsolationUser(MemoryStoreUser):
         # Distribute VUs across 100 tenants × 1,000 agents (AC scale target).
         vu_id: int = id(self) % 200_000
         self.scope = make_scope(
-            run_id=_RUN_TAG,
+            run_id=_lf._RUN_TAG,
             tenant_index=vu_id % 100,
             agent_index=vu_id % 1000,
             user_index=vu_id,
@@ -187,7 +187,7 @@ class IsolationUser(MemoryStoreUser):
 
         # Seed phase: write _SEED_RECORDS tagged records so subsequent reads
         # have data to assert against.
-        assert _STORE is not None, "MemoryStore not initialised — check _on_locust_init"
+        assert _lf._STORE is not None, "MemoryStore not initialised — check _on_locust_init"
         for i in range(_SEED_RECORDS):
             mem = WorkingMemory(
                 tenant_id=self.scope.tenant_id,
@@ -196,10 +196,10 @@ class IsolationUser(MemoryStoreUser):
                 thread_id=self.scope.thread_id,
                 content=(
                     f"{self._own_marker} isolation-load seed record {i} "
-                    f"run={_RUN_TAG}"
+                    f"run={_lf._RUN_TAG}"
                 ),
             )
-            self._run(_STORE.remember, mem, self.scope)
+            self._run(_lf._STORE.remember, mem, self.scope)
 
     @task
     def check_isolation(self) -> None:
@@ -216,20 +216,20 @@ class IsolationUser(MemoryStoreUser):
         ``exception=LeakageError`` and raises the same exception so the
         module-level listener can halt the run (AC-3).
         """
-        assert _STORE is not None and _EMBED is not None
-        query_vec = _EMBED(self._own_marker)
+        assert _lf._STORE is not None and _lf._EMBED is not None
+        query_vec = _lf._EMBED(self._own_marker)
         fetch_limit = max(50, _SEED_RECORDS * 4)
 
         t0 = time.perf_counter()
         try:
             search_results = self._run(
-                _STORE.working.search,
+                _lf._STORE.working.search,
                 query_embedding=query_vec,
                 scope=self.scope,
                 top_k=fetch_limit,
             )
             list_results = self._run(
-                _STORE.working.list_all,
+                _lf._STORE.working.list_all,
                 scope=self.scope,
                 limit=fetch_limit,
             )
@@ -257,7 +257,7 @@ class IsolationUser(MemoryStoreUser):
                         # Only flag if there is content that might carry another
                         # scope's marker; empty/non-seeded records are ignored.
                         pass
-                    for other_marker in _iter_other_markers(self._own_marker, _RUN_TAG):
+                    for other_marker in _iter_other_markers(self._own_marker, _lf._RUN_TAG):
                         if other_marker in content:
                             self._leak_count += 1
                             leaks.append(
