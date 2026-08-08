@@ -53,12 +53,15 @@ from agent_memory_sdk.models import WorkingMemory  # noqa: E402
 # Re-use the shared pool/store/embed globals and the base VU class from the
 # primary locustfile.  Importing locustfile also registers its @events.init /
 # @events.quitting hooks, so pool setup/teardown is handled exactly once.
-from benchmarks.load.locustfile import (  # noqa: E402
-    _EMBED,
-    _RUN_TAG,
-    _STORE,
-    MemoryStoreUser,
-)
+#
+# Import the MODULE (not individual names) so that every access at task
+# runtime gets the current value that _on_locust_init() sets via
+#   global _POOL, _STORE, _EMBED
+# A bare "from locustfile import _STORE" would create a local None binding
+# that is never updated when the @events.init hook later reassigns the
+# module-level global — causing AssertionError in every task.
+import benchmarks.load.locustfile as _lf  # noqa: E402
+from benchmarks.load.locustfile import MemoryStoreUser  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # PoolSaturationUser — aggressive pacing to saturate the pool
@@ -109,13 +112,13 @@ class PoolSaturationUser(MemoryStoreUser):
     @task(3)
     def task_search(self) -> None:
         """Vector search — weight 3 (same as SDK5User baseline)."""
-        assert _STORE is not None and _EMBED is not None
-        query_vec = _EMBED(self._own_marker)
+        assert _lf._STORE is not None and _lf._EMBED is not None
+        query_vec = _lf._EMBED(self._own_marker)
         t0 = time.perf_counter()
         self._total_count += 1
         try:
             results = self._run(
-                _STORE.working.search,
+                _lf._STORE.working.search,
                 query_embedding=query_vec,
                 scope=self.scope,
                 top_k=10,
@@ -151,7 +154,7 @@ class PoolSaturationUser(MemoryStoreUser):
     @task(3)
     def task_remember(self) -> None:
         """Write a working-memory record — weight 3 (same as SDK5User baseline)."""
-        assert _STORE is not None
+        assert _lf._STORE is not None
         turn = random.randint(0, 99_999)
         t0 = time.perf_counter()
         self._total_count += 1
@@ -162,10 +165,10 @@ class PoolSaturationUser(MemoryStoreUser):
                 user_id=self.scope.user_id,
                 thread_id=self.scope.thread_id,
                 content=(
-                    f"{self._own_marker} pool-sat turn={turn} tag={_RUN_TAG}"
+                    f"{self._own_marker} pool-sat turn={turn} tag={_lf._RUN_TAG}"
                 ),
             )
-            self._run(_STORE.remember, mem, self.scope)
+            self._run(_lf._STORE.remember, mem, self.scope)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             self.environment.events.request.fire(
                 request_type="write",

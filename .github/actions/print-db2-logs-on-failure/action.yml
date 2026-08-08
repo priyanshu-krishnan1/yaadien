@@ -1,0 +1,24 @@
+name: "Print Db2 container logs on failure"
+description: "Prints the last N lines of the Db2 container's logs. Callers gate this with if: failure() — this action always prints when invoked."
+
+inputs:
+  container-id:
+    description: "Docker container ID captured from setup-db2's container-id output"
+    required: true
+  tail-lines:
+    description: "Number of trailing log lines to print"
+    default: "100"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Print Db2 container logs
+      shell: bash
+      run: |
+        DB2_CONTAINER="${{ inputs.container-id }}"
+        if [ -n "${DB2_CONTAINER}" ]; then
+          echo "=== Last ${{ inputs.tail-lines }} lines of Db2 container logs ==="
+          docker logs --tail "${{ inputs.tail-lines }}" "${DB2_CONTAINER}" 2>&1 || true
+        else
+          echo "Could not resolve Db2 container ID — container may not have started."
+        fi

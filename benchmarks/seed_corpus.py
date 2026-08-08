@@ -61,7 +61,7 @@ except ImportError:
 
 from agent_memory_sdk.db.connection import ConnectionPool  # noqa: E402
 from agent_memory_sdk.db.migrate import Migrator  # noqa: E402
-from agent_memory_sdk.models import SemanticFact  # noqa: E402
+from agent_memory_sdk.models import MemoryScope, SemanticFact  # noqa: E402
 from agent_memory_sdk.store import MemoryStore  # noqa: E402
 from benchmarks.common.embedding_providers import build_embedding_provider  # noqa: E402
 
@@ -245,12 +245,13 @@ def seed_corpus(args: argparse.Namespace) -> None:
 
         start_ts = time.perf_counter()
         start_index = cp.rows_committed
-        batch_count = 0
 
         # CIW-10 profiling accumulators (zero-cost when _CIW10_PROFILE=False)
         _t_gen_total = 0.0
         _t_embed_total = 0.0
         _t_db_total = 0.0
+
+        batch_records: list[tuple[SemanticFact, MemoryScope]] = []
 
         for row_index in range(start_index, total_rows):
             if _CIW10_PROFILE:
@@ -271,8 +272,8 @@ def seed_corpus(args: argparse.Namespace) -> None:
             embedding = embedding_provider(content)
             if _CIW10_PROFILE:
                 _t_embed_total += time.perf_counter() - _t1
-                _t2 = time.perf_counter()
-            store.facts.create(
+
+            batch_records.append((
                 SemanticFact(
                     tenant_id=scope.tenant_id,
                     agent_id=scope.agent_id,
@@ -283,20 +284,31 @@ def seed_corpus(args: argparse.Namespace) -> None:
                     embedding=embedding,
                 ),
                 scope,
-            )
-            if _CIW10_PROFILE:
-                _t_db_total += time.perf_counter() - _t2
+            ))
 
-            batch_count += 1
-            if batch_count >= _CHECKPOINT_BATCH:
+            if len(batch_records) >= _CHECKPOINT_BATCH:
+                if _CIW10_PROFILE:
+                    _t2 = time.perf_counter()
+                store.facts.create_many(batch_records, commit_every=_CHECKPOINT_BATCH)
+                if _CIW10_PROFILE:
+                    _t_db_total += time.perf_counter() - _t2
+                batch_records = []
                 cp.rows_committed = row_index + 1
                 _save_checkpoint(cp_path, cp)
-                batch_count = 0
                 elapsed = time.perf_counter() - start_ts
                 print(
                     f"[seed_corpus] {cp.rows_committed:,}/{total_rows:,} rows "
                     f"({elapsed:.1f}s elapsed)"
                 )
+
+        # Flush any remaining rows (last partial batch).
+        if batch_records:
+            if _CIW10_PROFILE:
+                _t2 = time.perf_counter()
+            store.facts.create_many(batch_records, commit_every=_CHECKPOINT_BATCH)
+            if _CIW10_PROFILE:
+                _t_db_total += time.perf_counter() - _t2
+            batch_records = []
 
         # Final checkpoint.
         cp.rows_committed = total_rows

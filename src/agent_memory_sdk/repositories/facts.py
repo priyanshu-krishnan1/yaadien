@@ -22,16 +22,19 @@ ENH-3 additions
 from __future__ import annotations
 
 import json
+import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from agent_memory_sdk.models import MemoryScope, SemanticFact
 from agent_memory_sdk.repositories.base import (
     BaseRepository,
+    _content_hash,
     _parse_dt,
     _parse_vector,
     _require_agent_id,
     _scope_predicates,
+    _vec_to_str,
     logger,
 )
 from agent_memory_sdk.types import MemoryOrigin
@@ -183,3 +186,130 @@ class SemanticFactRepository(BaseRepository[SemanticFact]):
             loser_id, winner_id, affected,
         )
         return bool(affected > 0)
+
+    def create_many(
+        self,
+        records: list[tuple[SemanticFact, MemoryScope]],
+        commit_every: int = 500,
+    ) -> int:
+        """Bulk-insert a list of (SemanticFact, MemoryScope) pairs.
+
+        Bypasses the per-row dedup SELECT to maximize throughput for bulk
+        seeding.  All records in a batch of up to ``commit_every`` rows share
+        a single connection acquisition; the connection is committed and
+        released after each batch.
+
+        Unlike :meth:`~agent_memory_sdk.repositories.base.BaseRepository.create`,
+        this method does **not** check for duplicate ``content_hash`` values —
+        it is the caller's responsibility to ensure uniqueness (e.g. the
+        benchmark seeder generates deterministically unique content per
+        ``row_index``).
+
+        Vectors are inlined as SQL string literals (the same technique as
+        :meth:`~agent_memory_sdk.repositories.base.BaseRepository.create`)
+        because Db2 12.1.5 fp0 does not support binding vectors via ``?``
+        parameters (SQL0901N).
+
+        Args:
+            records:      List of ``(SemanticFact, MemoryScope)`` tuples.
+            commit_every: Commit to Db2 after this many rows (default 500).
+                          Smaller values reduce the work lost on interruption;
+                          larger values reduce commit overhead.
+
+        Returns:
+            Number of rows actually inserted.
+        """
+        now = _now()
+        inserted = 0
+
+        i = 0
+        while i < len(records):
+            batch = records[i : i + commit_every]
+            with self._pool.get_connection() as conn:
+                cur = conn.cursor()
+                for record, scope in batch:
+                    _require_agent_id(scope)
+
+                    record.agent_id = scope.agent_id
+                    record.tenant_id = scope.tenant_id
+                    record.user_id = scope.user_id
+                    record.thread_id = scope.thread_id
+
+                    if not record.id:
+                        record.id = str(_uuid.uuid4())
+
+                    record.created_at = now
+                    record.updated_at = now
+                    record.version = 1
+                    record.content_hash = _content_hash(record.content)
+
+                    # Resolve embedding — use pre-set embedding if provided,
+                    # otherwise call the embedding provider.
+                    if record.embedding:
+                        vec_str = _vec_to_str(record.embedding)
+                    elif self._embedding_provider is not None:
+                        try:
+                            computed = self._embedding_provider(record.content)
+                            vec_str = _vec_to_str(computed)
+                        except Exception:
+                            logger.exception(
+                                "create_many: embedding_provider raised for id=%s; "
+                                "using zero-vector sentinel.",
+                                record.id,
+                            )
+                            vec_str = self._zero_vec_str()
+                    else:
+                        vec_str = self._zero_vec_str()
+
+                    metadata_str = (
+                        json.dumps(record.metadata)
+                        if record.metadata
+                        else "{}"
+                    )
+                    origin_val = (
+                        record.origin.value
+                        if record.origin is not None
+                        else "direct_write"
+                    )
+
+                    sql = f"""
+                        INSERT INTO {self._TABLE} (
+                            id, tenant_id, agent_id, user_id, thread_id,
+                            content, metadata,
+                            embedding,
+                            confidence, content_hash,
+                            created_at, updated_at, expires_at, version, deleted_at,
+                            origin
+                        ) VALUES (
+                            ?, ?, ?, ?, ?,
+                            ?, ?,
+                            CAST('{vec_str}' AS VECTOR({self.EMBEDDING_DIM},FLOAT32)),
+                            ?, ?,
+                            ?, ?, ?, ?, ?,
+                            ?
+                        )
+                    """  # nosec B608 — _TABLE is a hardcoded class constant; vec_str is validated by _vec_to_str (float-only). DECISIONS.md VER-5.
+                    params = [
+                        record.id,
+                        record.tenant_id,
+                        record.agent_id,
+                        record.user_id,
+                        record.thread_id,
+                        record.content,
+                        metadata_str,
+                        float(record.confidence) if record.confidence is not None else 1.0,
+                        record.content_hash,
+                        record.created_at,
+                        record.updated_at,
+                        record.expires_at,
+                        record.version,
+                        record.deleted_at,
+                        origin_val,
+                    ]
+                    cur.execute(sql, params)
+                    inserted += 1
+                conn.commit()
+            i += commit_every
+
+        logger.debug("create_many %s: inserted %d rows", self._TABLE, inserted)
+        return inserted

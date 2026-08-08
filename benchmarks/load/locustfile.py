@@ -144,6 +144,26 @@ def _on_locust_init(environment: Any, **_kw: Any) -> None:
         enable_chunking=False,  # chunking cost measured separately in BM-8
     )
 
+    # CIF-3: resize the gevent Hub threadpool so it is never smaller than the
+    # peak VU count.  gevent's default threadpool_size is 10 OS threads; running
+    # 200 VUs against a 10-thread pool produces a 20:1 oversubscription that can
+    # resurface the Waiter.switch assertion even though _run() already wraps every
+    # call.  Setting the pool size to max(default, target_vus) eliminates the
+    # oversubscription.  We read the target VU count from parsed_options.num_users
+    # (set by -u / --users on the CLI); fall back to the current gevent default if
+    # the attribute is absent (e.g. in programmatic mode where no CLI was parsed).
+    target_vus: int = getattr(environment.parsed_options, "num_users", 0) or 0
+    hub = gevent.get_hub()
+    current_pool_size: int = hub.threadpool.size
+    new_pool_size = max(current_pool_size, target_vus)
+    if new_pool_size > current_pool_size:
+        hub.threadpool.size = new_pool_size
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "CIF-3: resized gevent hub threadpool from %d to %d (target_vus=%d)",
+            current_pool_size, new_pool_size, target_vus,
+        )
+
     # Attach a stats watcher that honours --fail-ratio.
     fail_ratio: float = getattr(environment.parsed_options, "fail_ratio", 1.0)
     if fail_ratio < 1.0:
