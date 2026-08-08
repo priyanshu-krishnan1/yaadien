@@ -1,36 +1,6 @@
 # ==============================================================================
-# CONSOLIDATED BENCHMARK WORKFLOW  (name: "Benchmarks (unified)")
-# ==============================================================================
-#
-# This file merges all benchmark-related GitHub Actions workflows into a single
-# manually-triggered workflow.  The following original files were consolidated
-# here and have been DEPRECATED / DELETED:
-#
-#   - .github/workflows/benchmark-nightly.yml  (was: "Benchmark Nightly")
-#   - .github/workflows/benchmark-pr.yml       (was: "Benchmark PR gate")
-#   - .github/workflows/benchmark-scale.yml    (was: "Benchmark — Tier 3 Scale")
-#   - .github/workflows/benchmarks.yml         (was: "Benchmarks" — prior version)
-#
-# ── IMPORTANT: PR REQUIRED-STATUS-CHECKS NOTE ─────────────────────────────────
-#
-# This workflow is intentionally EXCLUDED from branch-protection required status
-# checks and will NEVER appear as a PR gate.  Reasons:
-#
-#   1. trigger: workflow_dispatch ONLY — it cannot run on a pull_request event.
-#   2. The former "Benchmark PR gate" codspeed and benchmark-pr jobs that ran on
-#      pull_request have been removed.  Re-instate them as a separate lightweight
-#      PR-only file if a PR gate is ever needed.
-#   3. No required-check registration should reference "Benchmarks (unified)" or
-#      any job id defined in this file.
-#
-# ── DB2 INFRASTRUCTURE NOTE ───────────────────────────────────────────────────
-#
-# Each Db2-dependent job boots its own container directly via .github/actions/setup-db2,
-# referencing the image from the workflow-level DB2_IMAGE env var.  Jobs are fully
-# self-contained and independently re-runnable.  (CIW-2: db2-ready gate removed —
-# it warms nothing on GitHub-hosted runners, which assign a fresh VM per job.)
-#
-# To run benchmarks: Repository → Actions → "Benchmarks (unified)" → Run workflow
+# Benchmark workflow — manual only, never runs automatically.
+# To run it: Actions tab → "Benchmarks (unified)" → Run workflow → pick a suite.
 # ==============================================================================
 
 name: Benchmarks (unified)
@@ -44,14 +14,12 @@ on:
         type: choice
         options:
           - all
-          - tier0-codspeed
-          - tier1-benchmark
-          - tier2-nightly
-          - tier3-scale
-          - locust-isolation
-          - locust-scale
+          - micro-benchmarks
+          - core-suites
+          - memory-quality
+          - scale-performance
         default: all
-      # ── benchmark-nightly inputs ────────────────────────────────────────────
+      # Only used when suite = "memory-quality"
       corpus_size:
         description: "[nightly] Seed corpus size: 1k / 50k / 500k"
         required: false
@@ -60,7 +28,7 @@ on:
         description: "[nightly] Scenario filter: full / locust / ir-metrics"
         required: false
         default: "full"
-      # ── benchmark-scale inputs ──────────────────────────────────────────────
+      # Only used when suite = "scale-performance"
       tenant_prefix:
         description: "[scale] Reserved tenant_id prefix (default: bm22-scale)"
         default: "bm22-scale"
@@ -70,27 +38,14 @@ on:
         type: boolean
         default: false
 
-# ==============================================================================
-# PERMISSIONS
-# contents: write — gh-pages publish steps (consolidated-report only) +
-#                   BENCHMARKS.md commit-back (consolidated-report only).
-# issues: write   — opening regression issues on nightly/scale failure.
-# ==============================================================================
+# "issues: write" lets a failed run file a GitHub issue automatically.
+# Nothing writes to the repo itself — results are workflow artifacts only.
 permissions:
-  contents: write
   issues: write
 
-# ==============================================================================
-# CONCURRENCY (CIB-7)
-# ─────────────────────────────────────────────────────────────────────────────
-# Two overlapping workflow_dispatch invocations (e.g. someone re-triggers before
-# the first finishes) would race on the consolidated-report gh-pages writer and
-# the BENCHMARKS.md commit-back, even with CIB-5's single-writer fix.
-#
-# cancel-in-progress: false — these are expensive multi-hour runs; silently
-# killing a second dispatch is worse than queuing it.  The second run waits
-# in the queue and starts once the first commits its gh-pages changes.
-# ==============================================================================
+# If you start a new run while one is already going, it waits in line
+# instead of cancelling the first one — these runs are long, so queuing
+# is safer than throwing away progress.
 concurrency:
   group: benchmarks-${{ github.ref }}
   cancel-in-progress: false
@@ -98,156 +53,118 @@ concurrency:
 env:
   DB2_IMAGE: icr.io/db2_community/db2:12.1.5.0
 
-# ==============================================================================
-# JOBS
-# ==============================================================================
-
 jobs:
 
-  # ============================================================================
-  # JOB 1: codspeed
-  # Origin: benchmark-pr.yml → "Tier 0 — CodSpeed micro-benchmark smoke test"
-  # ============================================================================
+  # Runs when suite = "micro-benchmarks" (or "all").
+  # Times small functions — no database involved.
   codspeed:
-    name: "Tier 0 — CodSpeed micro-benchmark smoke test"
-    if: inputs.suite == 'all' || inputs.suite == 'tier0-codspeed'
+    name: "Measure small function speed"
+    if: inputs.suite == 'all' || inputs.suite == 'micro-benchmarks'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
 
     steps:
-      - name: Checkout
+      - name: Download repo code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Python and dependencies
+      - name: Install Python packages
         uses: ./.github/actions/setup-bench-python
         with:
           cache-key-suffix: codspeed
           extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Run micro-benchmarks with pytest-codspeed
+      - name: Measure function speed
         run: pytest benchmarks/micro/ -m benchmark_micro --codspeed --no-cov -v
 
-  # ============================================================================
-  # JOB 2: benchmark
-  # Origin: benchmarks.yml (prior) → "Benchmark suite (Db2 LUW + pytest-benchmark)"
-  # ============================================================================
-  benchmark:
-    name: "Benchmark suite (Db2 LUW + pytest-benchmark)"
-    if: inputs.suite == 'all' || inputs.suite == 'tier1-benchmark'
+  # Runs when suite = "core-suites" (or "all").
+  # Three tests share one Db2 database instead of starting it three times:
+  # read/write speed, tenant isolation, and load scaling.
+  core-suites:
+    name: "Speed, isolation & scaling tests"
+    if: inputs.suite == 'all' || inputs.suite == 'core-suites'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
 
     env:
-      <<: &db2-conn-env
-        DB2_DATABASE: TESTDB
-        DB2_HOSTNAME: localhost
-        DB2_PORT: "50000"
-        DB2_UID: db2inst1
-        DB2_PWD: passw0rd
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
       BENCH_OUT: benchmark_results
+      LOCUST_OUT: locust_results
+      LOCUST_SCALE_OUT: locust_scale_results
 
     steps:
-      - name: Checkout
+      - name: Download repo code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Python and dependencies
+      - name: Install Python packages
         uses: ./.github/actions/setup-bench-python
         with:
-          cache-key-suffix: benchmark
+          cache-key-suffix: core-suites
           extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Setup Db2 container
+      - name: Start Db2 database
         uses: ./.github/actions/setup-db2
         id: db2-setup
         with:
+          compose-suffix: "-core"
           db2-image: ${{ env.DB2_IMAGE }}
 
-      - name: Create benchmark output directory
-        run: mkdir -p "$BENCH_OUT"
+      - name: Make result folders
+        run: mkdir -p "$BENCH_OUT" "$LOCUST_OUT" "$LOCUST_SCALE_OUT"
 
-      - name: Run Tier-0 micro-benchmarks (no database)
+      - name: Install and start Ollama
+        uses: ./.github/actions/setup-ollama
+
+      - name: Cache LongMemEval dataset
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/longmemeval
+          key: longmemeval-dataset-v1
+
+      - name: Pre-warm LongMemEval cache (first run only; no-op when cache hits)
+        env:
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+        run: |
+          python -c "
+          from benchmarks.quality.longmemeval_adapter import load_longmemeval
+          load_longmemeval('longmemeval_s')
+          print('longmemeval_s cached.')
+          "
+
+      # Read/write speed
+      - name: Measure function speed
         run: |
           pytest benchmarks/ -m benchmark_micro \
             --no-cov \
             --benchmark-json="${BENCH_OUT}/output_tier0.json" \
             -v
 
-      - name: Run Tier-1 benchmark suite (benchmark_pr — requires Db2)
+      - name: Measure read/write speed
         run: |
           pytest benchmarks/ -m benchmark_pr \
             --no-cov \
             --benchmark-json="${BENCH_OUT}/output_tier1.json" \
             -v
 
-      - name: Run Tier-2 quality suite (benchmark_nightly — EPIC-16, workflow_dispatch only)
+      - name: Quick quality suite check
         continue-on-error: true
+        env:
+          BENCH_EMBEDDING_PROVIDER: ollama
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
         run: |
           pytest benchmarks/quality/ -m benchmark_nightly \
             --no-cov \
             -v \
             --tb=short
 
-      - name: Generate benchmark Job Summary
-        if: always()
-        run: |
-          TIER0="${BENCH_OUT}/output_tier0.json"
-          TIER1="${BENCH_OUT}/output_tier1.json"
-          if [ -f "$TIER0" ] || [ -f "$TIER1" ]; then
-            ARGS=""
-            [ -f "$TIER0" ] && ARGS="$ARGS $TIER0"
-            [ -f "$TIER1" ] && ARGS="$TIER1 $ARGS"
-            python scripts/generate_benchmark_summary.py $ARGS \
-              >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "## Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "> No benchmark output found — the benchmark run may have failed before producing results." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Emit shared-schema results envelope
-        if: always()
-        run: |
-          TIER0="${BENCH_OUT}/output_tier0.json"
-          TIER1="${BENCH_OUT}/output_tier1.json"
-          ARGS=""
-          [ -f "$TIER0" ] && ARGS="$ARGS $TIER0"
-          [ -f "$TIER1" ] && ARGS="$ARGS $TIER1"
-          if [ -n "$ARGS" ]; then
-            python scripts/generate_benchmark_summary.py $ARGS \
-              --emit-jsonl \
-              --jsonl-out "${BENCH_OUT}/results.jsonl" \
-              --suite tier1-benchmark \
-              --run-number "${{ github.run_number }}" \
-              --sha "${{ github.sha }}" || true
-          fi
-
-      - name: Generate HTML report index
-        if: always()
-        run: |
-          mkdir -p "${BENCH_OUT}"
-          TIER0="${BENCH_OUT}/output_tier0.json"
-          TIER1="${BENCH_OUT}/output_tier1.json"
-          ARGS=""
-          [ -f "$TIER0" ] && ARGS="$ARGS $TIER0"
-          [ -f "$TIER1" ] && ARGS="$TIER1 $ARGS"
-          if [ -n "$ARGS" ]; then
-            python scripts/generate_benchmark_summary.py $ARGS \
-              --html \
-              --run-id "${{ github.run_id }}" \
-              --run-number "${{ github.run_number }}" \
-              --sha "${{ github.sha }}" \
-              --ref "${{ github.ref_name }}" \
-              > "${BENCH_OUT}/index.html"
-          else
-            printf '<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>\n<body><p>No benchmark data was produced for this run.</p></body>\n</html>\n' \
-              > "${BENCH_OUT}/index.html"
-          fi
-
-      - name: Upload benchmark artifact
+      - name: Save speed test results
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
@@ -256,52 +173,8 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      # gh-pages publishing has been moved to consolidated-report (CIB-5).
-      # This job only uploads its artifact; consolidated-report is the sole writer.
-
-      - name: Print Db2 container logs (last 100 lines) on failure
-        if: failure()
-        uses: ./.github/actions/print-db2-logs-on-failure
-        with:
-          container-id: ${{ steps.db2-setup.outputs.container-id }}
-
-  # ============================================================================
-  # JOB 3: locust-isolation
-  # Origin: benchmarks.yml (prior) → "Locust isolation gate (BM-12 + BM-13)"
-  # ============================================================================
-  locust-isolation:
-    name: "Locust isolation gate (BM-12 + BM-13)"
-    if: inputs.suite == 'all' || inputs.suite == 'locust-isolation'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-
-    env:
-      <<: *db2-conn-env
-      LOCUST_OUT: locust_results
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Python and dependencies
-        uses: ./.github/actions/setup-bench-python
-        with:
-          cache-key-suffix: locust-load
-          extras: benchmark-load
-
-      - name: Setup Db2 container
-        uses: ./.github/actions/setup-db2
-        id: db2-setup
-        with:
-          compose-suffix: "-locust"
-          db2-image: ${{ env.DB2_IMAGE }}
-
-      - name: Create Locust output directory
-        run: mkdir -p "$LOCUST_OUT"
-
-      - name: "BM-12 smoke — SDK5User (50 VUs, 3 min)"
+      # Tenant isolation
+      - name: Quick concurrency smoke test
         env:
           DB2_POOL_SIZE: "20"
         run: |
@@ -312,7 +185,7 @@ jobs:
             --csv "${LOCUST_OUT}/bm12_smoke" \
             SDK5User
 
-      - name: "BM-13 isolation gate — IsolationUser + SharedStoreIsolationUser (200 VUs, 5 min)"
+      - name: Check tenant data isolation
         env:
           DB2_POOL_SIZE: "20"
         run: |
@@ -322,17 +195,7 @@ jobs:
             --csv "${LOCUST_OUT}/bm13_isolation" \
             IsolationUser SharedStoreIsolationUser
 
-      - name: Emit shared-schema results envelope
-        if: always()
-        run: |
-          python scripts/locust_csv_to_jsonl.py \
-            --csv-dir "${LOCUST_OUT}/" \
-            --suite locust-isolation \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" \
-            --out "${LOCUST_OUT}/results.jsonl" || true
-
-      - name: Upload Locust isolation results
+      - name: Save isolation test results
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
@@ -341,49 +204,8 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      - name: Print Db2 container logs (last 100 lines) on failure
-        if: failure()
-        uses: ./.github/actions/print-db2-logs-on-failure
-        with:
-          container-id: ${{ steps.db2-setup.outputs.container-id }}
-
-  # ============================================================================
-  # JOB 4: locust-scale
-  # Origin: benchmarks.yml (prior) → "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
-  # ============================================================================
-  locust-scale:
-    name: "Locust scalability sweeps + pool saturation (BM-14 + BM-15)"
-    if: inputs.suite == 'all' || inputs.suite == 'locust-scale'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-
-    env:
-      <<: *db2-conn-env
-      LOCUST_OUT: locust_scale_results
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Python and dependencies
-        uses: ./.github/actions/setup-bench-python
-        with:
-          cache-key-suffix: locust-load
-          extras: benchmark-load
-
-      - name: Setup Db2 container
-        uses: ./.github/actions/setup-db2
-        id: db2-setup
-        with:
-          compose-suffix: "-scale"
-          db2-image: ${{ env.DB2_IMAGE }}
-
-      - name: Create Locust output directory
-        run: mkdir -p "$LOCUST_OUT"
-
-      - name: "BM-14a — UserRampUser (200 VUs, 2/s ramp, 5 min)"
+      # Load scaling
+      - name: Ramp up user load
         env:
           DB2_POOL_SIZE: "20"
         run: |
@@ -391,10 +213,10 @@ jobs:
             -f benchmarks/load/scalability_tasks.py \
             --headless -u 200 -r 2 -t 5m \
             --fail-ratio 0.01 \
-            --csv "${LOCUST_OUT}/bm14a_user_ramp" \
+            --csv "${LOCUST_SCALE_OUT}/bm14a_user_ramp" \
             UserRampUser
 
-      - name: "BM-14b — AgentSweepUser (BENCH_N_AGENTS=100, 50 VUs, 5 min)"
+      - name: Sweep load across agents
         env:
           BENCH_N_AGENTS: "100"
           DB2_POOL_SIZE: "20"
@@ -403,10 +225,10 @@ jobs:
             -f benchmarks/load/scalability_tasks.py \
             --headless -u 50 -r 5 -t 5m \
             --fail-ratio 0.01 \
-            --csv "${LOCUST_OUT}/bm14b_agent_sweep" \
+            --csv "${LOCUST_SCALE_OUT}/bm14b_agent_sweep" \
             AgentSweepUser
 
-      - name: "BM-14c — MixedReadWriteUser (70/30 read-heavy, 50 VUs, 3 min)"
+      - name: Mixed read-write traffic test
         env:
           BENCH_RW_RATIO: "70/30"
           DB2_POOL_SIZE: "20"
@@ -415,105 +237,80 @@ jobs:
             -f benchmarks/load/scalability_tasks.py \
             --headless -u 50 -r 5 -t 3m \
             --fail-ratio 0.01 \
-            --csv "${LOCUST_OUT}/bm14c_mixed_rw" \
+            --csv "${LOCUST_SCALE_OUT}/bm14c_mixed_rw" \
             MixedReadWriteUser
 
-      - name: "BM-15 pool=1 (PoolSaturationUser, 50 VUs, 2 min)"
+      - name: Test tiny connection pool
         env:
           DB2_POOL_SIZE: "1"
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool1" \
+            --csv "${LOCUST_SCALE_OUT}/bm15_pool1" \
             PoolSaturationUser
 
-      - name: "BM-15 pool=5 (PoolSaturationUser, 50 VUs, 2 min)"
+      - name: Test small connection pool
         env:
           DB2_POOL_SIZE: "5"
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool5" \
+            --csv "${LOCUST_SCALE_OUT}/bm15_pool5" \
             PoolSaturationUser
 
-      - name: "BM-15 pool=10 (PoolSaturationUser, 50 VUs, 2 min)"
+      - name: Test medium connection pool
         env:
           DB2_POOL_SIZE: "10"
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool10" \
+            --csv "${LOCUST_SCALE_OUT}/bm15_pool10" \
             PoolSaturationUser
 
-      - name: "BM-15 pool=20 (PoolSaturationUser, 50 VUs, 2 min)"
+      - name: Test large connection pool
         env:
           DB2_POOL_SIZE: "20"
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
             --headless -u 50 -r 5 -t 2m \
-            --csv "${LOCUST_OUT}/bm15_pool20" \
+            --csv "${LOCUST_SCALE_OUT}/bm15_pool20" \
             PoolSaturationUser
 
-      - name: "BM-15 graceful-exhaustion check — OverSaturationUser (pool=1, 10 VUs, 1 min)"
+      - name: Check pool fails gracefully
         env:
           DB2_POOL_SIZE: "1"
         run: |
           locust \
             -f benchmarks/load/pool_saturation_user.py \
             --headless -u 10 -r 10 -t 1m \
-            --csv "${LOCUST_OUT}/bm15_oversaturate" \
+            --csv "${LOCUST_SCALE_OUT}/bm15_oversaturate" \
             OverSaturationUser || true
 
-      - name: Emit shared-schema results envelope
-        if: always()
-        run: |
-          python scripts/locust_csv_to_jsonl.py \
-            --csv-dir "${LOCUST_OUT}/" \
-            --suite locust-scale \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" \
-            --out "${LOCUST_OUT}/results.jsonl" || true
-
-      - name: Upload Locust scale results
+      - name: Save scaling test results
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: locust-scale-report
-          path: ${{ env.LOCUST_OUT }}/
+          path: ${{ env.LOCUST_SCALE_OUT }}/
           retention-days: 90
           if-no-files-found: warn
 
-      - name: Generate scale benchmark Job Summary
-        if: always()
-        run: |
-          echo "## Locust Scale Results (BM-14 + BM-15)" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          for csv in "${LOCUST_OUT}"/*_stats.csv; do
-            [ -f "$csv" ] || continue
-            label=$(basename "$csv" _stats.csv)
-            echo "### ${label}" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            head -3 "$csv" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-          done
-
-      - name: Print Db2 container logs (last 100 lines) on failure
+      - name: Show database logs on failure
         if: failure()
         uses: ./.github/actions/print-db2-logs-on-failure
         with:
           container-id: ${{ steps.db2-setup.outputs.container-id }}
 
-  # ============================================================================
-  # JOB 5: benchmark-nightly
-  # Origin: benchmark-nightly.yml → "Nightly benchmark suite — Tier 2 (BM-21)"
-  # ============================================================================
+  # Runs when suite = "memory-quality" (or "all").
+  # Checks how accurately and coherently the system recalls memories,
+  # judged by an LLM, plus a moderate-scale read/write speed check.
   benchmark-nightly:
-    name: "Nightly benchmark suite — Tier 2 (BM-21)"
-    if: inputs.suite == 'all' || inputs.suite == 'tier2-nightly'
+    name: "Check memory recall quality"
+    if: inputs.suite == 'all' || inputs.suite == 'memory-quality'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -521,31 +318,55 @@ jobs:
       issues: write
 
     env:
-      <<: *db2-conn-env
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
       BENCH_OUT: benchmark_nightly_results
       CORPUS_SIZE: ${{ inputs.corpus_size || '50k' }}
 
     steps:
-      - name: Checkout
+      - name: Download repo code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Python and dependencies
+      - name: Install Python packages
         uses: ./.github/actions/setup-bench-python
         with:
           cache-key-suffix: benchmark-nightly
           extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Setup Db2 container
+      - name: Install and start Ollama
+        uses: ./.github/actions/setup-ollama
+
+      # Cache LongMemEval dataset (avoid re-downloading ~250 MB every run)
+      - name: Cache LongMemEval dataset
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/longmemeval
+          key: longmemeval-dataset-v1
+
+      - name: Pre-warm LongMemEval cache (first run only; no-op when cache hits)
+        env:
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+        run: |
+          python -c "
+          from benchmarks.quality.longmemeval_adapter import load_longmemeval
+          load_longmemeval('longmemeval_s')
+          print('longmemeval_s cached.')
+          "
+
+      - name: Start Db2 database
         uses: ./.github/actions/setup-db2
         id: db2-setup
         with:
           compose-suffix: "-nightly"
           db2-image: ${{ env.DB2_IMAGE }}
 
-      - name: Create benchmark output directory
+      - name: Make results folder
         run: mkdir -p "$BENCH_OUT"
 
-      - name: Seed corpus (${{ env.CORPUS_SIZE }} rows)
+      - name: Add test data rows
         if: inputs.scenario != 'ir-metrics'
         run: |
           python benchmarks/seed_corpus.py \
@@ -554,7 +375,7 @@ jobs:
             --cardinality-category 5 \
             --cardinality-topic 20
 
-      - name: Run Tier-0 + Tier-1 benchmark suite (benchmark_micro + benchmark_pr)
+      - name: Measure read/write speed
         if: inputs.scenario != 'ir-metrics'
         run: |
           pytest benchmarks/ -m "benchmark_micro or benchmark_pr" \
@@ -562,7 +383,7 @@ jobs:
             --benchmark-json="${BENCH_OUT}/output_benchmark.json" \
             -v
 
-      - name: "BM-14 Locust ramp — MixedReadWriteUser (50 VUs, 15 min, 70/30)"
+      - name: Mixed read-write traffic test
         if: inputs.scenario != 'ir-metrics'
         env:
           BENCH_RW_RATIO: "70/30"
@@ -575,7 +396,7 @@ jobs:
             --csv "${BENCH_OUT}/nightly_locust" \
             MixedReadWriteUser
 
-      - name: "BM-15 pool-saturation sweep — pool=5 (50 VUs, 2 min)"
+      - name: Test small connection pool
         if: inputs.scenario != 'ir-metrics'
         env:
           DB2_POOL_SIZE: "5"
@@ -586,7 +407,7 @@ jobs:
             --csv "${BENCH_OUT}/nightly_pool5" \
             PoolSaturationUser
 
-      - name: "BM-15 pool-saturation sweep — pool=20 (50 VUs, 2 min)"
+      - name: Test large connection pool
         if: inputs.scenario != 'ir-metrics'
         env:
           DB2_POOL_SIZE: "20"
@@ -597,10 +418,15 @@ jobs:
             --csv "${BENCH_OUT}/nightly_pool20" \
             PoolSaturationUser
 
-      - name: "BM-17 IR metrics — benchmark_nightly suite (LongMemEval-S)"
+      # BENCH_EMBEDDING_PROVIDER selects real Ollama embeddings here; set it
+      # to "hashing" instead if Ollama isn't available (offline/degraded mode).
+      - name: Measure memory recall accuracy
         id: ir_nightly
         if: inputs.scenario != 'locust'
         continue-on-error: true
+        env:
+          BENCH_EMBEDDING_PROVIDER: ollama
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
         run: |
           pytest benchmarks/quality/ -m benchmark_nightly \
             --no-cov \
@@ -608,7 +434,7 @@ jobs:
             --tb=short
           echo "ir_nightly_ran=true" >> "$GITHUB_OUTPUT"
 
-      - name: "BM-17 IR metrics — fallback to benchmark_micro (BM-17 not yet implemented)"
+      - name: Run backup recall check
         if: |
           inputs.scenario != 'locust' &&
           steps.ir_nightly.outputs.ir_nightly_ran != 'true'
@@ -619,9 +445,12 @@ jobs:
             -v \
             --tb=short
 
-      - name: "AGQ-2 — task-completion Pass¹/Pass⁵ (flat_context, no Db2)"
+      # continue-on-error so a judge/Ollama failure doesn't stop the later
+      # step from combining whatever partial results did come through.
+      - name: Check task success rate
         id: agq2
         if: inputs.scenario != 'locust'
+        continue-on-error: true
         run: |
           python -m benchmarks.agent_quality.tasks \
             --condition flat_context \
@@ -630,7 +459,7 @@ jobs:
             --output "${BENCH_OUT}/agq2.json"
           echo "agq2_ran=true" >> "$GITHUB_OUTPUT"
 
-      - name: "AGQ-3 — groundedness judge (LongMemEval-S, with Db2)"
+      - name: Check answers are grounded
         id: agq3
         if: inputs.scenario != 'locust' && inputs.scenario != 'ir-metrics'
         continue-on-error: true
@@ -646,7 +475,7 @@ jobs:
             echo "agq3_ran=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: "AGQ-4 — coherence/fluency judge (LongMemEval-S, with Db2)"
+      - name: Check answer coherence quality
         id: agq4
         if: inputs.scenario != 'locust' && inputs.scenario != 'ir-metrics'
         continue-on-error: true
@@ -662,7 +491,7 @@ jobs:
             echo "agq4_ran=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: "AGQ-5 — merge AGQ-2/3/4 into agq_results.json (scorecard input)"
+      - name: Combine quality test results
         if: inputs.scenario != 'locust'
         run: |
           python benchmarks/agent_quality/run_agq.py \
@@ -671,43 +500,7 @@ jobs:
             --agq4-json "${BENCH_OUT}/agq4.json" \
             --output    "${BENCH_OUT}/agq_results.json"
 
-      - name: "Scorecard — generate MBS composite from all suite outputs"
-        if: inputs.scenario != 'locust'
-        continue-on-error: true
-        run: |
-          python -m benchmarks.common.scorecard \
-            --perf-json   "${BENCH_OUT}/output_benchmark.json" \
-            --baselines   benchmarks/baselines.json \
-            --agq-json    "${BENCH_OUT}/agq_results.json" \
-            --append-to   project-management/BENCHMARKS.md \
-            || true
-
-      - name: Generate benchmark Job Summary
-        if: always()
-        run: |
-          BENCH_JSON="${BENCH_OUT}/output_benchmark.json"
-          if [ -f "$BENCH_JSON" ]; then
-            python scripts/generate_benchmark_summary.py "$BENCH_JSON" \
-              >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "## Nightly Benchmark Results" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "> No benchmark JSON found — the pytest step may have been skipped or failed." \
-              >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Emit shared-schema results envelope
-        if: always()
-        run: |
-          python scripts/generate_benchmark_summary.py \
-            "${BENCH_OUT}/output_benchmark.json" \
-            --emit-jsonl \
-            --jsonl-out "${BENCH_OUT}/results.jsonl" \
-            --suite tier2-nightly \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" || true
-
-      - name: Upload benchmark artifact
+      - name: Save quality test results
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
@@ -716,9 +509,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # gh-pages publishing has been moved to consolidated-report (CIB-5).
-
-      - name: Open regression issue on failure
+      - name: Open bug report on failure
         if: failure()
         uses: actions/github-script@v7
         with:
@@ -741,71 +532,75 @@ jobs:
               labels: ['benchmark', 'regression'],
             });
 
-      - name: Print Db2 container logs (last 100 lines) on failure
+      - name: Show database logs on failure
         if: failure()
         uses: ./.github/actions/print-db2-logs-on-failure
         with:
           container-id: ${{ steps.db2-setup.outputs.container-id }}
 
-  # ============================================================================
-  # JOB 6: benchmark-scale
-  # Origin: benchmark-scale.yml → "Tier 3 weekly scale benchmark"
-  # Spins up containerized Db2 via .github/actions/setup-db2.
-  #
-  # CIB-3 spike notes (2026-08-07):
-  #   - 500k rows × typical record size (id + text + VECTOR(768) + metadata)
-  #     ≈ 250–400 MB table data + index structures.
-  #   - Tier 2 nightly at 50k rows runs on ubuntu-latest (7 GB RAM, 14 GB disk)
-  #     without issue; 10× linear scaling stays within disk budget.
-  #   - Db2 in-container memory footprint scales more slowly than row count due
-  #     to buffer-pool reuse, so 7 GB RAM is expected to be sufficient.
-  #   - If resource pressure is observed, ubuntu-latest-4-cores (16 GB RAM) is
-  #     available by changing runs-on: alone — no other code changes needed.
-  #   See DECISIONS.md entry "CIB-3: Tier 3 scale benchmark — containerized Db2"
-  #   for the full spike assessment and rationale.
-  # ============================================================================
+  # Runs when suite = "scale-performance" (or "all").
+  # Same read/write speed test as above, but against 500,000 rows instead
+  # of a small dataset, to catch problems that only show up at real scale.
+  # If the runner runs low on memory/disk, switch runs-on to
+  # ubuntu-latest-4-cores (16 GB RAM) — no other change needed.
   benchmark-scale:
-    name: "Tier 3 weekly scale benchmark (containerized Db2)"
-    if: inputs.suite == 'all' || inputs.suite == 'tier3-scale'
+    name: "Test speed at 500k rows"
+    if: inputs.suite == 'all' || inputs.suite == 'scale-performance'
     runs-on: ubuntu-latest
-    # CIB-7/CIF-5 timeout note: was 120 min after CIB-3 switched to containerized
-    # Db2.  CIF-4 replaced the per-row single-connection seed path with a batched
-    # path (500 rows per connection acquisition, one commit per batch) — expected
-    # throughput improvement 5–10× vs the old ~54 rows/s baseline, bringing the
-    # 500k-row seed step from ~2.6 h to an estimated 15–30 min.  Total expected
-    # budget post-CIF-4: ~20 min Db2 bootstrap + ~30 min seed (conservative) +
-    # ~20 min benchmark_pr matrix + ~18 min Locust ramp + ~10 min IR metrics
-    # ≈ 98 min.  Raised to 180 min to absorb runner variance and leave room for
-    # seeding regression detection; re-evaluate after observing real post-CIF-4
-    # run times and lower again if the actual total is consistently under 100 min.
+    # 180 minutes — generous headroom since this is the slowest job here
+    # (seeding + testing 500k rows, plus a 200-VU load test).
     timeout-minutes: 180
     permissions:
       contents: read
       issues: write
 
     env:
-      <<: *db2-conn-env
+      DB2_DATABASE: TESTDB
+      DB2_HOSTNAME: localhost
+      DB2_PORT: "50000"
+      DB2_UID: db2inst1
+      DB2_PWD: passw0rd
       BENCH_OUT: benchmark_scale_results
       BENCH_TENANT_PREFIX: ${{ inputs.tenant_prefix || 'bm22-scale' }}
 
     steps:
-      - name: Checkout
+      - name: Download repo code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Python and dependencies
+      - name: Install Python packages
         uses: ./.github/actions/setup-bench-python
         with:
           cache-key-suffix: benchmark-scale
           extras: benchmark,langchain,openai-agents,mcp
 
-      - name: Setup Db2 container
+      - name: Install and start Ollama
+        uses: ./.github/actions/setup-ollama
+
+      # Cache LongMemEval dataset
+      - name: Cache LongMemEval dataset
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/longmemeval
+          key: longmemeval-dataset-v1
+
+      - name: Pre-warm LongMemEval cache (first run only; no-op when cache hits)
+        env:
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
+        run: |
+          python -c "
+          from benchmarks.quality.longmemeval_adapter import load_longmemeval
+          load_longmemeval('longmemeval_s')
+          print('longmemeval_s cached.')
+          "
+
+      - name: Start Db2 database
         uses: ./.github/actions/setup-db2
         id: db2-setup
         with:
           compose-suffix: "-bench-scale"
           db2-image: ${{ env.DB2_IMAGE }}
 
-      - name: Seed 500k corpus (tenant prefix ${{ env.BENCH_TENANT_PREFIX }})
+      - name: Add 500k test rows
         if: ${{ inputs.dry_run != true }}
         run: |
           python benchmarks/seed_corpus.py \
@@ -814,10 +609,10 @@ jobs:
             --cardinality-category 10 \
             --cardinality-topic 50
 
-      - name: Create benchmark output directory
+      - name: Make results folder
         run: mkdir -p "$BENCH_OUT"
 
-      - name: Run full benchmark matrix at 500k rows (benchmark_pr)
+      - name: Measure speed at 500k rows
         if: ${{ inputs.dry_run != true }}
         run: |
           pytest benchmarks/ -m "benchmark_pr" \
@@ -825,7 +620,7 @@ jobs:
             --benchmark-json="${BENCH_OUT}/output_scale.json" \
             -v
 
-      - name: "Locust scale ramp (BM-14) — 200 VUs, 15 min, 70/30 mix"
+      - name: Heavy mixed traffic test
         if: ${{ inputs.dry_run != true }}
         env:
           BENCH_RW_RATIO: "70/30"
@@ -838,33 +633,17 @@ jobs:
             --csv "${BENCH_OUT}/scale_locust" \
             UserRampUser MixedReadWriteUser
 
-      - name: "Deterministic IR metrics at scale (benchmark_nightly + benchmark_micro)"
+      - name: Measure recall at scale
         if: ${{ inputs.dry_run != true }}
+        env:
+          BENCH_EMBEDDING_PROVIDER: ollama
+          LONGMEMEVAL_CACHE_DIR: ~/.cache/longmemeval
         run: |
           pytest benchmarks/quality/ -m "benchmark_nightly or benchmark_micro" \
             --no-cov \
             -v
 
-      # BENCHMARKS.md commit-back has been moved to consolidated-report (CIB-5).
-
-      - name: Generate Job Summary
-        if: always()
-        run: |
-          python scripts/generate_benchmark_summary.py "${BENCH_OUT}/output_scale.json" \
-            >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Emit shared-schema results envelope
-        if: always()
-        run: |
-          python scripts/generate_benchmark_summary.py \
-            "${BENCH_OUT}/output_scale.json" \
-            --emit-jsonl \
-            --jsonl-out "${BENCH_OUT}/results.jsonl" \
-            --suite tier3-scale \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" || true
-
-      - name: Upload benchmark scale report artifact
+      - name: Save scale test results
         if: always()
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
@@ -873,7 +652,7 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      - name: Open regression issue on failure
+      - name: Open bug report on failure
         if: failure()
         uses: actions/github-script@v7
         with:
@@ -900,208 +679,8 @@ jobs:
               labels: ['benchmark', 'regression'],
             });
 
-      - name: Print Db2 container logs (last 100 lines) on failure
+      - name: Show database logs on failure
         if: failure()
         uses: ./.github/actions/print-db2-logs-on-failure
         with:
           container-id: ${{ steps.db2-setup.outputs.container-id }}
-
-  # ============================================================================
-  # JOB 7: consolidated-report
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Terminal job — runs after ALL benchmark jobs complete (success or failure).
-  # Downloads every benchmark artifact, merges them, and writes a single unified
-  # summary to $GITHUB_STEP_SUMMARY.  Also uploads a merged consolidated artifact.
-  #
-  # Results are grouped by benchmark type so it is immediately clear which tier
-  # or job origin each block of data came from.
-  # ============================================================================
-  consolidated-report:
-    name: "Consolidated benchmark report"
-    if: always()
-    needs:
-      - codspeed
-      - benchmark
-      - locust-isolation
-      - locust-scale
-      - benchmark-nightly
-      - benchmark-scale
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Python and dependencies
-        uses: ./.github/actions/setup-bench-python
-        with:
-          cache-key-suffix: consolidated-core
-          extras: benchmark-core
-          install-quiet: "true"
-
-      # Download every benchmark artifact into separate sub-directories so their
-      # contents don't collide.
-      - name: Download benchmark-report (Tier 0/1 — Db2 + pytest-benchmark)
-        if: always()
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: benchmark-report
-          path: consolidated/benchmark
-        continue-on-error: true
-
-      - name: Download locust-isolation-report (BM-12 + BM-13)
-        if: always()
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: locust-isolation-report
-          path: consolidated/locust-isolation
-        continue-on-error: true
-
-      - name: Download locust-scale-report (BM-14 + BM-15)
-        if: always()
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: locust-scale-report
-          path: consolidated/locust-scale
-        continue-on-error: true
-
-      - name: Download benchmark-nightly-report (Tier 2 — BM-21)
-        if: always()
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: benchmark-nightly-report
-          path: consolidated/benchmark-nightly
-        continue-on-error: true
-
-      - name: Download benchmark-scale-report (Tier 3 — live Db2)
-        if: always()
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: benchmark-scale-report
-          path: consolidated/benchmark-scale
-        continue-on-error: true
-
-      - name: Write consolidated report to $GITHUB_STEP_SUMMARY
-        env:
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python scripts/generate_consolidated_summary.py \
-            --consolidated-dir consolidated \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" \
-            --ref "${{ github.ref_name }}" \
-            --event-name "${{ github.event_name }}" \
-            --run-url "${RUN_URL}" \
-            --scenario "${{ inputs.scenario || 'full' }}" \
-            --corpus-size "${{ inputs.corpus_size || '50k' }}" \
-            --dry-run "${{ inputs.dry_run || 'false' }}" \
-            --result "codspeed=${{ needs.codspeed.result }}" \
-            --result "benchmark=${{ needs.benchmark.result }}" \
-            --result "locust-isolation=${{ needs.locust-isolation.result }}" \
-            --result "locust-scale=${{ needs.locust-scale.result }}" \
-            --result "benchmark-nightly=${{ needs.benchmark-nightly.result }}" \
-            --result "benchmark-scale=${{ needs.benchmark-scale.result }}" \
-            >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Render unified results schema summary
-        if: always()
-        run: |
-          JSONL_FILES=""
-          for f in consolidated/*/results.jsonl; do
-            [ -f "$f" ] && JSONL_FILES="$JSONL_FILES $f"
-          done
-          if [ -n "$JSONL_FILES" ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "---" >> "$GITHUB_STEP_SUMMARY"
-            echo "## Unified Results (shared schema)" >> "$GITHUB_STEP_SUMMARY"
-            python scripts/render_results_summary.py $JSONL_FILES \
-              --run-number "${{ github.run_number }}" \
-              --sha "${{ github.sha }}" \
-              >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload consolidated benchmark artifact
-        if: always()
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
-        with:
-          name: consolidated-benchmark-report
-          path: consolidated/
-          retention-days: 90
-          if-no-files-found: warn
-
-      # ── CIB-5: Single fan-in gh-pages writer ─────────────────────────────────
-      # This is the sole job that publishes to gh-pages and commits BENCHMARKS.md.
-      # benchmark/benchmark-nightly/benchmark-scale upload artifacts only.
-
-      - name: Prepare consolidated gh-pages site
-        if: always()
-        run: |
-          mkdir -p site_stage/benchmarks/${{ github.run_number }}
-          mkdir -p site_stage/benchmarks/nightly/${{ github.run_number }}
-
-          # Stage benchmark HTML report (Tier 0/1)
-          if [ -d "consolidated/benchmark" ]; then
-            cp -r consolidated/benchmark/. site_stage/benchmarks/${{ github.run_number }}/
-          fi
-
-          # Stage nightly HTML report (Tier 2)
-          if [ -d "consolidated/benchmark-nightly" ]; then
-            cp -r consolidated/benchmark-nightly/. site_stage/benchmarks/nightly/${{ github.run_number }}/
-          fi
-
-          # Board HTML
-          cp project-management/BOARD.html site_stage/board.html
-
-          # Generate site root index.html
-          git fetch origin gh-pages --depth=1 2>/dev/null || true
-          GH_PAGES_SCAN_DIR=$(mktemp -d)
-          git worktree add --detach "$GH_PAGES_SCAN_DIR" origin/gh-pages 2>/dev/null \
-            || git clone --depth=1 --branch gh-pages \
-               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
-               "$GH_PAGES_SCAN_DIR" 2>/dev/null \
-            || { echo "Warning: could not clone gh-pages for scan — using empty benchmarks list"; mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks"; }
-          mkdir -p "$GH_PAGES_SCAN_DIR/benchmarks/${{ github.run_number }}"
-          python scripts/generate_site_index.py \
-            --site-root  "$GH_PAGES_SCAN_DIR" \
-            --run-number "${{ github.run_number }}" \
-            --sha        "${{ github.sha }}" \
-            --ref        "${{ github.ref_name }}" \
-            --out        site_stage/index.html
-          git worktree remove --force "$GH_PAGES_SCAN_DIR" 2>/dev/null || true
-
-      - name: Publish all benchmark results to gh-pages (single writer)
-        if: always()
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: site_stage
-          destination_dir: .
-          keep_files: true
-          commit_message: "benchmarks: run ${{ github.run_number }} (${{ github.sha }})"
-
-      - name: Commit BENCHMARKS.md if Tier 3 scale results available
-        if: always()
-        run: |
-          SCALE_JSON="consolidated/benchmark-scale/output_scale.json"
-          if [ -f "$SCALE_JSON" ]; then
-            python scripts/generate_benchmark_summary.py \
-              "$SCALE_JSON" \
-              --run-id "${{ github.run_id }}" \
-              --run-number "${{ github.run_number }}" \
-              --sha "${{ github.sha }}" \
-              > /tmp/scale_summary.md
-            {
-              echo ""
-              echo "## Tier 3 Scale Run — $(date -u +%Y-%m-%d) (run ${{ github.run_number }})"
-              cat /tmp/scale_summary.md
-            } >> BENCHMARKS.md
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git config user.name  "github-actions[bot]"
-            git add BENCHMARKS.md
-            git diff --cached --quiet || git commit -m "benchmarks: tier-3 scale results run ${{ github.run_number }} (${{ github.sha }})" && git push
-          else
-            echo "No scale results to commit — skipping BENCHMARKS.md update."
-          fi

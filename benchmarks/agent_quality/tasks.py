@@ -927,7 +927,7 @@ def run_agent_quality_suite(
 
         for attempt_idx in range(n_attempts):
             # Derive per-attempt seed so the judge call is reproducible.
-            attempt_seed = task.seed ^ (attempt_idx * 0xDEAD) & 0xFFFF_FFFF
+            attempt_seed = (task.seed ^ (attempt_idx * 0xDEAD)) & 0xFFFF_FFFF
 
             # Build context string for this condition.
             if condition == "no_memory":

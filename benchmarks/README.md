@@ -39,24 +39,21 @@ this Apache-2.0 repository.
 > where. Cross-linked from `BENCHMARK_STRATEGY.md` Phase 6 and `BENCHMARKS.md`.
 > Updated by CIB-7 (EPIC-24).
 
-| Workflow file | Trigger | Tier | Blocking? | What it gates | gh-pages output |
-|:---|:---|:---|:---|:---|:---|
-| `benchmarks.yml` (`codspeed` job) | `workflow_dispatch` (`suite: tier0-codspeed` or `all`) | 0 | Informational | CodSpeed instruction-count smoke test | — |
-| `benchmarks.yml` (`benchmark` job) | `workflow_dispatch` (`suite: tier1-benchmark` or `all`) | 0/1 | Informational | pytest-benchmark Tier 0/1 suite, Db2 container | `benchmarks/<run_number>/` |
-| `benchmarks.yml` (`locust-isolation` job) | `workflow_dispatch` (`suite: locust-isolation` or `all`) | 1 | Informational | BM-12/13 isolation gate | — |
-| `benchmarks.yml` (`locust-scale` job) | `workflow_dispatch` (`suite: locust-scale` or `all`) | 1 | Informational | BM-14/15 scalability sweeps | — |
-| `benchmarks.yml` (`benchmark-nightly` job) | `workflow_dispatch` (`suite: tier2-nightly` or `all`) | 2 | Informational | Full benchmark matrix + Locust + IR metrics, 50k rows | `benchmarks/nightly/<run_number>/` |
-| `benchmarks.yml` (`benchmark-scale` job) | `workflow_dispatch` (`suite: tier3-scale` or `all`) | 3 | Informational | Tier 3 scale at 500k rows, containerized Db2 (CIB-3) | — |
-| `benchmarks.yml` (`consolidated-report`) | Runs after all above (`if: always()`) | — | — | Fan-in summary, single gh-pages commit, optional BENCHMARKS.md commit | `index.html`, `board.html` |
+| Workflow file | Trigger | What it gates | Result |
+|:---|:---|:---|:---|
+| `benchmark-suite.yml` (`codspeed` job) | `workflow_dispatch` (`suite: micro-benchmarks` or `all`) | CodSpeed instruction-count smoke test | workflow artifact |
+| `benchmark-suite.yml` (`core-suites` job) | `workflow_dispatch` (`suite: core-suites` or `all`) | Read/write speed, tenant isolation, and load scaling — one Db2 container, one job | workflow artifacts (3) |
+| `benchmark-suite.yml` (`benchmark-nightly` job) | `workflow_dispatch` (`suite: memory-quality` or `all`) | Full benchmark matrix + Locust + LLM-judged memory-recall quality, 50k rows | workflow artifact |
+| `benchmark-suite.yml` (`benchmark-scale` job) | `workflow_dispatch` (`suite: scale-performance` or `all`) | Same read/write + recall checks at 500k rows, containerized Db2 | workflow artifact |
 
-**Key architectural properties (EPIC-24):**
+**Key architectural properties:**
 
-- **Composite actions** — `setup-bench-python` and `setup-db2` (`.github/actions/`) eliminate all duplicated setup blocks (CIB-1).
-- **Suite selector** — `workflow_dispatch` input `suite` lets a dispatcher run only the desired tier without paying for all 7 jobs (CIB-4).
-- **Single gh-pages writer** — `consolidated-report` is the only job that pushes to `gh-pages` and commits `BENCHMARKS.md`, eliminating concurrent-write races (CIB-5).
-- **Shared output schema** — every job emits `results.jsonl` with a common envelope; `scripts/render_results_summary.py` consumes all of them in one pass (CIB-6).
-- **Concurrency guard** — `concurrency: group: benchmarks-${{ github.ref }}, cancel-in-progress: false` prevents overlapping dispatches from racing on the single writer (CIB-7).
-- **All-container Db2** — Tier 3 now uses containerized Db2, eliminating the `live-db2` environment and `LIVE_DB2_*` secrets dependency (CIB-3).
+- **Composite actions** — `setup-bench-python`, `setup-db2`, `setup-ollama`, and `print-db2-logs-on-failure` (`.github/actions/`) eliminate duplicated setup blocks across jobs.
+- **Suite selector** — `workflow_dispatch` input `suite` lets a dispatcher run only the job it needs, or `all` for everything.
+- **No report pipeline** — each job uploads its own raw output (pytest-benchmark JSON / Locust CSV) as a workflow artifact. Nothing is reformatted, summarized, or published to gh-pages; get results by downloading the artifact from the run page.
+- **Concurrency guard** — `concurrency: group: benchmarks-${{ github.ref }}, cancel-in-progress: false` queues a second dispatch instead of cancelling the first (these are long, expensive runs).
+- **All-container Db2** — every job boots its own containerized Db2 via `setup-db2`; no live external Db2 instance or secrets required.
+- **Local LLM judge, no API key** — `setup-ollama` installs Ollama and pulls `llama3.1:8b` (judge) + `nomic-embed-text` (embeddings) with model-weight caching, so the memory-quality/scale-performance jobs run entirely on the free `ubuntu-latest` runner (this repo is public, so that runner is 4 vCPU / 16 GB RAM with unlimited free minutes) — no paid runner or LLM API credits needed.
 
 ---
 

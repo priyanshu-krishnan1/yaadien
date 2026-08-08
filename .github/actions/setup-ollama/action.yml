@@ -1,0 +1,26 @@
+name: "Install and start Ollama"
+description: "Installs Ollama, starts the daemon, and pulls the judge + embedding models (cached across runs) so LLM-judge and local-embedding benchmark steps have a running local model server. No API key, no paid runner needed — this repo is public, so ubuntu-latest already gives 4 vCPU / 16 GB RAM for free with unlimited minutes."
+
+runs:
+  using: "composite"
+  steps:
+    # llama3.1:8b is ~4.7 GB, nomic-embed-text is ~274 MB. Without this,
+    # every run re-downloads both from scratch.
+    - name: Cache Ollama models
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama/models
+        key: ollama-models-llama3.1-8b-nomic-embed-text-v1
+
+    - name: Install Ollama and pull judge + embedding models
+      shell: bash
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+        ollama serve &
+        # Wait up to 60 s for the daemon to be ready
+        for i in $(seq 1 30); do
+          curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 && echo "Ollama ready." && break
+          sleep 2
+        done
+        ollama pull llama3.1:8b
+        ollama pull nomic-embed-text

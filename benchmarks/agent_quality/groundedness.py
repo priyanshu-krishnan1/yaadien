@@ -148,6 +148,14 @@ _SCORE_PATTERNS: tuple[re.Pattern[str], ...] = (
 # Default score when the model output is ambiguous.
 _DEFAULT_SCORE = 3
 
+# Human-readable label per --embedding-provider choice, stamped into the
+# output JSON's embedding_provider_name field. "ollama" alone doesn't say
+# which model was used, so it gets the specific model name; the others are
+# unambiguous by name already.
+_EMBEDDING_PROVIDER_LABELS = {
+    "ollama": "ollama/nomic-embed-text",
+}
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -550,6 +558,18 @@ def _cli_main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--n-per-category", type=int, default=4)
     p.add_argument("--top-k", type=int, default=5)
+    p.add_argument(
+        "--embedding-provider",
+        choices=["hashing", "sentence-transformers", "ollama"],
+        default="ollama",
+        metavar="PROVIDER",
+        dest="embedding_provider",
+        help=(
+            "Embedding provider for store.search() queries. "
+            "Default: ollama (requires a running Ollama daemon). "
+            "Use 'hashing' for offline / CI runs without Ollama."
+        ),
+    )
     p.add_argument("--split", default="longmemeval_s")
     p.add_argument("--output", type=Path, metavar="FILE")
     args = p.parse_args(argv)
@@ -565,7 +585,7 @@ def _cli_main(argv: list[str] | None = None) -> int:
         host=args.ollama_host,
         seed=args.seed,
     )
-    embedding_provider = build_embedding_provider("ollama")
+    embedding_provider = build_embedding_provider(args.embedding_provider)
 
     try:
         from agent_memory_sdk.db.connection import ConnectionPool
@@ -586,7 +606,9 @@ def _cli_main(argv: list[str] | None = None) -> int:
     result = run_groundedness(
         store=store,
         embedding_provider=embedding_provider,
-        embedding_provider_name="ollama/nomic-embed-text",
+        embedding_provider_name=_EMBEDDING_PROVIDER_LABELS.get(
+            args.embedding_provider, args.embedding_provider
+        ),
         judge=judge,
         judge_name=args.judge_model,
         n_per_category=args.n_per_category,

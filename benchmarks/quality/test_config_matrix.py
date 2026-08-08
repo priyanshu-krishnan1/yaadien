@@ -487,7 +487,11 @@ def test_ir_config_matrix_longmemeval_s(db_pool):  # noqa: ANN001
     * Any config where Recall@5 is lower than baseline has a non-empty
       honest_note (the story requires no favorable-only reporting)
     """
-    from benchmarks.common.embedding_providers import OllamaEmbeddingProvider
+    import os as _os
+    from benchmarks.common.embedding_providers import (
+        HashingEmbeddingProvider,
+        OllamaEmbeddingProvider,
+    )
     from benchmarks.common.scope_gen import new_run_id
     from benchmarks.quality.ir_metrics import (
         CategoryIRMetrics,
@@ -498,7 +502,10 @@ def test_ir_config_matrix_longmemeval_s(db_pool):  # noqa: ANN001
     SPLIT = "longmemeval_s"
     run_id = new_run_id()
     rows = load_longmemeval(SPLIT)
-    embedding_provider = OllamaEmbeddingProvider()
+    _ep_name = _os.environ.get("BENCH_EMBEDDING_PROVIDER", "ollama")
+    embedding_provider = (
+        HashingEmbeddingProvider() if _ep_name == "hashing" else OllamaEmbeddingProvider()
+    )
 
     # --- Collect per-config IR results ---
     summary = MatrixRunSummary(run_id=run_id)
@@ -646,7 +653,11 @@ def test_ir_config_matrix_longmemeval_m(db_pool):  # noqa: ANN001
     * longmemeval_m cached locally (LONGMEMEVAL_CACHE_DIR)
     * Ollama running with nomic-embed-text pulled
     """
-    from benchmarks.common.embedding_providers import OllamaEmbeddingProvider
+    import os as _os
+    from benchmarks.common.embedding_providers import (
+        HashingEmbeddingProvider,
+        OllamaEmbeddingProvider,
+    )
     from benchmarks.common.scope_gen import new_run_id
     from benchmarks.quality.ir_metrics import compute_ir_metrics
     from benchmarks.quality.longmemeval_adapter import iter_questions, load_longmemeval
@@ -654,7 +665,10 @@ def test_ir_config_matrix_longmemeval_m(db_pool):  # noqa: ANN001
     SPLIT = "longmemeval_m"
     run_id = new_run_id()
     rows = load_longmemeval(SPLIT)
-    embedding_provider = OllamaEmbeddingProvider()
+    _ep_name = _os.environ.get("BENCH_EMBEDDING_PROVIDER", "ollama")
+    embedding_provider = (
+        HashingEmbeddingProvider() if _ep_name == "hashing" else OllamaEmbeddingProvider()
+    )
 
     summary = MatrixRunSummary(run_id=run_id)
     overall_by_config: dict[str, Any] = {}
