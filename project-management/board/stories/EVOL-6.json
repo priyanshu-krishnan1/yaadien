@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-6",
+  "epic_id": "EPIC-31",
+  "title": "[Spike] Does consolidation actually beat verbatim storage on our corpus",
+  "summary": "A controlled ablation found raw chunks beating LLM-extracted facts for long conversations; settle it here before building more consolidation.",
+  "status": "To Do",
+  "description": "*Verbatim Chunks Beat Extracted Artifacts* (arXiv:2601.00821) reports that in a controlled ablation, storing raw conversation chunks outperformed LLM-extracted facts for long-conversation memory. If that holds on our corpus, EVOL-3 and EVOL-7 are negative-value work and the honest move is to say so.\n\nThis repo already has the instruments: `benchmarks/quality/longmemeval_adapter.py`, `benchmarks/retrieval_quality/consolidator.py`, and the config matrix in `benchmarks/quality/test_config_matrix.py`. Run four arms across the LongMemEval slices — verbatim only; consolidated only; both with consolidation preferred; both with verbatim preferred — reporting accuracy per slice, assembled token count, and LLM cost per session for each.\n\nApply the Entity-Collision protocol (arXiv:2605.29630) when attributing any lift, so a win that actually comes from entity-overlap leakage is not reported as a mechanism win.\n\nTimebox: two working sessions — this is a measurement story, not an implementation one. Output: a findings comment and a DECISIONS.md entry. Explicitly acceptable and genuinely useful outcome: 'verbatim wins; deprioritise EVOL-3 and EVOL-7'. Gates EVOL-3 and EVOL-7.",
+  "comments": []
+}

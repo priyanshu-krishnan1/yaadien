@@ -1,0 +1,9 @@
+{
+  "id": "GOV-5",
+  "epic_id": "EPIC-32",
+  "title": "Hash-chained audit log",
+  "summary": "h_n = H(h_{n−1} ‖ entry_n), so silent edits to history are detectable.",
+  "status": "To Do",
+  "description": "Add an append-only `memory_audit` table where each entry carries the hash of its predecessor, making any retroactive edit or deletion detectable by chain verification. Record: writes, promotions and demotions (GOV-2), reconciliations, decay transitions (EVOL-5), erasures, and quarantine flags (GOV-4).\n\nScope: this is tamper-*evident*, not tamper-proof. An attacker with write access can rewrite the whole chain. The property it buys is that they cannot rewrite *part* of it, which is the realistic threat — and stating that limitation plainly in the docs is part of the deliverable, because an overstated security property is worse than an absent one.\n\nAcceptance: chain verification detects a single-entry modification, a deletion, and a reordering; verification cost is O(n) and measured at realistic log sizes; the log survives `erase_all()` with content redacted but the chain intact — otherwise erasure breaks auditability, which defeats both; audit writes are in the same transaction as the operation they record. Depends on STOR-5.",
+  "comments": []
+}

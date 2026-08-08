@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-5",
+  "epic_id": "EPIC-29",
+  "title": "MMR diversification after fusion, before packing",
+  "summary": "Stop returning k paraphrases of one fact — roughly 40 lines with an outsized effect on accuracy per token.",
+  "status": "To Do",
+  "description": "Apply Maximal Marginal Relevance to the fused candidate list: greedily select the candidate maximising `λ·sim(R,q) − (1−λ)·max_{R'∈selected} sim(R,R')`, O(k·|C|·d). Default λ = 0.7 (the original paper's 'focus' setting; 0.3 is its 'explore' setting and is the right default for a different product than this one). Reuse the embeddings already fetched — this must add no round trips.\n\nAgent memory is pathologically redundant: the same preference restated across twelve sessions produces twelve high-scoring near-duplicates, and every duplicate displaces a distinct fact that would have fit in the same budget.\n\nAcceptance: measured on the retrieval-quality suite with MMR on and off, reporting both answer quality *and* assembled token count — a change that improves quality while inflating the card is a regression under this epic's objective function; λ is configurable and swept in the ablation grid; λ = 1.0 reproduces current behaviour exactly; no additional embedding calls, proven by a call counter in the test. Depends on nothing; blocks ASMB-2.",
+  "comments": []
+}

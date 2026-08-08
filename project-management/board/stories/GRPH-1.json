@@ -1,0 +1,9 @@
+{
+  "id": "GRPH-1",
+  "epic_id": "EPIC-30",
+  "title": "[Spike] Graph projection — recursive SQL in Db2 or materialised in-process",
+  "summary": "Decides whether PPR can run inline, how scope isolation is enforced on traversal, and what the memory footprint of the reasoning plane is.",
+  "status": "To Do",
+  "description": "The entity graph over `memory_edges` has to be traversable. Two shapes with very different consequences. **Recursive SQL in Db2** keeps scope predicates in the query where the rest of the SDK puts them, adds no memory footprint, and requires no cache invalidation — but recursive CTE performance over a large edge table is unknown, and PPR's ~20 iterations become ~20 round trips unless the whole computation moves into SQL, which is awkward. **Materialised in-process** makes PPR trivially fast and lets us use a real graph library, but introduces a cache with invalidation, a per-scope memory footprint, and a second place scope isolation must be enforced correctly — which is precisely the kind of duplicated-invariant that produces cross-tenant leaks.\n\nEvaluate with STOR-6's measured edge counts: recursive-CTE latency for 1/2/3-hop neighbourhoods at 10k and 500k rows; in-process build time and resident bytes per scope; cache invalidation cost under a realistic write rate; and how each behaves across multiple app replicas.\n\nTimebox: one working session, ending in a DECISIONS.md entry. Depends on STOR-1, STOR-2, STOR-6. Blocks GRPH-3.",
+  "comments": []
+}

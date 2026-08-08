@@ -1,0 +1,9 @@
+{
+  "id": "GOV-4",
+  "epic_id": "EPIC-32",
+  "title": "Write-time anomaly detection for the quarantine path",
+  "summary": "Flag embedding-space outliers and unusual write patterns into tier 0 rather than accepting them silently.",
+  "status": "To Do",
+  "description": "Two signals, both cheap. **Embedding-space anomaly**: AgentPoison's trigger optimisation makes poisoned entries cluster unusually *tightly* in embedding space — which is itself a detectable signature, and the opposite of the intuition that attacks look like outliers. Track per-scope embedding density and flag writes that land in anomalously dense or anomalously distant regions. **Rate anomaly**: a tool that writes 10,000 memories in a minute is an incident, not a feature — per-origin rate limits with quarantine rather than rejection on breach, since rejecting loses data that may be legitimate.\n\nFlagged writes land in tier 0 and are visible to an operator, rather than being rejected. False positives are cheap (a legitimate memory needs promotion); false negatives are expensive (a poisoned memory is trusted forever). Bias the thresholds accordingly, and say so in the docstring so nobody later 'fixes' the false-positive rate.\n\nAcceptance: detection rate measured against GOV-7's poisoned corpus; the false-positive rate on the clean seed corpus is reported and its cost characterised; rate limits are per-origin and configurable; flagged writes are queryable by an operator. Depends on STOR-5; informed by GOV-7.",
+  "comments": []
+}

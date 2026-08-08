@@ -1,0 +1,9 @@
+{
+  "id": "GRPH-6",
+  "epic_id": "EPIC-30",
+  "title": "As-of query path across facts and profiles",
+  "summary": "Make STOR-3's bi-temporal columns load-bearing: search(as_of=...) returns what was true then, not what is true now.",
+  "status": "To Do",
+  "description": "Add an `as_of` parameter to `search()`, `list_all()`, and `get_context_card()` that applies `valid_from <= :t AND (valid_to IS NULL OR valid_to > :t)` on top of the existing scope, supersession, and expiry predicates. Confirm via EXPLAIN that the STOR-3 composite index is used and that the predicate does not defeat the vector index in the way VIDX-1 is investigating for the zero-vector filter — an as-of predicate on a plain timestamp column should be sargable, but 'should be' is what VIDX-1 exists to disprove.\n\nSmall story, and its value is almost entirely borrowed from EPIC-27 — which is the argument for doing it early rather than at the end of this epic.\n\nAcceptance: the Berlin/Lisbon test from STOR-4 passes through the full search path, not just at the repository layer; `as_of=None` reproduces current behaviour exactly; EXPLAIN confirms index usage; temporal extraction from RTRV-7 feeds it end to end; the LongMemEval temporal-reasoning slice is measured with and without. Depends on STOR-3, STOR-4, RTRV-7.",
+  "comments": []
+}

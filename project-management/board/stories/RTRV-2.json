@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-2",
+  "epic_id": "EPIC-29",
+  "title": "Replace the Python keyword-overlap ranker with real BM25",
+  "summary": "Token overlap has no term weighting, which is exactly what proper nouns, identifiers, and error codes need.",
+  "status": "To Do",
+  "description": "`_keyword_tokens()` plus set overlap was the right dependency-light v1 choice and its RRF fusion is already correct. What it cannot do is weight rare terms — and rare terms are where dense retrieval is weakest and where agent memory queries concentrate (names, IDs, error codes, file paths). Implement BM25 with proper IDF via whichever mechanism RTRV-3 selects.\n\nKeep the existing ranker as a fallback so the zero-infrastructure install path still works: the SDK's 'zero required dependencies beyond ibm_db + pydantic' promise is a real product property, not an accident, and must survive this change.\n\nAcceptance: BM25 beats the overlap ranker on the retrieval-quality suite's lexical-heavy slice, with the numbers reported rather than asserted; index build time and storage measured at 500k rows; the fallback path is tested; RRF weights are retunable per RTRV-4 now that the two arms have genuinely different characteristics. Depends on RTRV-3.",
+  "comments": []
+}

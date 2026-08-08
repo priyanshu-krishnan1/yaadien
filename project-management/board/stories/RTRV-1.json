@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-1",
+  "epic_id": "EPIC-29",
+  "title": "Contextual Retrieval: situate each chunk before embedding it",
+  "summary": "An LLM-generated 50-100 token prefix per chunk, embedded and indexed with the chunk — the best measured ROI in the v2 arc, and a write-path cost only.",
+  "status": "To Do",
+  "description": "Add `context_prefix VARCHAR` to `memory_chunks` and a `ChunkContextualizer` protocol (caller-injected, matching how `EmbeddingProvider` and `Summarizer` are already injected — the SDK must not acquire a hard LLM dependency). At chunk time, generate a short prefix situating the chunk within its parent record, then embed `context_prefix + content` rather than `content`, and index the same concatenation lexically.\n\nPublished results: 35% reduction in top-20 retrieval failure from contextual embeddings alone, 49% combined with contextual BM25, 67% with reranking on top. Cost is one LLM call per chunk at write time, amortised by prompt caching to roughly $1 per million document tokens. Read latency is unaffected.\n\nAcceptance: measured against the existing retrieval-quality suite with the contextualizer on and off — this is an ablation, and the story does not ship if it loses; the prefix is stored so re-embedding after a model change does not require regenerating it; a null contextualizer is the default so existing behaviour is unchanged; chunk dedup by content hash still works with prefixes present. Coordinate with VIDX-5, which also touches `chunks.py`.",
+  "comments": []
+}

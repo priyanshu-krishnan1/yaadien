@@ -1,0 +1,9 @@
+{
+  "id": "VIDX-5",
+  "epic_id": "EPIC-28",
+  "title": "Get the zero-vector sentinel out of the indexed column",
+  "summary": "Chunked parent rows sit at the origin of the DiskANN graph, wasting index space and distorting neighbourhoods — and the predicate that excludes them may be defeating the index entirely.",
+  "status": "To Do",
+  "description": "The sentinel exists for a real reason: chunked parents must satisfy `NOT NULL` on `embedding`, and Db2 requires `NOT NULL` for the vector index to be used at all, while COSINE against a zero vector raises SQL0801N. The current answer is to store zeros and filter them out at query time with `VECTOR_SERIALIZE(embedding) != VECTOR_SERIALIZE(...)`. That solves correctness and creates two problems: sentinel rows are still indexed graph nodes, and the filter is a function-on-indexed-column predicate.\n\nCandidate approaches, to be chosen on VIDX-1's evidence: a sargable boolean `is_chunked` / `has_own_embedding` column replacing the `VECTOR_SERIALIZE` comparison (cheapest, likely sufficient); moving chunked parents' searchable representation entirely into `memory_chunks` so the parent row is never a search candidate; or storing the centroid of the child chunks on the parent instead of zeros, which makes the parent a legitimate coarse candidate rather than a sentinel.\n\nAcceptance: EXPLAIN shows the vector index used on the search path that previously did not use it, or evidence that it always did and this is purely an index-size improvement; index size on disk measured before and after at 500k rows; VIDX-3 recall unchanged or improved; the SQL0801N division-by-zero case still cannot occur, with a test proving it. Depends on VIDX-1.",
+  "comments": []
+}

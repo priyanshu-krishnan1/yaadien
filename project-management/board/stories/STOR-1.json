@@ -1,0 +1,9 @@
+{
+  "id": "STOR-1",
+  "epic_id": "EPIC-27",
+  "title": "Create the memory_edges table (migration 0009)",
+  "summary": "One typed edge table linking any memory row to any other — the single schema change that unblocks reflection, cascading erasure, graph retrieval, and community summaries.",
+  "status": "To Do",
+  "description": "Add migration `0009_memory_edges.sql` creating `memory_edges` with `id`, `src_id`, `src_table`, `dst_id`, `dst_table`, `edge_type`, `weight`, the full scope columns, `created_at`, and `deleted_at`. `edge_type` is constrained to `DERIVED_FROM | SUPERSEDES | CONTRADICTS | ELABORATES | CO_OCCURS`. Scope columns are duplicated onto the edge rather than joined through, so `_scope_predicates()` applies to edge reads exactly as it does to memory reads — an edge must never be traversable across a scope boundary, and a join-based design would make that an easy mistake to make later.\n\nAdd an `EdgeRepository` in `repositories/` following the existing `BaseRepository` conventions (scope predicates on every read/write, soft delete, the `# nosec B608` documentation pattern for any interpolated SQL). Indexes on `(scope…, src_id)` and `(scope…, dst_id)` — traversal happens in both directions and cascading erasure walks the reverse edge.\n\nAcceptance: migration applies cleanly to a fresh database and to an existing one carrying data from 0008; `EdgeRepository` create/list/soft-delete round-trip against live Db2; a cross-scope edge read returns nothing, proven by a test that writes an edge under one scope and reads under another; the `src_table`/`dst_table` discriminators are validated against the known table set rather than free text. No caller writes edges yet — that is STOR-2.",
+  "comments": []
+}

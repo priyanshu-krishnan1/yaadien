@@ -1,0 +1,9 @@
+{
+  "id": "STOR-4",
+  "epic_id": "EPIC-27",
+  "title": "Teach Reconciler to close validity intervals instead of only flagging supersession",
+  "summary": "A superseded fact gets valid_to set to the winner's valid_from, so historical queries return the fact that was true then rather than the fact that is true now.",
+  "status": "To Do",
+  "description": "Extend the `Reconciler` protocol so a supersede decision can carry the boundary timestamp, and change `MemoryStore.reconcile()` to set the loser's `valid_to` to the winner's `valid_from` alongside the existing `superseded_at` flag. The two are not redundant: `superseded_at` is transaction time (when we stopped believing it) and `valid_to` is valid time (when it stopped being true), and they differ by exactly the lag between a change happening and us learning about it — which is the lag that makes as-of queries interesting.\n\nWhen a reconciler supplies no boundary, fall back to current behaviour so existing implementations keep working without change.\n\nAcceptance: the Berlin/Lisbon case is a test — write 'lives in Berlin' valid from 2019, then 'lives in Lisbon' valid from 2026-02 learned 2026-03, and assert that an as-of query for 2020 returns Berlin while an unqualified query returns Lisbon; a reconciler that supplies no boundary produces byte-identical behaviour to today; the distinction between `superseded_at` and `valid_to` is documented in DECISIONS.md so a future contributor cannot collapse them. Depends on STOR-3.",
+  "comments": []
+}

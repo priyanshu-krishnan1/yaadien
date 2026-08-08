@@ -1,0 +1,9 @@
+{
+  "id": "GOV-8",
+  "epic_id": "EPIC-32",
+  "title": "Refuse cross-model embedding comparison at the type level",
+  "summary": "Two tenants on different embedding models must not share an index or a distance computation.",
+  "status": "To Do",
+  "description": "Store `embedding_model_id` and `dim` per row and refuse comparison across them — a distance between vectors from different models is arithmetically valid and semantically meaningless, which is the worst combination because nothing errors. This overlaps EPIC-25 FLEX-2, which is already introducing versioned embedding metadata: **coordinate, do not duplicate.** If FLEX-2 has landed, this story is the enforcement layer on top of it and should be re-scoped to just that; if it has not, one of the two should absorb the other and the decision recorded here.\n\nAcceptance: a search against rows written under a different embedding model raises rather than returning nonsense; the check is at the repository layer so no adapter can bypass it; a model migration path exists (re-embed, or partition by model); FLEX-2 overlap is explicitly resolved with the outcome recorded in DECISIONS.md. Depends on coordination with EPIC-25.",
+  "comments": []
+}

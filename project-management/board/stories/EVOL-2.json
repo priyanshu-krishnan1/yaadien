@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-2",
+  "epic_id": "EPIC-31",
+  "title": "[Spike] Verify Db2 12.1.5 claim semantics before designing the queue around them",
+  "summary": "This repo has been bitten twice by assumed-standard Db2 behaviour; do not make it three times.",
+  "status": "To Do",
+  "description": "`FOR UPDATE SKIP LOCKED` is the standard queue-claim primitive, but Db2's support and exact semantics need confirming rather than assuming. Precedent for the caution is specific: the EPIC-25 audit found vectors cannot be parameter-bound on this version (forcing inlined `CAST('{vec}' AS VECTOR(...))` literals, which is also why the log-expansion step exists in CI), and ORC-2 found `VECTOR_SERIALIZE` cannot be combined with `VECTOR_DISTANCE` in one statement. Two dialect surprises already, both found the expensive way.\n\nEstablish: whether `SKIP LOCKED` (or Db2's equivalent) exists on 12.1.5 and on `icr.io/db2_community/db2:12.1.5.0` specifically; its isolation-level interaction; behaviour under `CURRENTLY COMMITTED` semantics; whether an `UPDATE … RETURNING`-style atomic claim is available as an alternative; and the fallback shape if none of it works (optimistic claim with a version check, which the SDK already does for records and could reuse).\n\nTimebox: one working session, ending in a DECISIONS.md entry recording the chosen primitive and the evidence. Blocks EVOL-1.",
+  "comments": []
+}

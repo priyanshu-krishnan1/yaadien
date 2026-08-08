@@ -1,0 +1,9 @@
+{
+  "id": "VIDX-8",
+  "epic_id": "EPIC-28",
+  "title": "Two-column Matryoshka embeddings: index the short vector, rerank on the full one",
+  "summary": "Shortlist on 64-256 dims and rerank exactly on the full width — 4-12x less index memory for a small, measurable recall cost.",
+  "status": "To Do",
+  "description": "Add `embedding_short VECTOR(k, FLOAT32) NOT NULL` alongside the existing full-width column, create the `VANN` index on the short column only, and make `search()` a two-stage operation: ANN over `embedding_short` to produce a shortlist, exact `VECTOR_DISTANCE` over `embedding` to rerank it. Only valid for embedding models trained with Matryoshka representation learning, where leading dimensions carry coarse information by construction — for any other model, truncation is just information loss. Gate on a model-capability flag rather than assuming, and coordinate with EPIC-25 FLEX-2 which is already introducing embedding-model metadata.\n\nAcceptance: index size on disk measured before and after at 500k rows; VIDX-3 recall reported at k_short in {64, 128, 256} against the full-width baseline so the tradeoff is a curve rather than a claim; end-to-end p95 latency measured (two stages may be slower despite the smaller index — a legitimate outcome that should be reported honestly, not buried); the feature is off by default and opt-in per embedding provider. Depends on VIDX-3 for the recall baseline and VIDX-2 for whether Db2 constrains index-column choice.",
+  "comments": []
+}

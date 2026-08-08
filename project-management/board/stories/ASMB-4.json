@@ -1,0 +1,9 @@
+{
+  "id": "ASMB-4",
+  "epic_id": "EPIC-33",
+  "title": "Prefix-stable rendering so KV-cache reuse actually hits",
+  "summary": "If the card reshuffles every turn the cache never hits and the cost saving evaporates — which is exactly what naive re-ranking guarantees.",
+  "status": "To Do",
+  "description": "Split the rendered card into a stable long-term block and a volatile working-memory block, and render the stable block first and byte-identically while its contents are unchanged. Cache reuse is all-or-nothing on the prefix: one changed byte early in the card invalidates everything after it.\n\nThis is in direct tension with ASMB-3 — U-curve ordering wants to reorder by fresh value every turn, prefix stability wants byte-identity across turns. Resolve it explicitly: apply U-curve ordering *within* each block, and only reshuffle the stable block when its membership actually changes rather than when scores merely shift. Record the resolution in DECISIONS.md, because the tension will otherwise be rediscovered and 'fixed' in the wrong direction later.\n\nAcceptance: identical inputs produce byte-identical stable prefixes across calls, proven by a test; a membership change invalidates the prefix but a score-only change does not; prefix-hit rate is measurable and reported; the block boundary is documented and configurable. Depends on ASMB-3.",
+  "comments": []
+}

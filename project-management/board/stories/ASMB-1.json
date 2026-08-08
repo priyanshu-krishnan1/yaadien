@@ -1,0 +1,9 @@
+{
+  "id": "ASMB-1",
+  "epic_id": "EPIC-33",
+  "title": "Token accounting for assembled context cards",
+  "summary": "You cannot optimise accuracy per token without counting tokens; nothing currently does.",
+  "status": "To Do",
+  "description": "Add token counting to `get_context_card()` via an injected `TokenCounter` protocol (default: a character-ratio estimate, so the SDK acquires no tokenizer dependency and the dependency-light install path survives). Return the assembled token count and a per-section breakdown alongside the card.\n\nUnglamorous and load-bearing: ASMB-2's packing has no budget without it, ASMB-6's metric has no denominator, and every claim in EPIC-29 about accuracy per token is currently unverifiable.\n\nAcceptance: token counts returned with every card; the default estimator's error against a real tokenizer is measured and documented so callers know how much slack to leave; an exact counter is injectable; counting overhead is within noise. Blocks ASMB-2 and ASMB-6.",
+  "comments": []
+}

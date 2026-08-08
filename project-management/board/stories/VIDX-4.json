@@ -1,0 +1,9 @@
+{
+  "id": "VIDX-4",
+  "epic_id": "EPIC-28",
+  "title": "Surface the effective search mode in results instead of only in a log line",
+  "summary": "A run labelled APPROX that silently fell back to EXACT is a benchmark-integrity defect of exactly the kind EPIC-11 exists to prevent.",
+  "status": "To Do",
+  "description": "`search()` catches SQL0104N on the `APPROX` keyword, logs a warning, and retries without it. The runtime behaviour is right and stays. The problem is that the fallback is invisible above the log: a caller cannot tell, and a benchmark harness cannot record, that a run requested APPROX and measured EXACT.\n\nReturn the effective mode alongside results — via a result-metadata field or a `SearchResult` wrapper, chosen so it does not break the current return contract — and add a counter so repeated fallbacks are observable in aggregate rather than one warning at a time. Detect capability once per connection pool and cache it, rather than paying a failed statement on every search.\n\nAcceptance: a caller can read the effective mode; a Db2 build without APPROX support produces results flagged EXACT with the requested mode also recorded; the capability probe runs once per pool, proven by a test counting statement executions; every benchmark JSON emitted by `benchmarks/` carries the effective mode. Blocks VIDX-3.",
+  "comments": []
+}

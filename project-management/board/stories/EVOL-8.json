@@ -1,0 +1,9 @@
+{
+  "id": "EVOL-8",
+  "epic_id": "EPIC-31",
+  "title": "Success-gated procedural memory with reuse statistics",
+  "summary": "Write a procedure only when a trajectory is verified successful, and track its success rate on every reuse.",
+  "status": "To Do",
+  "description": "Change the `procedural` write path from observation-triggered to success-gated: a procedure is written when a trajectory is *verified* successful, carries `success_count` / `attempt_count`, and updates them on each reuse. Add an abstracted-workflow representation so a procedure generalises beyond the exact trajectory that produced it, indexed by natural-language description for retrieval.\n\nComparators: Agent Workflow Memory reports +24.6% (Mind2Web) and +51.1% (WebArena) relative success from inducing reusable workflows out of successful trajectories.\n\nThis makes `procedural` the one memory type with a closed feedback loop, and therefore the one place a reinforcement signal legitimately enters the store. It also means procedural decay should be driven by success rate rather than by time — a procedure that still works should not age out, and one that has started failing should demote quickly regardless of how recently it was used. Coordinate that with EVOL-4's per-type half-lives.\n\nAcceptance: procedures are written only on verified success; success rate is maintained and retrievable; a procedure whose success rate falls below a threshold is demoted by EVOL-5; measured on `benchmarks/agent_quality/` task-completion metrics with the feature on and off; the verification protocol is caller-injected, since only the caller knows what success means. Depends on EVOL-4.",
+  "comments": []
+}

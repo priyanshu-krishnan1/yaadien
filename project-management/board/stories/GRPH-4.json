@@ -1,0 +1,9 @@
+{
+  "id": "GRPH-4",
+  "epic_id": "EPIC-30",
+  "title": "[Spike] At what scope size does community detection start paying for itself",
+  "summary": "Leiden over a 40-node graph is theatre; find the threshold and the summary refresh cost before building GRPH-5.",
+  "status": "To Do",
+  "description": "Community summarisation is expensive — hierarchical clustering plus an LLM summary per community, regenerated as the graph changes — and its value is concentrated entirely in global questions. Below some graph size, a single summary over everything is both cheaper and better.\n\nDetermine: the node/edge count at which hierarchical communities beat a flat summary on global-question quality; how many levels are useful before they stop adding anything; the LLM cost of a full resummarisation at each scale; how much graph change should trigger a refresh (and whether incremental refresh is tractable at all, or whether it is always a full rebuild); and whether Leiden's well-connectedness guarantee matters at our sizes or whether the simpler Louvain is fine.\n\nConstruct global questions over the seed corpus to measure against — the existing suites are all retrieval-shaped and will not exercise this. Timebox: one working session. Acceptable outcome: 'no scope in realistic use is large enough; use a flat summary' — which would cancel GRPH-5 and is a good result. Depends on GRPH-1.",
+  "comments": []
+}

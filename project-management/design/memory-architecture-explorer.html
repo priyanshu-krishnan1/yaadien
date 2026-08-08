@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Memory SDK — Architecture &amp; Research Explorer</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#131822; --panel2:#1a2130; --line:#252d3d;
+    --ink:#e6ebf5; --dim:#8b98af; --dimmer:#5f6b80;
+    --accent:#4f9cf9; --accent2:#7ee3c0; --warn:#f0b429; --hot:#f2777a;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  header{padding:28px 32px 18px;border-bottom:1px solid var(--line);
+         background:linear-gradient(180deg,#101623,var(--bg));}
+  h1{margin:0 0 6px;font-size:22px;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:13.5px;margin:0}
+  nav{display:flex;gap:2px;padding:0 32px;border-bottom:1px solid var(--line);
+      background:var(--bg);position:sticky;top:0;z-index:20;overflow-x:auto}
+  nav button{background:none;border:0;color:var(--dim);font:inherit;font-size:13.5px;
+             padding:13px 16px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+  nav button:hover{color:var(--ink)}
+  nav button.on{color:var(--ink);border-bottom-color:var(--accent)}
+  main{padding:28px 32px 80px;max-width:1180px}
+  section{display:none} section.on{display:block}
+  h2{font-size:17px;margin:0 0 4px;letter-spacing:-.01em}
+  .lede{color:var(--dim);font-size:13.5px;margin:0 0 22px;max-width:74ch}
+
+  /* stack */
+  .stack{display:flex;flex-direction:column;gap:8px}
+  .plane{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+         padding:14px 16px;cursor:pointer;transition:.15s;position:relative;overflow:hidden}
+  .plane:hover{border-color:#3a465c;background:var(--panel2)}
+  .plane.open{border-color:var(--accent)}
+  .plane::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--pc,var(--dimmer))}
+  .ph{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .pn{font:600 11px/1 var(--mono);color:var(--dimmer);letter-spacing:.08em}
+  .pt{font-weight:600;font-size:14.5px}
+  .pinv{color:var(--dim);font-size:12.5px;margin-left:auto;font-style:italic}
+  .pbody{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13.5px}
+  .plane.open .pbody{display:block}
+  .cmp{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .chip{background:#0e131d;border:1px solid var(--line);border-radius:5px;
+        padding:3px 9px;font:12px/1.5 var(--mono);color:var(--dim)}
+  .chip.new{border-color:#2c6b4f;color:var(--accent2)}
+  .delta{margin-top:12px;font-size:13px}
+  .delta b{color:var(--accent2);font-weight:600}
+
+  /* algo cards */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px 16px}
+  .card h3{margin:0 0 3px;font-size:14.5px}
+  .card .tag{display:inline-block;font:11px/1 var(--mono);color:var(--dimmer);
+             border:1px solid var(--line);border-radius:4px;padding:3px 7px;margin:0 5px 8px 0}
+  .card p{margin:6px 0 10px;font-size:13.2px;color:#c3cddd}
+  .big{font:12.5px/1.7 var(--mono);background:#0e131d;border:1px solid var(--line);
+       border-radius:6px;padding:9px 11px;color:var(--accent2);white-space:pre-wrap;overflow-x:auto}
+  .src{font-size:12.5px;margin-top:10px;color:var(--dimmer)}
+
+  /* roadmap */
+  .phase{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+         padding:15px 17px;margin-bottom:12px}
+  .phase h3{margin:0 0 2px;font-size:14.5px}
+  .phase .why{color:var(--dim);font-size:12.5px;margin:0 0 12px}
+  .item{display:grid;grid-template-columns:44px 1fr;gap:12px;padding:8px 0;
+        border-top:1px solid var(--line);font-size:13.2px}
+  .item .id{font:600 12px/1.6 var(--mono);color:var(--accent)}
+  .item .rz{color:var(--dim);font-size:12.5px;margin-top:2px}
+
+  /* biblio */
+  .tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+  input[type=search]{flex:1;min-width:220px;background:var(--panel);border:1px solid var(--line);
+        color:var(--ink);border-radius:8px;padding:9px 12px;font:inherit;font-size:13.5px}
+  input[type=search]:focus{outline:none;border-color:var(--accent)}
+  .filt{background:var(--panel);border:1px solid var(--line);color:var(--dim);
+        border-radius:20px;padding:6px 13px;font-size:12.5px;cursor:pointer}
+  .filt:hover{color:var(--ink)}
+  .filt.on{background:var(--accent);border-color:var(--accent);color:#08111f;font-weight:600}
+  .ref{border-bottom:1px solid var(--line);padding:11px 2px;display:flex;gap:14px;align-items:baseline}
+  .ref .yr{font:12px/1.6 var(--mono);color:var(--dimmer);width:44px;flex:none}
+  .ref .meta{color:var(--dim);font-size:12.4px;margin-top:2px}
+  .ref .cats{margin-top:4px}
+  .ref .cats span{font:10.5px/1 var(--mono);color:var(--dimmer);border:1px solid var(--line);
+        border-radius:4px;padding:3px 6px;margin-right:5px}
+  .count{color:var(--dimmer);font-size:12.5px}
+  .empty{color:var(--dimmer);padding:24px 0;font-size:13.5px}
+  .note{background:#151b26;border-left:3px solid var(--warn);border-radius:0 8px 8px 0;
+        padding:11px 15px;font-size:13.2px;color:#cfd8e6;margin:18px 0}
+  .note b{color:var(--warn)}
+  footer{color:var(--dimmer);font-size:12.5px;padding:0 32px 40px;max-width:1180px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Agent Memory SDK — Architecture &amp; Research Explorer</h1>
+  <p class="sub">Companion to <code>ADVANCED_MEMORY_ARCHITECTURE.md</code> · v2 design research · 2026-08-08</p>
+</header>
+
+<nav>
+  <button class="on" data-t="planes">Seven planes</button>
+  <button data-t="algos">Algorithms</button>
+  <button data-t="pipeline">Retrieval pipeline</button>
+  <button data-t="roadmap">Roadmap</button>
+  <button data-t="biblio">Bibliography</button>
+</nav>
+
+<main>
+
+<section id="planes" class="on">
+  <h2>The seven planes</h2>
+  <p class="lede">Each plane owns exactly one invariant. Click to expand — chips in green are new in v2.
+     Today's SDK is essentially planes 1, 2 and 6, with a thin 3.</p>
+  <div class="stack" id="stack"></div>
+</section>
+
+<section id="algos">
+  <h2>Algorithms &amp; data structures</h2>
+  <p class="lede">Notation: <code>N</code> records in scope, <code>d</code> dims, <code>k</code> results,
+     <code>M</code> graph out-degree, <code>ef</code> search beam width.</p>
+  <div class="tools">
+    <button class="filt on" data-a="all">All</button>
+    <button class="filt" data-a="index">Index</button>
+    <button class="filt" data-a="rank">Ranking</button>
+    <button class="filt" data-a="temporal">Temporal</button>
+    <button class="filt" data-a="evolve">Evolution</button>
+    <button class="filt" data-a="graph">Graph</button>
+    <button class="filt" data-a="sketch">Sketches</button>
+  </div>
+  <div class="grid" id="algos-grid"></div>
+</section>
+
+<section id="pipeline">
+  <h2>How one <code>recall()</code> executes</h2>
+  <p class="lede">Candidate generation optimises recall; everything after fusion optimises precision
+     per token. The two filters in orange are correctness gates, not quality heuristics.</p>
+  <div id="pipe"></div>
+  <div class="note"><b>Objective function.</b> The target is not recall@k — it is
+     <i>answer accuracy per token of assembled context</i>. Long context does not remove the need for
+     memory: lost-in-the-middle costs &gt;30% mid-context, and all 18 frontier models tested in the
+     context-rot study degrade monotonically with input length.</div>
+</section>
+
+<section id="roadmap">
+  <h2>Migration path</h2>
+  <p class="lede">Ordered by leverage ÷ cost, with dependencies respected. Phase 1 adds no new
+     dependencies and breaks nothing.</p>
+  <div id="roadmap-body"></div>
+  <div class="note"><b>Ship nothing that doesn't win its own ablation.</b> A controlled study
+     (<i>Verbatim Chunks Beat Extracted Artifacts</i>) found raw chunks outperforming LLM-extracted
+     facts for long-conversation memory. Every item above must be independently toggleable and
+     reported in the ablation grid.</div>
+</section>
+
+<section id="biblio">
+  <h2>Bibliography</h2>
+  <p class="lede">Every citation in the design document. Search by title, author, venue, or idea.</p>
+  <div class="tools">
+    <input type="search" id="q" placeholder="Search — try &quot;temporal&quot;, &quot;poisoning&quot;, &quot;ANN&quot;, &quot;forgetting&quot;…" autocomplete="off">
+    <span class="count" id="count"></span>
+  </div>
+  <div class="tools" id="cats"></div>
+  <div id="refs"></div>
+</section>
+
+</main>
+
+<footer>Generated as a companion artifact. All links verified 2026-08-08. Source of truth is
+  <code>project-management/design/ADVANCED_MEMORY_ARCHITECTURE.md</code>.</footer>
+
+<script>
+/* ---------------- data ---------------- */
+const PLANES=[
+ {n:7,t:"Context assembly",c:"#7ee3c0",inv:"output fits the budget and is ordered for the U-curve",
+  d:"Turns a ranked candidate list into the actual string the model sees. Greedy score-density packing is (1−1/e)-optimal for the submodular value function MMR induces, so exact knapsack isn't worth it. Ordering matters as much as selection: place highest-value records at the <i>start and end</i>, low-value in the middle — the inverse of the lost-in-the-middle U-curve. Keep the rendered prefix byte-stable across turns so KV-cache reuse actually hits.",
+  now:["get_context_card()","pluggable Summarizer"],add:["token-budget solver","MMR","U-curve ordering","citation rendering"]},
+ {n:6,t:"Governance",c:"#f0b429",inv:"no read or write crosses a scope boundary",
+  d:"The SDK's strongest existing property — scope predicates enforced in SQL on every read and write. v2 adds the axis it's missing: <i>trust</i>. A poisoned memory survives the session, so one successful injection compromises every future interaction. AgentPoison reports ≥80% ASR at &lt;0.1% poison rate; MINJA reaches 98.2% injection success with query-level access only. Defence: quarantine untrusted writes and require mediated promotion.",
+  now:["scope predicates","TTL","forget()","erase_all()","export/import","MemoryOrigin"],
+  add:["trust tiers 0–3","promotion gates","provenance chain","write-time anomaly detection","hash-chained audit","ErasureCertificate"]},
+ {n:5,t:"Evolution (sleep-time)",c:"#c792ea",inv:"every derived record links to its sources — no orphans",
+  d:"Promotes the background worker from escape hatch to primary path. Sleep-time compute: when the agent is idle but still holds the context, it should be reasoning about it offline — turning raw context into learned context so test-time compute drops. Hosts reflection, entity resolution, community summarisation, decay sweeps, and reconciliation.",
+  now:["sync Consolidator","Reconciler","consolidate_every_n throttle","background script"],
+  add:["durable job queue (SKIP LOCKED)","reflection pass","DSR decay + eviction ladder","entity resolution","A-MEM style evolution","community summaries"]},
+ {n:4,t:"Reasoning",c:"#4f9cf9",inv:"no fact is asserted outside its valid-time interval",
+  d:"Entirely absent today. Bi-temporal edges make \"where did they live in 2020?\" answerable — a recency-only reconciler gets it wrong, because two facts with disjoint valid intervals are not a contradiction. Personalized PageRank over the entity graph handles multi-hop at 10–30× lower cost than iterative retrieval.",
+  now:[],add:["bi-temporal KG","entity graph","Personalized PageRank","as-of query path"]},
+ {n:3,t:"Retrieval",c:"#4f9cf9",inv:"every candidate carries a calibrated, comparable score",
+  d:"Multi-index candidate generation → RRF fusion → rerank → dedup. RRF is the right fusion primitive precisely because it is score-scale invariant: cosine distance and BM25 scores aren't comparable, but ranks are.",
+  now:["vector search","RRF + Python keyword ranker","chunk resolution","metadata filters"],
+  add:["query planning","real BM25","Matryoshka two-stage","cross-encoder rerank","MMR"]},
+ {n:2,t:"Index",c:"#8b98af",inv:"indexes are consistent with the store at read-your-writes",
+  d:"Scope columns are extremely high-selectivity, which makes the general filtered-ANN problem unnecessarily hard. Partitioning indexes per scope-prefix converts the hardest filtered case into the easy unfiltered case — and closes the index-isolation gap at the same time. Rare alignment of performance and security.",
+  now:["Db2 CREATE VECTOR INDEX per table"],
+  add:["VectorIndex protocol","per-scope-prefix partitioning","sparse/BM25 index","temporal composite index","DiskANN / RaBitQ backends"]},
+ {n:1,t:"Storage",c:"#8b98af",inv:"writes are idempotent and linearizable per record",
+  d:"Six normalised Db2 tables, one per memory type plus chunks. Soft delete, optimistic-concurrency versioning, content-hash dedup — already correct. v2 adds the temporal and provenance columns everything else depends on.",
+  now:["6 typed tables","soft delete","version / StaleWriteError","content-hash dedup","chunk table"],
+  add:["valid_from / valid_to","trust_tier","memory_edges table","hot / warm / cold tiers"]}
+];
+
+const ALGOS=[
+ {t:"HNSW",a:["index"],tags:["proximity graph","in-memory"],
+  p:"Multi-layer proximity graph; a node's top layer is drawn from an exponentially decaying distribution, giving skip-list-like scale separation. Deletes are tombstones — recall degrades under churn until rebuild, and agent memory is high-churn by construction.",
+  big:"build  O(N·log N·M·d)\nquery  O(ef·M·d)   ≈ O(log N) hops\nspace  O(N·(4d + 16M)) bytes",
+  s:[["Malkov & Yashunin, arXiv:1603.09320","https://arxiv.org/abs/1603.09320"]]},
+ {t:"DiskANN / Vamana",a:["index"],tags:["SSD","billion-scale"],
+  p:"Graph + full-precision vectors on SSD, PQ-compressed vectors in RAM for approximate distance; full-precision reads only for final rerank. A billion points on 64 GB RAM, &gt;5000 QPS at &lt;3 ms mean, 95%+ recall@1. FreshDiskANN adds streaming insert/delete — the property agent memory actually needs.",
+  big:"query  1 SSD round-trip per beam hop\nRAM    ~32 B/vector (PQ) vs 512 B fp32",
+  s:[["DiskANN, NeurIPS '19","https://www.microsoft.com/en-us/research/publication/diskann-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node/"]]},
+ {t:"Filtered ANN routing",a:["index"],tags:["predicate","selectivity"],
+  p:"No single method wins. Route on predicate selectivity: very low → pre-filter and brute force; middle → Filtered-DiskANN or ACORN; high → post-filter over a standard index with inflated k. Filtered-DiskANN prunes an edge only if the RNG condition holds <i>and</i> the intermediate node's labels cover both endpoints; ACORN inflates HNSW edges by γ to keep traversal navigable under selective predicates.",
+  big:"<0.1% pass  → pre-filter + exact scan\n0.1–10%     → Filtered-DiskANN / ACORN\n>10%        → post-filter, k' = k/selectivity",
+  s:[["Filtered-DiskANN (WWW '23)","https://harsha-simhadri.org/pubs/Filtered-DiskANN23.pdf"],["ACORN (SIGMOD '24)","https://dl.acm.org/doi/10.1145/3654923"],["Unified FANNS benchmark","https://arxiv.org/html/2509.07789v1"]]},
+ {t:"RaBitQ",a:["index"],tags:["quantization","error bound"],
+  p:"Quantizes d-dim vectors to d bits (vs 2d for PQ defaults) via randomly transformed bi-valued codebooks, with an <i>unbiased</i> distance estimator and a sharp theoretical error bound. PQ has no such bound and \"is observed to fail disastrously on some real-world datasets.\"",
+  big:"code size  d bits   (PQ/OPQ: 2d)\nestimator  unbiased, bounded error",
+  s:[["RaBitQ, SIGMOD '24","https://arxiv.org/abs/2405.12497"]]},
+ {t:"Reciprocal Rank Fusion",a:["rank"],tags:["fusion","already shipped"],
+  p:"Score-scale invariant, training-free, beats Condorcet Fuse and trained rank learners on LETOR 3. Already in <code>_rrf_fuse</code>; v2 exposes per-retriever weights and K. Lower K sharpens preference for top ranks; higher K flattens.",
+  big:"RRF(r) = Σᵢ  wᵢ / (K + rankᵢ(r)),   K = 60\ncost   O(Σ|Lᵢ| · log Σ|Lᵢ|)",
+  s:[["Cormack, Clarke & Büttcher, SIGIR '09","https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf"]]},
+ {t:"Matryoshka two-stage",a:["rank","index"],tags:["adaptive dim","near-free"],
+  p:"MRL-trained embeddings nest coarse information in leading dimensions. Shortlist on the first 64–256 dims, rerank the shortlist exactly on the full 768–3072. Two columns, ANN index only on the short one. Index memory drops 4–12× and the recall loss is small and measurable.",
+  big:"stage 1  ANN over d_short  (64–256)\nstage 2  exact over d_full on shortlist\ncost     +1 dot product per candidate",
+  s:[["Matryoshka Representation Learning, NeurIPS '22","https://proceedings.neurips.cc/paper_files/paper/2022/file/c32319f4868da7613d78af9993100e42-Paper-Conference.pdf"]]},
+ {t:"Maximal Marginal Relevance",a:["rank"],tags:["diversity","~40 LOC"],
+  p:"Agent memory is pathologically redundant — the same fact restated across sessions — so top-k by score returns k paraphrases of one thing. MMR trades relevance against novelty. The original paper suggests λ≈0.3 to explore the space, λ≈0.7 to focus; 0.7 is the right default here.",
+  big:"argmax  λ·sim(Rᵢ,q) − (1−λ)·max_{Rⱼ∈S} sim(Rᵢ,Rⱼ)\ncost    O(k·|C|·d)  greedy",
+  s:[["Carbonell & Goldstein, SIGIR '98","https://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf"]]},
+ {t:"Contextual Retrieval",a:["rank"],tags:["highest ROI","composes with chunker"],
+  p:"Prepend a 50–100 token LLM-generated situating context to each chunk <i>before</i> embedding and before BM25 indexing. Maps directly onto the existing chunk row as a <code>context_prefix</code> column. Cost amortised to ~$1.02 per million document tokens via prompt caching.",
+  big:"contextual embeddings        −35% failure\n+ contextual BM25            −49%\n+ reranking                  −67%",
+  s:[["Anthropic engineering","https://www.anthropic.com/engineering/contextual-retrieval"]]},
+ {t:"Budget packing",a:["rank"],tags:["submodular","greedy"],
+  p:"0/1 knapsack over (score, tokens) is O(n·B) exactly, but greedy by score-density is (1−1/e)-optimal for the monotone submodular objective MMR-style value functions induce — a strong enough guarantee that exact knapsack isn't worth the complexity. Per-type floors come from the existing <code>min_results_by_type</code>.",
+  big:"greedy by scoreᵢ / tokensᵢ\nguarantee  (1 − 1/e) ≈ 0.632 of optimal",
+  s:[["Nemhauser, Wolsey & Fisher, Math. Prog. 1978","https://link.springer.com/article/10.1007/BF01588971"]]},
+ {t:"Bi-temporal validity",a:["temporal"],tags:["correctness gate"],
+  p:"Four timestamps per fact: t_created / t_expired (when the system believed it) and t_valid / t_invalid (when it was true). \"I live in Berlin\" (valid from 2019) and \"I live in Lisbon\" (valid from Feb) are not a contradiction — they are disjoint intervals. A recency-only reconciler answers \"where did they live in 2020?\" wrong.",
+  big:"as-of t:  valid_from <= t\n      AND (valid_to IS NULL OR valid_to > t)",
+  s:[["Zep / Graphiti, arXiv:2501.13956","https://arxiv.org/abs/2501.13956"],["TSQL2 data model (Snodgrass et al.)","https://people.cs.aau.dk/~csj/Thesis/pdf/chapter12.pdf"],["Bitemporal History (Fowler)","https://martinfowler.com/articles/bitemporal-history.html"]]},
+ {t:"Temporal index — use the B-tree",a:["temporal"],tags:["don't build this"],
+  p:"Interval trees give O(log N + m) stabbing queries, but a composite B-tree on (scope…, valid_from DESC, valid_to) gets you there natively with good selectivity. Db2 supports SQL:2011 system- and application-period temporal tables — a strictly better fit than hand-rolling an augmented red-black tree.",
+  big:"interval tree  O(log N + m) query, O(N) space\nsegment tree   O(log N + m), O(N log N) space\nB-tree         native, O(N) space   ← use this",
+  s:[["Bitemporal databases: PRISMA review","https://link.springer.com/article/10.1007/s42488-026-00162-x"]]},
+ {t:"DSR decay &amp; eviction ladder",a:["evolve"],tags:["power law","unbounded growth"],
+  p:"Ebbinghaus's exponential is the classic form, but FSRS replaced it with a power law in v4 because it fit real review logs better. The reason matters here: a power law has a <i>falling hazard rate</i>, so a memory that already survived a long interval is more durable going forward — exactly the behaviour you want for facts retrieved across many sessions. Never hard-delete on decay: hot → warm (summary) → cold (archived) → purged.",
+  big:"R(t) = (1 + F·t/S)^D          D < 0\nS'   = S·(1 + G·(1 − R))      on retrieval",
+  s:[["FSRS algorithm (DSR)","https://github.com/open-spaced-repetition/awesome-fsrs/wiki/The-Algorithm"],["MaiMemo TKDE paper","http://www.maimemo.com/paper/"],["FSFM selective forgetting","https://arxiv.org/pdf/2604.20300"]]},
+ {t:"Reflection",a:["evolve"],tags:["write path"],
+  p:"Periodically take the n most recent high-importance records, ask the model for salient higher-level inferences, write those back as first-class retrievable records with DERIVED_FROM edges. Trigger on cumulative importance crossing a threshold, not on a timer.",
+  big:"score = α_rec·recency + α_imp·importance\n      + α_rel·relevance          (α = 1 in the paper)",
+  s:[["Generative Agents, UIST '23","https://dl.acm.org/doi/fullHtml/10.1145/3586183.3606763"],["A-MEM, arXiv:2502.12110","https://arxiv.org/abs/2502.12110"]]},
+ {t:"Sleep-time compute",a:["evolve"],tags:["architectural unlock"],
+  p:"When the agent is idle but still holds the context, it should reason about it offline — anticipating queries and precomputing derived quantities. Raw context becomes learned context, and test-time compute drops accordingly. Concretely: a durable job queue with FOR UPDATE SKIP LOCKED claim semantics and job kinds CONSOLIDATE / REFLECT / RESOLVE_ENTITIES / SUMMARISE_COMMUNITY / DECAY_SWEEP / REINDEX.",
+  big:"job claim:  SELECT … FOR UPDATE SKIP LOCKED\nidempotent, at-least-once, per-scope fairness",
+  s:[["Sleep-time Compute, arXiv:2504.13171","https://arxiv.org/abs/2504.13171"]]},
+ {t:"Personalized PageRank",a:["graph"],tags:["multi-hop","cheap"],
+  p:"Seed the restart distribution with query-matched entity nodes, run PPR to convergence, rank memories by accumulated node mass. Mimics hippocampal indexing — a rapid-encoding index over a slowly-generalising neocortex. 10–30× cheaper and 6–13× faster than iterative retrieval (IRCoT) at comparable multi-hop quality, on a per-scope graph that stays small.",
+  big:"π = α·s + (1−α)·Pᵀπ      α ≈ 0.15\ncost  O(iters·|E|),  ~20 power iterations",
+  s:[["HippoRAG, NeurIPS '24","https://arxiv.org/abs/2405.14831"],["HippoRAG 2","https://arxiv.org/pdf/2502.14802"]]},
+ {t:"Leiden community summaries",a:["graph"],tags:["global questions"],
+  p:"Recursively partition the entity graph into a hierarchy of communities, then LLM-summarise each. This is the only way global questions — \"what are the main themes with this user?\" — become answerable; pure top-k retrieval structurally cannot answer them. Leiden over Louvain because it guarantees well-connected communities.",
+  big:"levels form a mutually-exclusive,\ncollectively-exhaustive cover per level\n→ divide-and-conquer global summarisation",
+  s:[["GraphRAG, arXiv:2404.16130","https://arxiv.org/abs/2404.16130"],["Leiden, arXiv:1810.08473","https://arxiv.org/abs/1810.08473"]]},
+ {t:"Entity resolution",a:["graph","evolve"],tags:["blocking cascade"],
+  p:"Without it, \"Priyanshu\", \"P. Krishnan\" and user_42 become three profiles and the graph fragments. Blocking → pairwise scoring → clustering is the only way to avoid O(N²). Cascade cheap-to-expensive: normalised-name / embedding-LSH bucket, then a similarity function, then LLM adjudication <i>only</i> on the ambiguous band — so cost scales with the band, not with N.",
+  big:"naive     O(N²) comparisons\nblocked   O(N·b̄)  where b̄ = avg block size\nLLM calls O(|ambiguous band|)",
+  s:[["Blocking & filtering survey, arXiv:1905.06167","https://arxiv.org/pdf/1905.06167"]]},
+ {t:"Count–Min Sketch",a:["sketch"],tags:["O(1) update"],
+  p:"Per-record retrieval frequency for the utility term of the eviction score, without a write on every read. One-sided error (never underestimates), lives in-process, flushes periodically, never touches the hot write path.",
+  big:"update  O(1)\nspace   O(ε⁻¹ · log δ⁻¹)\nerror   one-sided, ≤ εN w.p. 1−δ",
+  s:[["Cormode & Muthukrishnan, J. Algorithms 2005","https://doi.org/10.1016/j.jalgor.2003.12.001"]]},
+ {t:"HyperLogLog",a:["sketch"],tags:["distinct queries"],
+  p:"Distinct-query cardinality per memory in ~1.5 KB at ~2% error. Distinguishes \"retrieved 100× by one query pattern\" from \"retrieved 100× by 100 different needs\" — the latter is far more valuable and should survive eviction. Frequency alone can't tell these apart.",
+  big:"space  ~1.5 KB per counter\nerror  ~2% relative standard error",
+  s:[["Flajolet, Fusy, Gandouet & Meunier, DMTCS 2007","https://dmtcs.episciences.org/3545"]]},
+ {t:"MVCC, not CRDTs (mostly)",a:["sketch"],tags:["concurrency"],
+  p:"The existing version column + StaleWriteError is correct for single-writer-per-record. Multi-agent shared memory breaks that. Prefer MVCC + Db2 snapshot isolation. Reach for CRDTs only for offline/partitioned convergence — OR-Set for tags, LWW-Register for scalar profile fields, G-Counter for access counts. Never CRDT the content field: text-merge semantics for facts are semantically wrong, and that's what reconciliation is for.",
+  big:"OR-Set        tag / label sets\nLWW-Register  scalar profile fields\nG-Counter     access counts\ncontent       ← reconciliation, not merge",
+  s:[["Shapiro et al., SSS 2011","https://link.springer.com/chapter/10.1007/978-3-642-24550-3_29"]]}
+];
+
+const PIPE=[
+ {k:"stage",t:"Query understanding",d:"intent routing · temporal expression extraction · multi-hop decomposition · HyDE (optional)"},
+ {k:"fan",t:"Candidate generation",d:"dense ANN (short dim) · sparse / BM25 · entity-graph PPR · temporal interval scan · recency (working memory)"},
+ {k:"stage",t:"RRF fusion",d:"weighted, K = 60 — score-scale invariant, so cosine distance and BM25 become comparable"},
+ {k:"stage",t:"Matryoshka exact rerank",d:"full-dimension dot product over the shortlist only"},
+ {k:"opt",t:"Cross-encoder rerank",d:"tier 2 — high-stakes reads only, k from 100 → 10"},
+ {k:"gate",t:"Bi-temporal validity filter",d:"drops facts outside their valid-time interval — a correctness gate, not a quality heuristic"},
+ {k:"gate",t:"Trust-tier filter",d:"drops unpromoted / quarantined memories below min_trust"},
+ {k:"stage",t:"MMR diversification",d:"λ = 0.7 — kills the k-paraphrases-of-one-thing failure mode"},
+ {k:"stage",t:"Budget-constrained packing",d:"greedy score-density, per-type floors, U-curve ordering"},
+ {k:"out",t:"Provenance-annotated context card",d:"prefix-stable rendering so KV-cache reuse hits"}
+];
+
+const ROADMAP=[
+ {p:"Phase 1 — Foundations",why:"No new dependencies, no breaking changes.",items:[
+  ["1.1","memory_edges table (src, dst, type, weight)","Unlocks provenance, cascading erasure, reflection, graph retrieval and community summaries. Everything downstream needs it — the highest-leverage schema addition in the document."],
+  ["1.2","Bi-temporal columns on facts + profiles","Correctness fix for temporal queries. valid_from defaults to created_at, valid_to NULL — backwards compatible."],
+  ["1.3","MMR diversification in search()","~40 LOC, outsized effect on context-card quality per token."],
+  ["1.4","Trust tier column + min_trust read param","Poisoning defence with the best structural fit; MemoryOrigin is already the substrate."],
+  ["1.5","Weighted RRF (expose wᵢ, K)","Already 90% there in _rrf_fuse."],
+  ["1.6","Scoring component logging","Prerequisite for fitting weights against LongMemEval instead of guessing them."]]},
+ {p:"Phase 2 — Retrieval quality",why:"Where the measurable wins are.",items:[
+  ["2.1","Contextual Retrieval (context_prefix on chunks)","Best measured ROI in the document — −49% retrieval failure with contextual BM25."],
+  ["2.2","Real BM25 replacing the Python overlap ranker","Fixes the proper-noun / ID / rare-token failure mode."],
+  ["2.3","Matryoshka two-stage (short + full embedding columns)","4–12× index memory reduction, essentially free."],
+  ["2.4","Budget-aware packing + U-curve ordering","Directly targets accuracy-per-token."],
+  ["2.5","Query understanding: temporal extraction, intent routing","Without this, bi-temporal storage is inert."]]},
+ {p:"Phase 3 — Evolution plane",why:"Sleep-time compute as the primary consolidation path.",items:[
+  ["3.1","Durable job queue (memory_jobs, SKIP LOCKED)","Unblocks 3.2–3.5; promotes the background worker from escape hatch to primary."],
+  ["3.2","Reflection pass writing DERIVED_FROM records","Generative Agents' highest-value mechanism."],
+  ["3.3","DSR decay + hot/warm/cold eviction ladder","Unbounded growth is the #1 production failure mode."],
+  ["3.4","Entity resolution (blocking → score → LLM adjudication)","Without it the graph fragments and profiles multiply."],
+  ["3.5","A-MEM style evolution — writes update neighbour tags/links","Self-refining network rather than pure accretion."]]},
+ {p:"Phase 4 — Reasoning plane",why:"The layer the SDK doesn't have at all today.",items:[
+  ["4.1","Entity graph projection over memory_edges","Substrate for 4.2–4.3."],
+  ["4.2","Personalized PageRank as an RRF arm","Multi-hop, cheap, well-validated."],
+  ["4.3","Leiden hierarchical community summaries","Only way to answer global/thematic questions."],
+  ["4.4","Verified procedural memory with success-rate stats","Closes the reinforcement loop — the one type with real feedback."]]},
+ {p:"Phase 5 — Scale &amp; hardening",why:"Makes the governance story compliance-grade.",items:[
+  ["5.1","VectorIndex protocol + per-scope-prefix partitioning","Turns hard filtered-ANN into easy unfiltered ANN, and closes the index-isolation gap."],
+  ["5.2","DiskANN / RaBitQ backends behind the protocol","Billion-scale path without abandoning Db2 governance."],
+  ["5.3","Hash-chained audit log + ErasureCertificate","Rows, edges, indexes, summaries, deny-list — all accounted for."],
+  ["5.4","Poisoning eval in CI (AgentPoison-style ASR regression)","Security as a benchmark, not a claim."],
+  ["5.5","Cross-encoder rerank adapter (optional extra)","Quality ceiling for high-stakes reads."]]}
+];
+
+const REFS=[
+ ["Memory in the Age of AI Agents",2025,"Hu, Liu, Yue et al. — arXiv:2512.13564","https://arxiv.org/abs/2512.13564",["survey"],"forms functions dynamics taxonomy token parametric latent fragmentation benchmarks frameworks"],
+ ["Cognitive Architectures for Language Agents (CoALA)",2023,"Sumers, Yao, Narasimhan & Griffiths — TMLR","https://arxiv.org/abs/2309.02427",["survey"],"working episodic semantic procedural Tulving trichotomy modular memory decision procedure"],
+ ["Agent-Memory-Paper-List",2026,"companion bibliography to the survey","https://github.com/Shichun-Liu/Agent-Memory-Paper-List",["survey"],"reading list papers tracking"],
+ ["LLM Agent Memory: Unified Representation–Management Survey",2025,"OpenReview","https://openreview.net/forum?id=KPs1EgGKcT",["survey"],"construction update query stages"],
+ ["Always-On Agents: Persistent Memory, State, and Governance",2026,"arXiv:2606.30306","https://arxiv.org/pdf/2606.30306",["survey","governance"],"persistent state governance always on"],
+ ["Memory for Autonomous LLM Agents: Mechanisms, Evaluation, Frontiers",2026,"arXiv:2603.07670","https://arxiv.org/html/2603.07670v1",["survey"],"mechanisms evaluation frontiers"],
+ ["Adaptation of Agentic AI: Post-Training, Memory, and Skills",2025,"arXiv:2512.16301","https://arxiv.org/pdf/2512.16301",["survey","evolution"],"post training skills adaptation"],
+
+ ["MemGPT: Towards LLMs as Operating Systems",2023,"Packer et al. — arXiv:2310.08560","https://arxiv.org/abs/2310.08560",["architecture"],"virtual context paging main context archival interrupts self-editing letta operating system"],
+ ["Generative Agents: Interactive Simulacra of Human Behavior",2023,"Park et al. — UIST '23","https://dl.acm.org/doi/fullHtml/10.1145/3586183.3606763",["architecture","evolution"],"memory stream recency importance relevance reflection planning smallville"],
+ ["HippoRAG: Neurobiologically Inspired Long-Term Memory",2024,"Gutiérrez et al. — NeurIPS '24","https://arxiv.org/abs/2405.14831",["architecture","graph"],"personalized pagerank hippocampal indexing neocortex multi-hop knowledge graph"],
+ ["HippoRAG 2: From RAG to Memory",2025,"arXiv:2502.14802","https://arxiv.org/pdf/2502.14802",["architecture","graph"],"non-parametric continual learning"],
+ ["Zep: A Temporal Knowledge Graph Architecture for Agent Memory",2025,"Rasmussen et al. — arXiv:2501.13956","https://arxiv.org/abs/2501.13956",["architecture","temporal","graph"],"graphiti bi-temporal edge invalidation valid time transaction time contradiction"],
+ ["A-MEM: Agentic Memory for LLM Agents",2025,"Xu, Liang, Mei et al. — arXiv:2502.12110","https://arxiv.org/abs/2502.12110",["architecture","evolution"],"zettelkasten notes keywords tags links memory evolution dynamic organization"],
+ ["Mem0: Production-Ready AI Agents with Scalable Long-Term Memory",2025,"arXiv:2504.19413","https://arxiv.org/abs/2504.19413",["architecture","eval"],"extraction consolidation locomo p95 latency token cost graph memory mem0g"],
+ ["Sleep-time Compute: Beyond Inference Scaling at Test-time",2025,"Lin et al., Letta — arXiv:2504.13171","https://arxiv.org/abs/2504.13171",["evolution"],"offline reasoning learned context idle background agent precompute"],
+ ["Agent Workflow Memory",2024,"Wang, Mao, Fried & Neubig — ICML '25","https://arxiv.org/abs/2409.07429",["evolution"],"induced workflows routines procedural mind2web webarena abstracted action templates"],
+ ["Voyager: An Open-Ended Embodied Agent with LLMs",2023,"arXiv:2305.16291","https://arxiv.org/abs/2305.16291",["evolution"],"skill library minecraft curriculum verified routines continual no catastrophic forgetting"],
+ ["Titans: Learning to Memorize at Test Time",2025,"Behrouz, Zhong & Mirrokni — arXiv:2501.00663","https://arxiv.org/abs/2501.00663",["architecture"],"neural long-term memory module surprise gradient parametric test time out of scope"],
+
+ ["HNSW: Efficient and Robust ANN Search",2016,"Malkov & Yashunin — arXiv:1603.09320","https://arxiv.org/abs/1603.09320",["index"],"hierarchical navigable small world proximity graph layers logarithmic"],
+ ["DiskANN: Billion-point Nearest Neighbor Search on a Single Node",2019,"Subramanya et al. — NeurIPS '19","https://www.microsoft.com/en-us/research/publication/diskann-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node/",["index"],"vamana ssd product quantization freshdiskann streaming billion scale"],
+ ["Filtered-DiskANN: Graph Algorithms for ANN with Filters",2023,"Gollapudi et al. — WWW '23","https://harsha-simhadri.org/pubs/Filtered-DiskANN23.pdf",["index"],"label aware rng pruning predicate attribute filter"],
+ ["ACORN: Predicate-Agnostic Search Over Vectors and Structured Data",2024,"SIGMOD '24","https://dl.acm.org/doi/10.1145/3654923",["index"],"gamma edge inflation hnsw variant hybrid query selectivity"],
+ ["RaBitQ: Quantizing High-Dimensional Vectors with a Theoretical Error Bound",2024,"Gao & Long — SIGMOD '24","https://arxiv.org/abs/2405.12497",["index"],"binary quantization unbiased estimator product quantization comparison"],
+ ["Filtered ANN Search: A Unified Benchmark and Systematic Study",2025,"arXiv:2509.07789","https://arxiv.org/html/2509.07789v1",["index","eval"],"no single method wins scale predicate benchmark"],
+ ["VIBE: Vector Index Benchmark for Embeddings",2025,"arXiv:2505.17810","https://arxiv.org/pdf/2505.17810",["index","eval"],"benchmark recall qps"],
+
+ ["Reciprocal Rank Fusion outperforms Condorcet",2009,"Cormack, Clarke & Büttcher — SIGIR '09","https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf",["ranking"],"rrf fusion k=60 letor rank learning score scale invariant"],
+ ["The Use of MMR, Diversity-Based Reranking",1998,"Carbonell & Goldstein — SIGIR '98","https://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf",["ranking"],"maximal marginal relevance lambda novelty redundancy summarization"],
+ ["ColBERTv2: Retrieval via Lightweight Late Interaction",2021,"Santhanam et al. — arXiv:2112.01488","https://arxiv.org/abs/2112.01488",["ranking"],"maxsim token embeddings residual compression late interaction"],
+ ["PLAID: An Efficient Engine for Late Interaction Retrieval",2022,"arXiv:2205.09707","https://arxiv.org/pdf/2205.09707",["ranking"],"centroid interaction pruning speedup cpu gpu"],
+ ["Matryoshka Representation Learning",2022,"Kusupati et al. — NeurIPS '22","https://proceedings.neurips.cc/paper_files/paper/2022/file/c32319f4868da7613d78af9993100e42-Paper-Conference.pdf",["ranking","index"],"nested dimensions adaptive retrieval shortlist rerank embedding compression"],
+ ["HyDE: Precise Zero-Shot Dense Retrieval",2022,"Gao et al. — arXiv:2212.10496","https://arxiv.org/abs/2212.10496",["ranking"],"hypothetical document embeddings question answer asymmetry"],
+ ["Contextual Retrieval",2024,"Anthropic engineering","https://www.anthropic.com/engineering/contextual-retrieval",["ranking"],"contextual embeddings bm25 chunk prefix prompt caching failure rate reduction"],
+ ["Lost in the Middle: How Language Models Use Long Contexts",2023,"Liu et al. — arXiv:2307.03172","https://arxiv.org/abs/2307.03172",["context"],"u shaped position bias multi document qa key value retrieval rope decay"],
+ ["Context Rot: How Increasing Input Tokens Impacts LLM Performance",2025,"Chroma technical report","https://research.trychroma.com/context-rot",["context"],"18 models degradation input length non-uniform attention"],
+
+ ["GraphRAG: From Local to Global Query-Focused Summarization",2024,"Edge et al. — arXiv:2404.16130","https://arxiv.org/abs/2404.16130",["graph"],"leiden hierarchical communities global sensemaking summaries divide conquer"],
+ ["From Louvain to Leiden: guaranteeing well-connected communities",2018,"Traag, Waltman & van Eck — arXiv:1810.08473","https://arxiv.org/abs/1810.08473",["graph"],"community detection modularity partition quality"],
+ ["The TSQL2 Data Model",1995,"Jensen, Snodgrass & Soo","https://people.cs.aau.dk/~csj/Thesis/pdf/chapter12.pdf",["temporal"],"valid time transaction time bitemporal sql 2011 standard"],
+ ["Bitemporal History",2021,"Martin Fowler","https://martinfowler.com/articles/bitemporal-history.html",["temporal"],"practitioner treatment record time actual time"],
+ ["Bitemporal databases: a PRISMA systematic review",2026,"J. Data, Information and Management","https://link.springer.com/article/10.1007/s42488-026-00162-x",["temporal"],"systematic literature review sql 2011 adoption"],
+ ["ATOM: Adaptive dynamic temporal KG construction with LLMs",2025,"arXiv:2510.22590","https://arxiv.org/pdf/2510.22590",["temporal","graph"],"temporal knowledge graph construction"],
+ ["A Survey of Blocking and Filtering Techniques for Entity Resolution",2019,"Papadakis et al. — arXiv:1905.06167","https://arxiv.org/pdf/1905.06167",["graph","evolution"],"record linkage deduplication candidate pairs quadratic blocking key"],
+
+ ["FSRS: The Algorithm (DSR model)",2026,"open-spaced-repetition","https://github.com/open-spaced-repetition/awesome-fsrs/wiki/The-Algorithm",["forgetting"],"difficulty stability retrievability power law forgetting curve spaced repetition hazard rate"],
+ ["Optimizing Spaced Repetition by Capturing Memory Dynamics",2023,"MaiMemo — IEEE TKDE","http://www.maimemo.com/paper/",["forgetting"],"dsr peer reviewed stochastic shortest path"],
+ ["Unbounded Human Learning: Optimal Scheduling for Spaced Repetition",2016,"arXiv:1602.07032","https://arxiv.org/pdf/1602.07032",["forgetting"],"ebbinghaus exponential scheduling optimization"],
+ ["FSFM: Biologically-Inspired Selective Forgetting for Agent Memory",2026,"arXiv:2604.20300","https://arxiv.org/pdf/2604.20300",["forgetting"],"selective forgetting agent memory framework"],
+ ["Control-Plane Placement Shapes Forgetting",2026,"arXiv:2606.15903","https://arxiv.org/pdf/2606.15903",["forgetting","architecture"],"thirteen system configurations architectural study"],
+
+ ["AgentPoison: Red-teaming LLM Agents via Poisoning Memory",2024,"Chen et al. — NeurIPS '24","https://proceedings.neurips.cc/paper_files/paper/2024/file/eb113910e9c3f6242541c1652e30dfd6-Paper-Conference.pdf",["security"],"backdoor trigger optimization rag knowledge base attack success rate poison rate"],
+ ["Memory Poisoning Attack and Defense on Memory-Based LLM Agents",2026,"arXiv:2601.05504","https://arxiv.org/abs/2601.05504",["security"],"minja query level access gating input output moderation defense"],
+ ["MemoryGraft: Persistent Compromise via Poisoned Experience Retrieval",2025,"arXiv:2512.16962","https://arxiv.org/html/2512.16962v1",["security"],"experience retrieval persistent compromise"],
+ ["Long-Term Memory Security in LLM Agents: Attacks, Defenses, Governance",2026,"arXiv:2604.16548","https://arxiv.org/abs/2604.16548",["security","governance"],"lifecycle provenance versioning retention policy mnemonic sovereignty"],
+ ["SSGM: Stability and Safety Governed Memory",2026,"arXiv:2603.11768","https://arxiv.org/html/2603.11768v1",["security","governance"],"evolving memory risks mechanisms framework"],
+ ["Hijacking Agent Memory: Stealthy Trojan Attacks",2026,"arXiv:2605.29960","https://arxiv.org/html/2605.29960",["security"],"conversational interaction trojan"],
+ ["Agentic Unlearning: When LLM Agent Meets Machine Unlearning",2026,"arXiv:2602.17692","https://arxiv.org/html/2602.17692v1",["security","governance"],"information backflow parametric residue regeneration deny list"],
+ ["Algorithms that forget: machine unlearning and the right to erasure",2023,"Computer Law & Security Review","https://www.sciencedirect.com/science/article/pii/S026736492300095X",["governance"],"gdpr article 17 right to be forgotten legal"],
+ ["Towards Probabilistic Verification of Machine Unlearning",2020,"arXiv:2003.04247","https://arxiv.org/pdf/2003.04247",["governance"],"verification deletion proof extraction attack"],
+
+ ["LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory",2024,"Wu et al. — arXiv:2410.10813","https://arxiv.org/abs/2410.10813",["eval"],"extraction cross session reasoning temporal knowledge updates abstention 500 questions"],
+ ["LoCoMo: Evaluating Very Long-Term Conversational Memory",2024,"Maharana et al. — arXiv:2402.17753","https://arxiv.org/abs/2402.17753",["eval"],"300 turns 35 sessions personas temporal event graphs multimodal"],
+ ["Verbatim Chunks Beat Extracted Artifacts",2026,"arXiv:2601.00821","https://arxiv.org/pdf/2601.00821",["eval"],"controlled ablation memory representations consolidation not free"],
+ ["Entity-Collision: Attributing Retrieval Lift in Agent Memory",2026,"arXiv:2605.29630","https://arxiv.org/pdf/2605.29630",["eval"],"stratified protocol entity overlap leakage honest reporting"],
+ ["MemSyco-Bench: Benchmarking Sycophancy in Agent Memory",2026,"arXiv:2607.01071","https://arxiv.org/pdf/2607.01071",["eval"],"agreement bias preferences profiles"],
+ ["EvoMemBench: Agent Memory from a Self-Evolving Perspective",2026,"arXiv:2605.18421","https://arxiv.org/pdf/2605.18421",["eval","evolution"],"self evolving benchmark"],
+
+ ["Count–Min Sketch",2005,"Cormode & Muthukrishnan — J. Algorithms","https://doi.org/10.1016/j.jalgor.2003.12.001",["foundations"],"frequency estimation sublinear streaming one sided error"],
+ ["HyperLogLog",2007,"Flajolet, Fusy, Gandouet & Meunier — DMTCS","https://dmtcs.episciences.org/3545",["foundations"],"cardinality estimation distinct count near optimal"],
+ ["Conflict-Free Replicated Data Types",2011,"Shapiro, Preguiça, Baquero & Zawirski — SSS '11","https://link.springer.com/chapter/10.1007/978-3-642-24550-3_29",["foundations"],"crdt or-set lww register g-counter strong eventual consistency convergence"],
+ ["An analysis of approximations for maximizing submodular set functions",1978,"Nemhauser, Wolsey & Fisher — Math. Programming","https://link.springer.com/article/10.1007/BF01588971",["foundations"],"greedy 1-1/e bound submodular knapsack packing guarantee"]
+];
+
+/* ---------------- render ---------------- */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+
+// tabs
+$$("nav button").forEach(b=>b.onclick=()=>{
+  $$("nav button").forEach(x=>x.classList.toggle("on",x===b));
+  $$("main section").forEach(s=>s.classList.toggle("on",s.id===b.dataset.t));
+  window.scrollTo({top:0,behavior:"smooth"});
+});
+
+// planes
+$("#stack").innerHTML=PLANES.map(p=>`
+ <div class="plane" style="--pc:${p.c}">
+  <div class="ph">
+    <span class="pn">PLANE ${p.n}</span>
+    <span class="pt">${p.t}</span>
+    <span class="pinv">${p.inv}</span>
+  </div>
+  <div class="pbody">
+    <div>${p.d}</div>
+    <div class="cmp">
+      ${p.now.map(c=>`<span class="chip">${c}</span>`).join("")}
+      ${p.add.map(c=>`<span class="chip new">+ ${c}</span>`).join("")}
+    </div>
+    <div class="delta">${p.now.length?`<b>${p.add.length} additions</b> on top of ${p.now.length} existing capabilities.`:`<b>New plane</b> — ${p.add.length} components, none present today.`}</div>
+  </div>
+ </div>`).join("");
+$$(".plane").forEach(el=>el.onclick=()=>el.classList.toggle("open"));
+
+// algos
+function drawAlgos(f){
+  const list=f==="all"?ALGOS:ALGOS.filter(a=>a.a.includes(f));
+  $("#algos-grid").innerHTML=list.map(a=>`
+   <div class="card">
+     <h3>${a.t}</h3>
+     <div>${a.tags.map(t=>`<span class="tag">${t}</span>`).join("")}</div>
+     <p>${a.p}</p>
+     <div class="big">${a.big}</div>
+     <div class="src">${a.s.map(([n,u])=>`<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join(" · ")}</div>
+   </div>`).join("");
+}
+drawAlgos("all");
+$$("#algos .filt").forEach(b=>b.onclick=()=>{
+  $$("#algos .filt").forEach(x=>x.classList.toggle("on",x===b));
+  drawAlgos(b.dataset.a);
+});
+
+// pipeline
+const COL={stage:"#4f9cf9",fan:"#7ee3c0",gate:"#f0b429",opt:"#8b98af",out:"#c792ea"};
+$("#pipe").innerHTML=PIPE.map((s,i)=>`
+ <div class="plane open" style="--pc:${COL[s.k]};cursor:default">
+   <div class="ph"><span class="pn">${String(i+1).padStart(2,"0")}</span>
+   <span class="pt">${s.t}</span>
+   ${s.k==="gate"?'<span class="pinv" style="color:#f0b429">correctness gate</span>':""}
+   ${s.k==="opt"?'<span class="pinv">optional · tier 2</span>':""}</div>
+   <div class="pbody" style="border-top:0;padding-top:4px;margin-top:4px;color:#c3cddd">${s.d}</div>
+ </div>`).join("");
+
+// roadmap
+$("#roadmap-body").innerHTML=ROADMAP.map(ph=>`
+ <div class="phase">
+   <h3>${ph.p}</h3>
+   <p class="why">${ph.why}</p>
+   ${ph.items.map(([id,t,r])=>`<div class="item"><div class="id">${id}</div>
+     <div><div>${t}</div><div class="rz">${r}</div></div></div>`).join("")}
+ </div>`).join("");
+
+// bibliography
+const CATS=[...new Set(REFS.flatMap(r=>r[4]))].sort();
+let active="all";
+$("#cats").innerHTML=[`<button class="filt on" data-c="all">All</button>`]
+  .concat(CATS.map(c=>`<button class="filt" data-c="${c}">${c}</button>`)).join("");
+
+function drawRefs(){
+  const q=$("#q").value.trim().toLowerCase();
+  const out=REFS.filter(r=>{
+    if(active!=="all" && !r[4].includes(active)) return false;
+    if(!q) return true;
+    return (r[0]+" "+r[2]+" "+r[4].join(" ")+" "+r[5]).toLowerCase().includes(q);
+  }).sort((a,b)=>b[1]-a[1]);
+  $("#count").textContent=`${out.length} of ${REFS.length}`;
+  $("#refs").innerHTML = out.length ? out.map(r=>`
+    <div class="ref">
+      <div class="yr">${r[1]}</div>
+      <div>
+        <a href="${r[3]}" target="_blank" rel="noopener">${r[0]}</a>
+        <div class="meta">${r[2]}</div>
+        <div class="cats">${r[4].map(c=>`<span>${c}</span>`).join("")}</div>
+      </div>
+    </div>`).join("") : `<div class="empty">No matches. Try a broader term.</div>`;
+}
+$("#q").oninput=drawRefs;
+$$("#cats .filt").forEach(b=>b.onclick=()=>{
+  active=b.dataset.c;
+  $$("#cats .filt").forEach(x=>x.classList.toggle("on",x===b));
+  drawRefs();
+});
+drawRefs();
+</script>
+</body>
+</html>

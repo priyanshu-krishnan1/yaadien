@@ -1,0 +1,9 @@
+{
+  "id": "RTRV-6",
+  "epic_id": "EPIC-29",
+  "title": "Emit per-component scores so the weights can be fitted rather than guessed",
+  "summary": "Log relevance, recency, importance, confidence, frequency, and decay contributions alongside every result.",
+  "status": "To Do",
+  "description": "The generalised scoring function this arc converges on is `w_rel·cos + w_rec·exp(−λΔt) + w_imp·importance + w_cnf·confidence + w_frq·log(1+freq) − w_dec·decay`. Several inputs already exist as columns (`confidence`, timestamps); frequency needs EVOL-4's access statistics; decay needs EVOL-4's DSR model. This story does the plumbing that makes fitting possible: compute and return every component alongside the fused score, behind a flag so the hot path is unaffected when it is off.\n\nWithout this, every weight in `benchmarks/scoring_weights.yaml` is a guess defended by intuition, and EPIC-31's decay parameters have no evidence to be fitted against.\n\nAcceptance: components are returned when requested and absent when not; a fitting script in `benchmarks/` can consume them to optimise weights against LongMemEval; measured overhead when disabled is within noise; components missing their inputs (frequency and decay before EVOL-4) are explicitly reported as absent rather than defaulted to zero, because a silent zero is indistinguishable from a real zero. Blocks RTRV-4 tuning and EVOL-4.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "ASMB-5",
+  "epic_id": "EPIC-33",
+  "title": "Render provenance and trust so the governance plane survives the last hop",
+  "summary": "A card presenting a tier-0 quarantined memory and a tier-3 operator assertion in identical prose has discarded EPIC-32's entire output.",
+  "status": "To Do",
+  "description": "Annotate each rendered memory with its trust tier, origin, confidence, and validity interval where relevant, in a compact format that does not eat the budget it is meant to protect — target well under 10 tokens of annotation per record. Provide a citation-style rendering so the model can reference which memory grounded which claim, which also makes downstream faithfulness and groundedness scoring (`benchmarks/agent_quality/`) attributable rather than holistic.\n\nAcceptance: annotations present and their token cost measured and reported; a tier-0 record is visually and textually distinguishable from a tier-3 one; annotation is toggleable so its cost/benefit is ablatable; groundedness scores are measured with annotations on and off. Depends on GOV-1 and STOR-3.",
+  "comments": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "GOV-3",
+  "epic_id": "EPIC-32",
+  "title": "[Spike] Define 'independent sources' so corroboration is not self-corroboration",
+  "summary": "Under MINJA's threat model the attacker's core capability is saying the same thing twice — so the 1→2 rule must not reward repetition.",
+  "status": "To Do",
+  "description": "'Corroborated by two independent sources' is only a defence if independence has a definition an attacker cannot trivially satisfy. MINJA achieves 98.2% injection success with query-level access only, meaning the attacker can inject repeatedly through ordinary conversation. A naive count-based rule promotes attacker content to CONFIRMED on the second injection, which is worse than no promotion rule at all — it launders the attack.\n\nEvaluate candidate definitions against that adversary: distinct sessions (attacker opens two sessions — fails); distinct `MemoryOrigin` (attacker gets user-conversation and tool-output paths — hard but not impossible); time separation (attacker waits — fails, only raises cost); distinct entity/source provenance in the `memory_edges` graph (most promising, needs specifics); and combinations with rate limiting.\n\nFor each, state explicitly what an attacker must do to defeat it and what that costs them.\n\nTimebox: one working session. Fully acceptable and possibly correct outcome: 'no automatic 1 -> 2 promotion is safe under this threat model; require human confirmation'. Record the reasoning in `project-management/design/05-security-design.md` either way. Blocks GOV-2.",
+  "comments": []
+}

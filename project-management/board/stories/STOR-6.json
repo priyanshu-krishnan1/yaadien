@@ -1,0 +1,9 @@
+{
+  "id": "STOR-6",
+  "epic_id": "EPIC-27",
+  "title": "[Spike] Measure edge-table growth against a realistic workload before committing to unbounded retention",
+  "summary": "Establish edges-per-memory ratio and growth curve on a seeded corpus, and decide whether edges need their own TTL, pruning, or partitioning.",
+  "status": "To Do",
+  "description": "`memory_edges` growth is bounded only by consolidation behaviour, and a consolidator that links each derived fact to twenty source turns produces twenty edges per fact. Whether that is 2x or 200x the memory row count is unknown and changes the storage, index, and traversal-cost story materially — including whether PPR (GRPH-3) can run inline.\n\nUse `benchmarks/seed_corpus.py` and the existing 500k-row scale setup. Measure: edges per memory row by edge type; total edge rows vs memory rows at 10k / 100k / 500k; index size on disk; traversal latency for a 2-hop neighbourhood at each scale; growth rate under the retrieval-quality consolidator in `benchmarks/retrieval_quality/consolidator.py`.\n\nTimebox: one working session. Output: a findings comment on this story and, if the ratio exceeds roughly 10x, a follow-up story for edge pruning or retention. Explicitly acceptable outcome: 'ratio is low, no action needed' — record it and close. Depends on STOR-1 and STOR-2.",
+  "comments": []
+}

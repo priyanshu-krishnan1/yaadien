@@ -1,0 +1,9 @@
+{
+  "id": "STOR-3",
+  "epic_id": "EPIC-27",
+  "title": "Add bi-temporal valid_from / valid_to to facts and profiles (migration 0010)",
+  "summary": "Separate when we learned a fact from when it was true, so disjoint validity intervals stop being mistaken for contradictions.",
+  "status": "To Do",
+  "description": "Add `valid_from TIMESTAMP` and `valid_to TIMESTAMP` (nullable) to `semantic_facts` and `entity_profiles`, with a composite index on `(scope…, valid_from DESC, valid_to)`. Deliberately not an interval tree: a B-tree on that composite gives O(log N + m) with good selectivity, and Db2 supports the SQL:2011 temporal-table patterns natively, so hand-rolling an augmented red-black tree would be strictly worse on every axis including maintenance.\n\nBackfill sets `valid_from = created_at` and `valid_to = NULL`, which makes every existing row 'true from when we learned it, still true' — the semantics currently implied. Extend the `SemanticFact` and `EntityProfile` models with optional `valid_from`/`valid_to`; when a caller omits them the defaults apply and behaviour is unchanged.\n\nAcceptance: migration is a no-op behaviourally — the full existing test suite passes unmodified against a migrated database; a fact written with an explicit past `valid_from` round-trips it; the index is confirmed present and used via EXPLAIN on an as-of predicate (not merely confirmed to exist in SYSCAT). Whether `working_memory` and `episodic_memory` also need validity intervals is explicitly answered no with reasoning in the migration header — they record events, and an event's occurrence time is its `created_at`. Depends on nothing; blocks STOR-4 and GRPH-6.",
+  "comments": []
+}
