@@ -46,3 +46,12 @@ runs:
         # uv automatically uses the pytorch-cpu index for torch (see pyproject.toml
         # [tool.uv.sources]) — no GPU wheels are downloaded on GitHub-hosted runners.
         uv sync --locked ${EXTRA_FLAGS} ${QUIET_FLAG}
+
+    - name: Add uv venv to PATH
+      shell: bash
+      run: |
+        # Expose the uv-managed virtual environment's bin directory so that
+        # subsequent steps can call pytest, locust, python, etc. directly
+        # without needing 'uv run' prefixes.
+        VENV_BIN="$(uv run python -c 'import sys; import os; print(os.path.dirname(sys.executable))')"
+        echo "$VENV_BIN" >> "$GITHUB_PATH"
