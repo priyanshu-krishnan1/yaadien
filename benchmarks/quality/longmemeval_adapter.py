@@ -264,18 +264,24 @@ def load_longmemeval(
         return _read_cache(split, resolved_cache)
 
     # --- Not cached yet — download from HuggingFace ---
+    # NOTE: xiaowu0162/longmemeval's README declares data_files paths with a
+    # ".json" suffix (e.g. "longmemeval_s.json"), but the blobs actually
+    # committed to the repo have no extension (e.g. "longmemeval_s"). That
+    # mismatch breaks `datasets.load_dataset()`'s auto config/format
+    # resolution, so we fetch the raw JSON file directly instead.
     logger.info("LongMemEval %s not in cache; downloading from HuggingFace…", split)
     try:
-        from datasets import load_dataset  # type: ignore[import-untyped]
+        from huggingface_hub import hf_hub_download  # type: ignore[import-untyped]
     except ImportError as exc:
         raise ImportError(
-            "The 'datasets' package is required to download LongMemEval. "
+            "The 'huggingface_hub' package is required to download LongMemEval. "
             "Install it with: pip install datasets\n"
             "Alternatively, set LONGMEMEVAL_CACHE_DIR to a pre-warmed cache."
         ) from exc
 
-    ds = load_dataset(_HF_REPO, split=split)
-    rows: list[dict[str, Any]] = [dict(row) for row in ds]  # type: ignore[arg-type]
+    path = hf_hub_download(repo_id=_HF_REPO, repo_type="dataset", filename=split)
+    with open(path, encoding="utf-8") as f:
+        rows: list[dict[str, Any]] = json.load(f)
     _write_cache(rows, split, resolved_cache)
     return rows
 

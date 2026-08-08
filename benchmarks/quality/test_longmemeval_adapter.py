@@ -219,9 +219,10 @@ def test_ability_categories_constant():
 def test_cache_write_and_read_roundtrip():
     """load_longmemeval writes a JSONL cache and reads it back identically.
 
-    Uses sys.modules injection to mock the 'datasets' package so this test
-    has no external dependency on HuggingFace.
+    Uses sys.modules injection to mock the 'huggingface_hub' package so this
+    test has no external dependency on HuggingFace.
     """
+    import json
     import sys
     import types
 
@@ -229,17 +230,25 @@ def test_cache_write_and_read_roundtrip():
 
     rows = [_make_row(question_id=f"q{i}") for i in range(5)]
 
-    # Build a minimal fake 'datasets' module whose load_dataset returns our rows.
-    fake_datasets = types.ModuleType("datasets")
-    fake_datasets.load_dataset = lambda repo, split: rows  # type: ignore[attr-defined]
-
     with tempfile.TemporaryDirectory() as tmpdir:
         cache_dir = Path(tmpdir)
 
-        # Inject the fake module so the `from datasets import load_dataset`
-        # inside load_longmemeval() finds it.
-        original = sys.modules.get("datasets")
-        sys.modules["datasets"] = fake_datasets
+        # The raw HuggingFace file has no extension and contains a plain
+        # JSON array — mirrors xiaowu0162/longmemeval's actual layout.
+        raw_file = cache_dir / "longmemeval_s_raw"
+        raw_file.write_text(json.dumps(rows), encoding="utf-8")
+
+        # Build a minimal fake 'huggingface_hub' module whose hf_hub_download
+        # returns the path to that raw file.
+        fake_hub = types.ModuleType("huggingface_hub")
+        fake_hub.hf_hub_download = (  # type: ignore[attr-defined]
+            lambda repo_id, repo_type, filename: str(raw_file)
+        )
+
+        # Inject the fake module so the `from huggingface_hub import
+        # hf_hub_download` inside load_longmemeval() finds it.
+        original = sys.modules.get("huggingface_hub")
+        sys.modules["huggingface_hub"] = fake_hub
         try:
             original_cached = adapter_mod._is_cached
             call_count = [0]
@@ -253,9 +262,9 @@ def test_cache_write_and_read_roundtrip():
         finally:
             # Restore sys.modules to its original state.
             if original is None:
-                sys.modules.pop("datasets", None)
+                sys.modules.pop("huggingface_hub", None)
             else:
-                sys.modules["datasets"] = original
+                sys.modules["huggingface_hub"] = original
 
         # Second call — no fake module, no network — must load from the JSONL cache.
         result2 = load_longmemeval("longmemeval_s", cache_dir=cache_dir)
