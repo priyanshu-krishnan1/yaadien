@@ -242,12 +242,7 @@ jobs:
               --ref "${{ github.ref_name }}" \
               > "${BENCH_OUT}/index.html"
           else
-            printf '<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>
-<body><p>No benchmark data was produced for this run.</p></body>
-</html>
-' \
+            printf '<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>\n<body><p>No benchmark data was produced for this run.</p></body>\n</html>\n' \
               > "${BENCH_OUT}/index.html"
           fi
 
@@ -761,8 +756,7 @@ jobs:
                 'One or more nightly benchmark steps failed. Check the workflow run for details.',
                 '',
                 '**Labels:** benchmark, regression',
-              ].join('
-'),
+              ].join('\n'),
               labels: ['benchmark', 'regression'],
             });
 
@@ -925,8 +919,7 @@ jobs:
                 'The container is ephemeral — no external cleanup is required after the run ends.',
                 '',
                 '**Labels:** benchmark, regression, scale',
-              ].join('
-'),
+              ].join('\n'),
               labels: ['benchmark', 'regression'],
             });
 
