@@ -242,7 +242,12 @@ jobs:
               --ref "${{ github.ref_name }}" \
               > "${BENCH_OUT}/index.html"
           else
-            printf '<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>\n<body><p>No benchmark data was produced for this run.</p></body>\n</html>\n' \
+            printf '<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Benchmark report unavailable</title></head>
+<body><p>No benchmark data was produced for this run.</p></body>
+</html>
+' \
               > "${BENCH_OUT}/index.html"
           fi
 
@@ -756,7 +761,8 @@ jobs:
                 'One or more nightly benchmark steps failed. Check the workflow run for details.',
                 '',
                 '**Labels:** benchmark, regression',
-              ].join('\n'),
+              ].join('
+'),
               labels: ['benchmark', 'regression'],
             });
 
@@ -919,7 +925,8 @@ jobs:
                 'The container is ephemeral — no external cleanup is required after the run ends.',
                 '',
                 '**Labels:** benchmark, regression, scale',
-              ].join('\n'),
+              ].join('
+'),
               labels: ['benchmark', 'regression'],
             });
 
@@ -973,35 +980,35 @@ jobs:
       # Download every benchmark artifact into separate sub-directories so their
       # contents don't collide.
       - name: Download benchmark-report (Tier 0/1 — Db2 + pytest-benchmark)
-        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: benchmark-report
           path: consolidated/benchmark
         continue-on-error: true
 
       - name: Download locust-isolation-report (BM-12 + BM-13)
-        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: locust-isolation-report
           path: consolidated/locust-isolation
         continue-on-error: true
 
       - name: Download locust-scale-report (BM-14 + BM-15)
-        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: locust-scale-report
           path: consolidated/locust-scale
         continue-on-error: true
 
       - name: Download benchmark-nightly-report (Tier 2 — BM-21)
-        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: benchmark-nightly-report
           path: consolidated/benchmark-nightly
         continue-on-error: true
 
       - name: Download benchmark-scale-report (Tier 3 — live Db2)
-        uses: actions/download-artifact@fa0a91b85d4f404e444306234e4b5a7a9bb2b2f3 # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: benchmark-scale-report
           path: consolidated/benchmark-scale
