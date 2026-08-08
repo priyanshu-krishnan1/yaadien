@@ -423,7 +423,7 @@ def run_coherence(
     """Run the AGQ-4 coherence/fluency benchmark over the BM-18 LongMemEval question set.
 
     For each question the haystack is ingested via ``store.add_messages()``,
-    then ``store.working.search()`` is called to retrieve the with-memory context.
+    then ``store.search()`` is called to retrieve the with-memory context.
     Each question's ``gold_answer`` is used as the response (same approach as
     AGQ-3).  The judge evaluates coherence and fluency under two conditions:
 
@@ -469,12 +469,7 @@ def run_coherence(
 
         # --- Retrieve with-memory context via search() ---
         try:
-            query_embedding = embedding_provider(q.question)
-            search_results = store.working.search(
-                query_embedding=query_embedding,
-                scope=q.scope,
-                top_k=top_k,
-            )
+            search_results = store.search(q.question, q.scope, max_results=top_k)
             context_injected = "\n".join(r.content for r in search_results)
         except Exception:
             logger.exception(

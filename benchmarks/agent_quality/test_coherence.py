@@ -30,6 +30,7 @@ from benchmarks.agent_quality.coherence import (
     OllamaCoherenceJudge,
     _aggregate_category,
     _mean,
+    run_coherence,
 )
 
 # ---------------------------------------------------------------------------
@@ -525,3 +526,211 @@ def test_run_result_version_pins() -> None:
     )
     assert result.coherence_judge_version == "1.0.0"
     assert result.fluency_judge_version == "1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# run_coherence — fully mocked (no Db2, no Ollama)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_store_coh(search_content: str = "Alice enjoys hiking.") -> MagicMock:
+    """Return a MagicMock store whose search() returns a single content object."""
+    mock_result = MagicMock()
+    mock_result.content = search_content
+    store = MagicMock()
+    store.search.return_value = [mock_result]
+    store.add_messages.return_value = ["id-001"]
+    return store
+
+
+def _make_mock_row(
+    question_id: str = "q001",
+    category: str = "single-session-user",
+    question: str = "What does Alice like?",
+    answer: str = "Alice likes hiking.",
+) -> dict:
+    return {
+        "question_id": question_id,
+        "question_type": category,
+        "question": question,
+        "answer": answer,
+        "haystack_sessions": [
+            {
+                "session_id": "sess-0",
+                "turns": [
+                    {"role": "user", "content": "Alice enjoys hiking in the mountains."},
+                    {"role": "assistant", "content": "Got it."},
+                ],
+            }
+        ],
+        "evidence_session_ids": ["sess-0"],
+    }
+
+
+def _make_mock_judge_coh(
+    with_score: int = 4,
+    no_score: int = 2,
+) -> MagicMock:
+    """Return a MagicMock OllamaCoherenceJudge with fixed scores.
+
+    Calls where context_injected is non-empty return (with_score, "raw"),
+    calls with empty context return (no_score, "raw_no").
+    """
+    judge = MagicMock(spec=OllamaCoherenceJudge)
+    judge.model = "llama3.1:8b"
+
+    def _coh_side(question: str, context_injected: str, response: str) -> tuple[int, str]:
+        if context_injected:
+            return with_score, f"Score: {with_score}"
+        return no_score, f"Score: {no_score}"
+
+    def _flu_side(question: str, context_injected: str, response: str) -> tuple[int, str]:
+        if context_injected:
+            return with_score, f"Score: {with_score}"
+        return no_score, f"Score: {no_score}"
+
+    judge.judge_coherence.side_effect = _coh_side
+    judge.judge_fluency.side_effect = _flu_side
+    return judge
+
+
+@pytest.mark.benchmark_micro
+def test_run_coherence_basic() -> None:
+    """run_coherence returns correct means when store.search() returns context."""
+    rows = [_make_mock_row(question_id=f"q{i}", category="single-session-user") for i in range(3)]
+
+    store = _make_mock_store_coh()
+    judge = _make_mock_judge_coh(with_score=4, no_score=2)
+
+    with patch(
+        "benchmarks.agent_quality.coherence.load_longmemeval",
+        return_value=rows,
+    ):
+        result = run_coherence(
+            store=store,
+            embedding_provider=MagicMock(),
+            embedding_provider_name="mock",
+            judge=judge,
+            judge_name="llama3.1:8b",
+            n_per_category=5,
+            seed=42,
+            top_k=3,
+        )
+
+    assert isinstance(result, CoherenceRunResult)
+    assert result.coherence_mean == pytest.approx(4.0)
+    assert result.fluency_mean == pytest.approx(4.0)
+    assert result.coherence_no_memory_mean == pytest.approx(2.0)
+    assert result.fluency_no_memory_mean == pytest.approx(2.0)
+    assert "single-session-user" in result.per_category
+
+
+@pytest.mark.benchmark_micro
+def test_run_coherence_delta_computed() -> None:
+    """run_coherence delta = with_score − no_score per question."""
+    rows = [_make_mock_row(question_id="q1", category="multi-session")]
+
+    store = _make_mock_store_coh()
+    judge = _make_mock_judge_coh(with_score=5, no_score=2)
+
+    with patch(
+        "benchmarks.agent_quality.coherence.load_longmemeval",
+        return_value=rows,
+    ):
+        result = run_coherence(
+            store=store,
+            embedding_provider=MagicMock(),
+            embedding_provider_name="mock",
+            judge=judge,
+            judge_name="llama3.1:8b",
+            n_per_category=5,
+            seed=42,
+        )
+
+    assert result.coherence_delta == pytest.approx(3.0)
+    assert result.fluency_delta == pytest.approx(3.0)
+
+
+@pytest.mark.benchmark_micro
+def test_run_coherence_erase_called_per_question() -> None:
+    """run_coherence calls store.erase_all() once per processed question."""
+    rows = [_make_mock_row(question_id=f"q{i}", category="temporal-reasoning") for i in range(2)]
+
+    store = _make_mock_store_coh()
+    judge = _make_mock_judge_coh()
+
+    with patch(
+        "benchmarks.agent_quality.coherence.load_longmemeval",
+        return_value=rows,
+    ):
+        run_coherence(
+            store=store,
+            embedding_provider=MagicMock(),
+            embedding_provider_name="mock",
+            judge=judge,
+            judge_name="llama3.1:8b",
+            n_per_category=5,
+            seed=42,
+        )
+
+    assert store.erase_all.call_count == 2
+
+
+@pytest.mark.benchmark_micro
+def test_run_coherence_multi_category_aggregation() -> None:
+    """run_coherence aggregates per-category means correctly across categories."""
+    rows = [
+        _make_mock_row("q0", category="single-session-user"),
+        _make_mock_row("q1", category="single-session-user"),
+        _make_mock_row("q2", category="knowledge-update"),
+    ]
+
+    store = _make_mock_store_coh()
+    judge = _make_mock_judge_coh(with_score=4, no_score=2)
+
+    with patch(
+        "benchmarks.agent_quality.coherence.load_longmemeval",
+        return_value=rows,
+    ):
+        result = run_coherence(
+            store=store,
+            embedding_provider=MagicMock(),
+            embedding_provider_name="mock",
+            judge=judge,
+            judge_name="llama3.1:8b",
+            n_per_category=5,
+            seed=42,
+        )
+
+    assert result.per_category["single-session-user"]["coherence_mean"] == pytest.approx(4.0)
+    assert result.per_category["knowledge-update"]["coherence_mean"] == pytest.approx(4.0)
+    assert len(result.per_category) == 2
+
+
+@pytest.mark.benchmark_micro
+def test_run_coherence_uses_store_search_not_working_search() -> None:
+    """run_coherence calls store.search(), not store.working.search()."""
+    rows = [_make_mock_row(question_id="q1", category="single-session-user")]
+
+    store = _make_mock_store_coh()
+    judge = _make_mock_judge_coh()
+
+    with patch(
+        "benchmarks.agent_quality.coherence.load_longmemeval",
+        return_value=rows,
+    ):
+        run_coherence(
+            store=store,
+            embedding_provider=MagicMock(),
+            embedding_provider_name="mock",
+            judge=judge,
+            judge_name="llama3.1:8b",
+            n_per_category=5,
+            seed=42,
+        )
+
+    assert store.search.call_count >= 1, "store.search() must be called for context retrieval"
+    # store.working.search must NOT have been called
+    assert store.working.search.call_count == 0, (
+        "store.working.search() must not be called — use the top-level store.search()"
+    )
